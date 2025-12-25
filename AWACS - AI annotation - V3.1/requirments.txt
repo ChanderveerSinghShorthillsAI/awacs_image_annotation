@@ -1,0 +1,15 @@
+# For data handling and Excel file operations
+pandas>=2.2.0
+openpyxl>=3.1.2
+
+# For web scraping and browser automation
+selenium>=4.21.0
+
+# For making HTTP requests to download images
+requests>=2.31.0
+
+# For interacting with the Google Gemini API
+google-generativeai>=0.7.1
+
+# For progress bar
+tqdm>=4.66.4

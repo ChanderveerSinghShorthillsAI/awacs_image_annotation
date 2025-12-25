@@ -1,0 +1,453 @@
+{
+  "normalize_map": {
+    "cab chassis": "Cab-Chassis",
+    "cab-chassis": "Cab-Chassis",
+    "cabchassis": "Cab-Chassis",
+    "chassis cab": "Cab-Chassis",
+    "bare chassis": "Cab-Chassis",
+    "box truck": "Box Truck - Straight Truck",
+    "straight truck": "Box Truck - Straight Truck",
+    "box van": "Box Truck - Straight Truck",
+    "dry freight": "Box Truck - Straight Truck",
+    "dry van": "Dry Van",
+    "cutaway": "Cutaway-Cube Van",
+    "cutaway-cube van": "Cutaway-Cube Van",
+    "cutaway cube van": "Cutaway-Cube Van",
+    "cube van": "Cutaway-Cube Van",
+    "cube truck": "Cutaway-Cube Van",
+    "cut away": "Cutaway-Cube Van",
+    "reefer": "Reefer/Refrigerated Truck",
+    "refrigerated": "Reefer/Refrigerated Truck",
+    "refrigerator truck": "Reefer/Refrigerated Truck",
+    "cold chain": "Reefer/Refrigerated Truck",
+    "bucket": "Bucket Truck - Boom Truck",
+    "bucket truck": "Bucket Truck - Boom Truck",
+    "boom truck": "Bucket Truck - Boom Truck",
+    "cherry picker": "Bucket Truck - Boom Truck",
+    "man lift": "Bucket Truck - Boom Truck",
+    "day cab": "Conventional - Day Cab",
+    "daycab": "Conventional - Day Cab",
+    "conventional day cab": "Conventional - Day Cab",
+    "sleeper": "Conventional - Sleeper Truck",
+    "sleeper truck": "Conventional - Sleeper Truck",
+    "sleeper cab": "Conventional - Sleeper Truck",
+    "conventional sleeper": "Conventional - Sleeper Truck",
+    "cabover": "Cabover Truck - COE",
+    "coe": "Cabover Truck - COE",
+    "cab over": "Cabover Truck - COE",
+    "lcf": "Cabover Truck - COE",
+    "cabover sleeper": "Cabover Truck - Sleeper",
+    "farm truck": "Farm Truck - Grain Truck",
+    "grain truck": "Farm Truck - Grain Truck",
+    "grain hauler": "Farm Truck - Grain Truck",
+    "fuel truck": "Fuel Truck - Lube Truck",
+    "lube truck": "Fuel Truck - Lube Truck",
+    "fuel lube": "Fuel Truck - Lube Truck",
+    "oil truck": "Fuel Truck - Lube Truck",
+    "utility": "Utility Truck - Service Truck",
+    "utility truck": "Utility Truck - Service Truck",
+    "service truck": "Utility Truck - Service Truck",
+    "service body": "Utility Truck - Service Truck",
+    "utility body": "Utility Truck - Service Truck",
+    "mechanics truck": "Mechanics Truck",
+    "mechanic": "Mechanics Truck",
+    "plumber": "Plumber Service Truck",
+    "flatbed": "Flatbed Truck",
+    "flat bed": "Flatbed Truck",
+    "platform": "Flatbed Truck",
+    "stake bed": "Stake Bed",
+    "stakebed": "Stake Bed",
+    "flatbed dump": "Flatbed Dump",
+    "dump flatbed": "Flatbed Dump",
+    "dump truck": "Dump Truck",
+    "dump": "Dump Truck",
+    "tipper": "Dump Truck",
+    "mixer": "Mixer Truck - Concrete Truck",
+    "concrete mixer": "Mixer Truck - Concrete Truck",
+    "cement mixer": "Mixer Truck - Concrete Truck",
+    "concrete pump": "Concrete Pump Truck",
+    "garbage": "Garbage Truck",
+    "trash": "Garbage Truck",
+    "waste": "Garbage Truck",
+    "refuse": "Refuse",
+    "recycle": "Recycle Truck",
+    "roll off": "Roll Off Truck",
+    "rolloff": "Roll Off Truck",
+    "hooklift": "Hooklift Truck",
+    "lugger": "Lugger",
+    "plow": "Plow Truck - Spreader Truck",
+    "plow truck": "Plow Truck - Spreader Truck",
+    "snow plow": "Plow Truck - Spreader Truck",
+    "spreader": "Plow Truck - Spreader Truck",
+    "stone spreader": "Stone Spreader Truck",
+    "sweeper": "Sweeper",
+    "street sweeper": "Sweeper",
+    "broom": "Sweeper",
+    "vacuum": "Vacuum Truck",
+    "vac truck": "Vacuum Truck",
+    "septic": "Septic",
+    "sewer": "Sewer Trucks",
+    "sewer inspection": "Sewer Inspection Trucks",
+    "tanker": "Tanker Truck",
+    "tank truck": "Tanker Truck",
+    "water truck": "Water Truck",
+    "water wagon": "Water Truck",
+    "water tank": "Water Tank",
+    "asphalt": "Asphalt Distributor Truck",
+    "hot oil": "Hot Oil Truck",
+    "waste oil": "Waste Oil Trucks",
+    "propane": "LPG Tank Truck",
+    "lpg": "LPG Tank Truck",
+    "milk": "Milk Truck",
+    "tow": "Wrecker Tow Truck",
+    "wrecker": "Wrecker Tow Truck",
+    "rollback": "Rollback Tow Truck",
+    "flatbed tow": "Rollback Tow Truck",
+    "car carrier": "Car Carrier",
+    "self loader": "Selfloader",
+    "repo": "Selfloader",
+    "crane": "Crane Truck",
+    "knuckleboom": "Knucklebooms",
+    "grapple": "Grapple Truck",
+    "log loader": "Grapple Truck",
+    "logging": "Logging",
+    "chipper": "Chipper Truck",
+    "digger": "Digger Derrick",
+    "auger": "Auger",
+    "catering": "Catering Truck - Food Truck",
+    "food truck": "Food Truck",
+    "mobile kitchen": "Food Truck",
+    "beverage": "Beverage Truck",
+    "van": "Van",
+    "cargo van": "Cargo Van",
+    "passenger van": "Passenger Van",
+    "crew van": "Crew Van",
+    "stepvan": "Stepvan",
+    "walk in": "Stepvan",
+    "mobility": "Mobility Van",
+    "moving van": "Moving Van",
+    "pickup": "Pickup Truck",
+    "pick-up": "Pickup Truck",
+    "dually": "Dually",
+    "suv": "SUV",
+    "mini truck": "Mini Truck",
+    "bus": "Bus",
+    "school bus": "Bus",
+    "shuttle": "Bus",
+    "minibus": "Minibus",
+    "ambulance": "Ambulance",
+    "emergency": "Emergency Vehicle",
+    "fire": "Fire Truck",
+    "animal control": "Animal Services",
+    "armored": "Armored Truck",
+    "military": "Military",
+    "yard spotter": "Yard Spotter Truck",
+    "terminal tractor": "Yard Spotter Truck",
+    "tractor": "Tractor",
+    "glider": "Glider Kit",
+    "livestock": "Livestock Truck",
+    "western hauler": "Western Hauler",
+    "curtain": "Curtain Side",
+    "conveyor": "Conveyor Truck",
+    "attenuator": "Attenuator",
+    "concrete barricade": "Concrete Barricade Truck",
+    "striper": "Truck Mounted Stripers",
+    "de-icer": "De-Icer",
+    "insulator washer": "Insulator Washer",
+    "cable puller": "Cable Scrapper - Cable Puller",
+    "cable dispenser": "Cable Dispenser",
+    "glass": "Glass Truck",
+    "saw": "Saw Body",
+    "winch": "Winch Truck",
+    "roustabout": "Roustabout",
+    "frac": "Frac Truck",
+    "rail": "Railroad Truck",
+    "shredder": "Shredder Truck",
+    "sling": "Sling Truck",
+    "contractor": "Contractor Truck",
+    "hauler": "Hauler",
+    "landscape": "Landscape Truck",
+    "salvage": "Salvage Truck",
+    "toter": "Toter",
+    "transfer": "Transfer Truck",
+    "specialty": "Specialty Truck",
+    "other": "Other Truck",
+    "expeditor": "Expeditor-Hotshot",
+    "spray": "Spray Truck",
+    "storage": "Storage-Buildings"
+  },
+  "exclusion_rules": [
+    {
+      "comment": "Cab-Chassis is a frame rails only truck. It cannot be combined with any specific body type.",
+      "category": "Cab-Chassis",
+      "not_with": [
+        "Attenuator",
+        "Beverage Truck",
+        "Box Truck - Straight Truck",
+        "Bucket Truck - Boom Truck",
+        "Car Carrier",
+        "Concrete Barricade Truck",
+        "Mixer Truck - Concrete Truck",
+        "Contractor Truck",
+        "Crane Truck",
+        "Crew Van",
+        "Curtain Side",
+        "Cutaway-Cube Van",
+        "Digger Derrick",
+        "Dump Truck",
+        "Farm Truck - Grain Truck",
+        "Flatbed Dump",
+        "Flatbed Truck",
+        "Food Truck",
+        "Fuel Truck - Lube Truck",
+        "Garbage Truck",
+        "Glass Truck",
+        "Grapple Truck",
+        "Knucklebooms",
+        "Landscape Truck",
+        "Logging",
+        "Mechanics Truck",
+        "Milk Truck",
+        "Moving Van",
+        "Passenger Van",
+        "Pickup Truck",
+        "Plow Truck - Spreader Truck",
+        "Railroad Truck",
+        "Reefer/Refrigerated Truck",
+        "Roll Off Truck",
+        "Rollback Tow Truck",
+        "Saw Body",
+        "Selfloader",
+        "Shredder Truck",
+        "Stake Bed",
+        "Stepvan",
+        "Stone Spreader Truck",
+        "Street Cleaner",
+        "Tanker Truck",
+        "Transfer Truck",
+        "Utility Truck - Service Truck",
+        "Vacuum Truck",
+        "Waste Oil Trucks",
+        "Water Truck",
+        "Wrecker Tow Truck"
+      ]
+    },
+    {
+      "comment": "Contractor Truck is a specific body. It cannot be a Utility or Service truck.",
+      "category": "Contractor Truck",
+      "not_with": [
+        "Utility Truck - Service Truck",
+        "Mechanics Truck",
+        "Service Truck"
+      ]
+    },
+    {
+      "comment": "A Flatbed Dump is distinct from a heavy duty Dump Truck.",
+      "category": "Flatbed Dump",
+      "not_with": [
+        "Dump Truck"
+      ]
+    },
+    {
+      "comment": "A Pickup Truck comes with a factory bed. It cannot be a Cab-Chassis or have a service body.",
+      "category": "Pickup Truck",
+      "not_with": [
+        "Cab-Chassis",
+        "Utility Truck - Service Truck",
+        "Contractor Truck",
+        "Mechanics Truck",
+        "Bucket Truck - Boom Truck"
+      ]
+    },
+    {
+      "comment": "Mechanics truck implies a crane + utility body. It supersedes generic utility.",
+      "category": "Mechanics Truck",
+      "not_with": [
+        "Utility Truck - Service Truck",
+        "Crane Truck"
+      ]
+    },
+    {
+      "comment": "Bucket Truck has an aerial boom with a basket. It is a distinct body type and cannot have other major body configurations.",
+      "category": "Bucket Truck - Boom Truck",
+      "not_with": [
+        "Utility Truck - Service Truck",
+        "Crane Truck",
+        "Mechanics Truck",
+        "Contractor Truck",
+        "Flatbed Truck",
+        "Dump Truck",
+        "Pickup Truck"
+      ]
+    },
+    {
+      "comment": "Crane Truck has a lifting crane with a hook. It is distinct from other body types.",
+      "category": "Crane Truck",
+      "not_with": [
+        "Bucket Truck - Boom Truck",
+        "Utility Truck - Service Truck",
+        "Mechanics Truck",
+        "Flatbed Truck",
+        "Dump Truck"
+      ]
+    },
+    {
+      "comment": "Utility Truck - Service Truck has a service body with compartments. It cannot have major body modifications.",
+      "category": "Utility Truck - Service Truck",
+      "not_with": [
+        "Bucket Truck - Boom Truck",
+        "Crane Truck",
+        "Pickup Truck",
+        "Flatbed Truck",
+        "Dump Truck",
+        "Contractor Truck"
+      ]
+    },
+    {
+      "comment": "Flatbed Truck is a distinct body type. It cannot be combined with Pickup Truck.",
+      "category": "Flatbed Truck",
+      "not_with": [
+        "Pickup Truck",
+        "Rollback Tow Truck"
+      ]
+    },
+    {
+      "comment": "Box Truck - Straight Truck is a specific body configuration. It cannot be combined with Cargo Van, Dry Van, or Reefer.",
+      "category": "Box Truck - Straight Truck",
+      "not_with": [
+        "Cargo Van",
+        "Dry Van",
+        "Reefer/Refrigerated Truck"
+      ]
+    },
+    {
+      "comment": "Rollback Tow Truck is a specific tow truck type. It cannot be combined with Flatbed Truck.",
+      "category": "Rollback Tow Truck",
+      "not_with": [
+        "Flatbed Truck"
+      ]
+    },
+    {
+      "comment": "Reefer/Refrigerated Truck has a cooling unit. It cannot be combined with Box Truck - Straight Truck.",
+      "category": "Reefer/Refrigerated Truck",
+      "not_with": [
+        "Box Truck - Straight Truck"
+      ]
+    },
+    {
+      "comment": "Dry Van is a specific body type. It cannot be combined with Box Truck - Straight Truck.",
+      "category": "Dry Van",
+      "not_with": [
+        "Box Truck - Straight Truck"
+      ]
+    },
+    {
+      "comment": "Cargo Van is a distinct vehicle type. It cannot be combined with Box Truck - Straight Truck.",
+      "category": "Cargo Van",
+      "not_with": [
+        "Box Truck - Straight Truck"
+      ]
+    },
+    {
+      "comment": "Pickup Truck is a factory-built vehicle with integrated bed. It cannot be combined with Car Carrier or Flatbed Truck.",
+      "category": "Pickup Truck",
+      "not_with": [
+        "Car Carrier",
+        "Flatbed Truck"
+      ]
+    },
+    {
+      "comment": "Car Carrier is a specialized tow vehicle. It cannot be combined with Pickup Truck.",
+      "category": "Car Carrier",
+      "not_with": [
+        "Pickup Truck"
+      ]
+    }
+  ],
+  "truck_overlaps": [
+    {
+      "pair": [
+        "Box Truck - Straight Truck",
+        "Reefer/Refrigerated Truck"
+      ],
+      "decision_rule": "Look at the FRONT of the cargo box (above the truck cab). 1. If there is a cooling unit (a machine with fans/vents) attached, it is a 'Reefer/Refrigerated Truck'. 2. If the front of the box is flat/smooth with no machine, it is a 'Box Truck - Straight Truck'."
+    },
+    {
+      "pair": [
+        "Contractor Truck",
+        "Utility Truck - Service Truck"
+      ],
+      "decision_rule": "Look at the bed sides. 1. If you see solid metal CABINETS or COMPARTMENTS with handles, it is a 'Utility Truck - Service Truck'. 2. If the sides are open with thin removable SLATS/STAKES, it is a 'Contractor Truck'. Ignore the rack. Cabinets = Utility."
+    },
+    {
+      "pair": [
+        "Utility Truck - Service Truck",
+        "Mechanics Truck"
+      ],
+      "decision_rule": "SCAN FOR A CRANE. Look at the rear corners of the service body. 1. If you see a mounting base with a hydraulic boom or a small crane, it is a 'Mechanics Truck'. 2. If it is just tool cabinets with no crane structure, it is a 'Utility Truck - Service Truck'."
+    },
+    {
+      "pair": [
+        "Cab-Chassis",
+        "Hauler"
+      ],
+      "decision_rule": "Look at the area behind the cab. 1. If you see bare black metal frame rails (exposed chassis), it is a 'Cab-Chassis'. 2. If the frame is covered by a decorative deck (usually diamond-plate) and has a heavy-duty Fifth Wheel or Gooseneck hitch installed, it is a 'Hauler'."
+    },
+    {
+      "pair": [
+        "Stepvan",
+        "Box Truck - Straight Truck"
+      ],
+      "decision_rule": "Look at the Cab. 1. If the driver has a sliding side door and can walk into the cargo area (like FedEx/UPS), it is a 'Stepvan'. 2. If the cab is separate (conventional doors) and detached from the box, it is a 'Box Truck - Straight Truck'."
+    },
+    {
+      "pair": [
+        "Bucket Truck - Boom Truck",
+        "Crane Truck"
+      ],
+      "decision_rule": "Look at the tip of the boom. 1. If there is a BASKET/BUCKET for a person to stand in, it is a 'Bucket Truck - Boom Truck'. 2. If there is a HOOK for lifting materials, it is a 'Crane Truck'."
+    },
+    {
+      "pair": [
+        "Dually",
+        "Pickup Truck"
+      ],
+      "decision_rule": "VISUAL WHEEL CHECK: 1. Look at the REAR wheels. Do you see a deep concave (dish) rim? 2. Look at the FRONT wheels. Do you see a large protruding hub extension? If yes to either, it is 'Dually'. If wheels look flat/standard, it is 'Pickup Truck'."
+    },
+    {
+      "pair": [
+        "Dually",
+        "Flatbed Truck"
+      ],
+      "decision_rule": "VISUAL WHEEL CHECK: Flatbeds are wide, so don't trust the width. Look strictly at the rim geometry. Deep dish rear rims = 'Dually'. Flat/Flush rims = 'Flatbed Truck'."
+    },
+    {
+      "pair": [
+        "Dually",
+        "Cab-Chassis"
+      ],
+      "decision_rule": "VISUAL WHEEL CHECK: Look at the rear axle. If you see two tires side-by-side (4 total rear) or deep dish rims, it is 'Dually'. If single tires, it is 'Cab-Chassis'."
+    },
+    {
+      "pair": [
+        "Dump Truck",
+        "Flatbed Dump"
+      ],
+      "decision_rule": "Analyze the construction of the bed sides. 1. **Dump Truck**: Look for a heavy-duty 'Tub'. The sides are solid metal, welded in place, and usually have structural REINFORCEMENT RIBS (horizontal or vertical bars). It looks built for rocks/dirt. 2. **Flatbed Dump**: Look for a 'Platform'. The key feature is a flat floor with a Rub Rail and STAKE POCKETS (holes) along the edge. If it has sides, they are usually thin removable wood or metal slats. If it looks like a flat deck that tilts, it is a 'Flatbed Dump'."
+    }
+  ],
+  "feature_checklist": {
+    "prompt": "Analyze the truck bed area specifically.",
+    "features": [
+      {
+        "name": "has_side_compartments",
+        "question": "Are there built-in metal storage lockers or cabinets with handles on the sides of the bed?"
+      },
+      {
+        "name": "has_removable_stakes",
+        "question": "Are the sides made of thin removable slats or rails (wood or metal)?"
+      }
+    ],
+    "logic": "'Utility Truck - Service Truck' if features['has_side_compartments'] else 'Contractor Truck'"
+  }
+}
