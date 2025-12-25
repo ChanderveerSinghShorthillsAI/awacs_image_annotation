@@ -1,0 +1,52 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <link rel="icon" href="%PUBLIC_URL%/favicon.ico" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="theme-color" content="#0a0a0f" />
+    <meta
+      name="description"
+      content="AWACS AI Annotation System - Intelligent Vehicle Classification"
+    />
+    <link rel="apple-touch-icon" href="%PUBLIC_URL%/logo192.png" />
+    <link rel="manifest" href="%PUBLIC_URL%/manifest.json" />
+    
+    <!-- Google Fonts - Preconnect for performance -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600&family=Space+Grotesk:wght@400;500;600;700&display=swap" rel="stylesheet">
+    
+    <title>AWACS - AI Annotation System</title>
+    
+    <style>
+      /* Critical CSS for initial load */
+      body {
+        margin: 0;
+        background: #0a0a0f;
+        color: #e8e8f0;
+      }
+      
+      /* Loading spinner */
+      #root:empty::after {
+        content: '';
+        display: block;
+        width: 48px;
+        height: 48px;
+        margin: 40vh auto;
+        border: 3px solid #2a2a3a;
+        border-top-color: #4fc3f7;
+        border-radius: 50%;
+        animation: spin 1s linear infinite;
+      }
+      
+      @keyframes spin {
+        to { transform: rotate(360deg); }
+      }
+    </style>
+  </head>
+  <body>
+    <noscript>You need to enable JavaScript to run this app.</noscript>
+    <div id="root"></div>
+  </body>
+</html>
