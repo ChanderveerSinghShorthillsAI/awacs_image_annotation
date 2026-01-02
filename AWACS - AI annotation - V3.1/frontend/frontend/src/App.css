@@ -1,43 +1,71 @@
 /* =========================================
-   AWACS AI Annotation System - Styles
-   Modern Dark Theme with Cyber Aesthetic
+   AWACS AI Annotation System 
+   American Highway & Trucks Theme
+   Premium Design with Route 66 Aesthetics
    ========================================= */
 
-/* CSS Variables */
+/* CSS Variables - Highway Theme */
 :root {
-  --bg-primary: #0a0a0f;
-  --bg-secondary: #12121a;
-  --bg-card: #1a1a24;
-  --bg-card-hover: #22222e;
-  
-  --text-primary: #e8e8f0;
-  --text-secondary: #8888a0;
-  --text-muted: #555566;
-  
-  --accent-cyan: #4fc3f7;
-  --accent-purple: #b388ff;
-  --accent-green: #4caf50;
-  --accent-red: #ef5350;
-  --accent-yellow: #ffd54f;
-  
-  --gradient-primary: linear-gradient(135deg, #4fc3f7 0%, #b388ff 100%);
-  --gradient-bg: linear-gradient(180deg, #0a0a0f 0%, #12121a 100%);
-  
-  --border-color: #2a2a3a;
-  --border-radius: 12px;
-  --border-radius-lg: 20px;
-  
-  --shadow-sm: 0 2px 8px rgba(0, 0, 0, 0.3);
-  --shadow-md: 0 4px 20px rgba(0, 0, 0, 0.4);
-  --shadow-lg: 0 8px 40px rgba(0, 0, 0, 0.5);
-  --shadow-glow: 0 0 30px rgba(79, 195, 247, 0.15);
-  
-  --font-mono: 'JetBrains Mono', 'Fira Code', monospace;
-  --font-display: 'Space Grotesk', 'Outfit', sans-serif;
+  /* Background Colors - Asphalt & Night Road */
+  --bg-primary: transparent;
+  --bg-secondary: rgba(25, 25, 30, 0.88);
+  --bg-card: rgba(35, 35, 40, 0.92);
+  --bg-card-hover: rgba(45, 45, 50, 0.95);
+  --bg-dark-overlay: rgba(15, 15, 20, 0.85);
+
+  /* Text Colors */
+  --text-primary: #ffffff;
+  --text-secondary: #f8f9fa;
+  --text-muted: #cbd5e0;
+
+  /* Highway Accent Colors */
+  --highway-yellow: #FFD700;
+  --highway-orange: #FF8C00;
+  --highway-amber: #FFBF00;
+  --road-white: #F8F8FF;
+  --chrome-silver: #C0C0C0;
+  --chrome-light: #E8E8E8;
+
+  /* Truck Theme Colors */
+  --truck-red: #DC143C;
+  --truck-blue: #1E90FF;
+  --headlight-glow: #FFF8DC;
+
+  /* Status Colors */
+  --accent-green: #32CD32;
+  --accent-red: #FF4444;
+  --accent-warning: #FFA500;
+
+  /* Gradients - Highway Inspired */
+  --gradient-primary: linear-gradient(135deg, #FFD700 0%, #FF8C00 50%, #FFBF00 100%);
+  --gradient-chrome: linear-gradient(135deg, #E8E8E8 0%, #C0C0C0 50%, #A8A8A8 100%);
+  --gradient-asphalt: linear-gradient(180deg, rgba(25, 25, 30, 0.95) 0%, rgba(35, 35, 45, 0.98) 100%);
+  --gradient-road: linear-gradient(180deg, #2a2a2f 0%, #1a1a1f 100%);
+  --gradient-glow: radial-gradient(circle, rgba(255, 215, 0, 0.15) 0%, transparent 70%);
+
+  /* Border & Shadows */
+  --border-color: rgba(255, 215, 0, 0.35);
+  --border-chrome: rgba(192, 192, 192, 0.4);
+  --border-radius: 14px;
+  --border-radius-lg: 24px;
+
+  --shadow-sm: 0 2px 10px rgba(0, 0, 0, 0.4);
+  --shadow-md: 0 4px 24px rgba(0, 0, 0, 0.6);
+  --shadow-lg: 0 8px 48px rgba(0, 0, 0, 0.7);
+  --shadow-glow: 0 0 40px rgba(255, 215, 0, 0.45);
+  --shadow-chrome: 0 4px 20px rgba(192, 192, 192, 0.3);
+  --shadow-highway: 0 0 60px rgba(255, 140, 0, 0.35), 0 4px 20px rgba(0, 0, 0, 0.5);
+
+  /* Fonts - Bold American Style */
+  --font-mono: 'JetBrains Mono', 'Courier New', monospace;
+  --font-display: 'Space Grotesk', 'Roboto', 'Arial Black', sans-serif;
+  --font-highway: 'Impact', 'Arial Black', sans-serif;
 }
 
 /* Global Reset */
-*, *::before, *::after {
+*,
+*::before,
+*::after {
   box-sizing: border-box;
   margin: 0;
   padding: 0;
@@ -65,7 +93,7 @@ body {
   position: relative;
 }
 
-/* Animated Background */
+/* Animated Highway Background */
 .bg-animation {
   position: fixed;
   top: 0;
@@ -74,49 +102,108 @@ body {
   height: 100%;
   z-index: -1;
   overflow: hidden;
+  background: #0a0a0f;
+}
+
+.bg-video {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  min-width: 100%;
+  min-height: 100%;
+  width: auto;
+  height: auto;
+  transform: translate(-50%, -50%);
+  object-fit: cover;
+  z-index: 1;
+  opacity: 0.95;
+  filter: brightness(0.9) contrast(1.1);
 }
 
 .bg-gradient {
   position: absolute;
   width: 100%;
   height: 100%;
-  background: 
-    radial-gradient(ellipse at 20% 20%, rgba(79, 195, 247, 0.08) 0%, transparent 50%),
-    radial-gradient(ellipse at 80% 80%, rgba(179, 136, 255, 0.08) 0%, transparent 50%),
-    radial-gradient(ellipse at 50% 50%, rgba(76, 175, 80, 0.03) 0%, transparent 70%);
-  animation: bgPulse 15s ease-in-out infinite;
+  background: linear-gradient(to bottom,
+      rgba(0, 0, 0, 0.2) 0%,
+      rgba(0, 0, 0, 0.15) 50%,
+      rgba(0, 0, 0, 0.3) 100%);
+  z-index: 2;
 }
 
+/* Highway Road Stripes Pattern */
 .bg-grid {
   position: absolute;
   width: 100%;
   height: 100%;
-  background-image: 
-    linear-gradient(rgba(79, 195, 247, 0.03) 1px, transparent 1px),
-    linear-gradient(90deg, rgba(79, 195, 247, 0.03) 1px, transparent 1px);
-  background-size: 50px 50px;
-  animation: gridMove 30s linear infinite;
+  background-image:
+    /* Center lane divider - dashed yellow lines */
+    repeating-linear-gradient(to bottom,
+      transparent 0px,
+      transparent 40px,
+      rgba(255, 215, 0, 0.08) 40px,
+      rgba(255, 215, 0, 0.08) 80px),
+    /* Side road markers */
+    linear-gradient(90deg,
+      transparent calc(50% - 2px),
+      rgba(255, 215, 0, 0.05) calc(50% - 2px),
+      rgba(255, 215, 0, 0.05) calc(50% + 2px),
+      transparent calc(50% + 2px));
+  z-index: 3;
+  animation: roadScroll 3s linear infinite;
+  pointer-events: none;
 }
 
+/* Highway Animation - Road scrolling effect */
+@keyframes roadScroll {
+  0% {
+    background-position: 0 0, 0 0;
+  }
+
+  100% {
+    background-position: 0 80px, 0 0;
+  }
+}
+
+/* Subtle pulse for depth */
 @keyframes bgPulse {
-  0%, 100% { opacity: 1; }
-  50% { opacity: 0.7; }
+
+  0%,
+  100% {
+    opacity: 1;
+  }
+
+  50% {
+    opacity: 0.85;
+  }
 }
 
-@keyframes gridMove {
-  0% { transform: translate(0, 0); }
-  100% { transform: translate(50px, 50px); }
+/* Headlight glow animation */
+@keyframes headlightGlow {
+
+  0%,
+  100% {
+    opacity: 0.4;
+    transform: scale(1);
+  }
+
+  50% {
+    opacity: 0.6;
+    transform: scale(1.05);
+  }
 }
 
-/* Header */
+/* Header - Highway Style */
 .header {
   padding: 1.5rem 2rem;
-  background: rgba(18, 18, 26, 0.8);
-  backdrop-filter: blur(20px);
-  border-bottom: 1px solid var(--border-color);
+  background: var(--gradient-asphalt);
+  backdrop-filter: blur(25px) saturate(180%);
+  border-bottom: 3px solid var(--highway-yellow);
+  border-image: var(--gradient-primary) 1;
   position: sticky;
   top: 0;
   z-index: 100;
+  box-shadow: var(--shadow-highway);
 }
 
 .header-content {
@@ -135,22 +222,26 @@ body {
 
 .logo-icon {
   font-size: 2rem;
-  filter: drop-shadow(0 0 10px var(--accent-cyan));
+  filter: drop-shadow(0 0 10px var(--accent-orange));
 }
 
 .logo h1 {
-  font-size: 1.75rem;
-  font-weight: 700;
+  font-size: 1.85rem;
+  font-weight: 900;
   background: var(--gradient-primary);
   -webkit-background-clip: text;
   -webkit-text-fill-color: transparent;
   background-clip: text;
-  letter-spacing: 2px;
+  letter-spacing: 3px;
+  text-shadow: 0 2px 20px rgba(255, 215, 0, 0.5);
+  filter: drop-shadow(0 0 15px rgba(255, 215, 0, 0.4));
+  font-family: var(--font-highway);
 }
 
 .logo-subtitle {
   font-size: 0.75rem;
   color: var(--text-secondary);
+  font-weight: 600;
   letter-spacing: 1px;
   margin-left: 0.5rem;
   padding-left: 0.75rem;
@@ -171,7 +262,15 @@ body {
   padding: 0.5rem 1rem;
   background: var(--bg-card);
   border-radius: 20px;
-  border: 1px solid var(--border-color);
+  border: 2px solid var(--border-color);
+  box-shadow: 0 0 15px rgba(255, 215, 0, 0.2);
+  transition: all 0.3s ease;
+}
+
+.stat-item:hover {
+  transform: scale(1.05);
+  box-shadow: 0 0 25px rgba(255, 215, 0, 0.4);
+  border-color: var(--highway-yellow);
 }
 
 .stat-icon {
@@ -196,25 +295,31 @@ body {
 }
 
 .section-header h2 {
-  font-size: 2.5rem;
-  font-weight: 700;
+  font-size: 2.75rem;
+  font-weight: 900;
   margin-bottom: 0.75rem;
   background: var(--gradient-primary);
   -webkit-background-clip: text;
   -webkit-text-fill-color: transparent;
   background-clip: text;
+  filter: drop-shadow(0 0 20px rgba(255, 215, 0, 0.5));
+  letter-spacing: 2px;
+  font-family: var(--font-highway);
 }
 
 .mode-badge {
   display: inline-block;
-  padding: 0.5rem 1.25rem;
-  background: rgba(179, 136, 255, 0.1);
-  border: 1px solid rgba(179, 136, 255, 0.3);
-  border-radius: 20px;
-  color: var(--accent-purple);
-  font-size: 0.85rem;
-  font-weight: 500;
-  letter-spacing: 0.5px;
+  padding: 0.65rem 1.5rem;
+  background: rgba(255, 215, 0, 0.15);
+  border: 2px solid var(--highway-yellow);
+  border-radius: 25px;
+  color: var(--highway-yellow);
+  font-size: 0.9rem;
+  font-weight: 800;
+  letter-spacing: 1.2px;
+  text-transform: uppercase;
+  box-shadow: 0 0 20px rgba(255, 215, 0, 0.3);
+  font-family: var(--font-highway);
 }
 
 /* File Upload */
@@ -260,14 +365,16 @@ body {
 }
 
 .upload-mode-switcher .mode-btn:hover {
-  background: rgba(79, 195, 247, 0.1);
+  background: rgba(255, 140, 66, 0.1);
   color: var(--text-primary);
 }
 
 .upload-mode-switcher .mode-btn.active {
   background: var(--gradient-primary);
-  color: #000;
-  box-shadow: 0 2px 8px rgba(79, 195, 247, 0.3);
+  color: #1a1a1f;
+  box-shadow: 0 4px 15px rgba(255, 215, 0, 0.5);
+  font-weight: 800;
+  transform: translateY(-1px);
 }
 
 .upload-mode-switcher .mode-btn span {
@@ -287,9 +394,10 @@ body {
 
 .file-upload:hover,
 .file-upload.drag-active {
-  border-color: var(--accent-cyan);
-  background: rgba(79, 195, 247, 0.05);
-  box-shadow: var(--shadow-glow);
+  border-color: var(--highway-yellow);
+  background: rgba(255, 215, 0, 0.08);
+  box-shadow: var(--shadow-glow), inset 0 0 40px rgba(255, 215, 0, 0.1);
+  transform: translateY(-2px);
 }
 
 .file-upload.uploading {
@@ -299,7 +407,8 @@ body {
 
 .upload-icon {
   margin-bottom: 1.5rem;
-  color: var(--accent-cyan);
+  color: var(--highway-yellow);
+  filter: drop-shadow(0 0 15px rgba(255, 215, 0, 0.5));
 }
 
 .upload-icon svg {
@@ -310,7 +419,7 @@ body {
 
 .file-upload h3 {
   font-size: 1.5rem;
-  font-weight: 600;
+  font-weight: 700;
   margin-bottom: 0.5rem;
   color: var(--text-primary);
 }
@@ -330,14 +439,18 @@ body {
   width: 48px;
   height: 48px;
   border: 3px solid var(--border-color);
-  border-top-color: var(--accent-cyan);
+  border-top-color: var(--highway-yellow);
+  border-right-color: var(--highway-orange);
   border-radius: 50%;
-  animation: spin 1s linear infinite;
+  animation: spin 0.9s ease-in-out infinite;
   margin: 0 auto;
+  filter: drop-shadow(0 0 8px rgba(255, 215, 0, 0.4));
 }
 
 @keyframes spin {
-  to { transform: rotate(360deg); }
+  to {
+    transform: rotate(360deg);
+  }
 }
 
 /* Job Dashboard */
@@ -392,35 +505,47 @@ body {
 
 .btn-primary {
   background: var(--gradient-primary);
-  color: #000;
-  box-shadow: 0 4px 15px rgba(79, 195, 247, 0.3);
+  color: #1a1a1f;
+  font-weight: 800;
+  box-shadow: 0 6px 20px rgba(255, 215, 0, 0.45), 0 0 30px rgba(255, 215, 0, 0.2);
+  border: 1px solid var(--highway-amber);
+  text-transform: uppercase;
+  letter-spacing: 0.8px;
 }
 
 .btn-primary:hover {
-  transform: translateY(-2px);
-  box-shadow: 0 6px 25px rgba(79, 195, 247, 0.4);
+  transform: translateY(-3px);
+  box-shadow: 0 8px 30px rgba(255, 215, 0, 0.6), 0 0 40px rgba(255, 215, 0, 0.4);
+  filter: brightness(1.1);
 }
 
 .btn-success {
-  background: linear-gradient(135deg, #4caf50 0%, #66bb6a 100%);
-  color: #000;
-  box-shadow: 0 4px 15px rgba(76, 175, 80, 0.3);
+  background: linear-gradient(135deg, #32CD32 0%, #3ECF3E 50%, #4AFF50 100%);
+  color: #1a1a1f;
+  font-weight: 700;
+  box-shadow: 0 4px 15px rgba(50, 205, 50, 0.4);
 }
 
 .btn-success:hover {
-  transform: translateY(-2px);
-  box-shadow: 0 6px 25px rgba(76, 175, 80, 0.4);
+  transform: translateY(-3px);
+  box-shadow: 0 6px 25px rgba(50, 205, 50, 0.5);
+  filter: brightness(1.1);
 }
 
 .btn-secondary {
   background: var(--bg-card);
   color: var(--text-primary);
-  border: 1px solid var(--border-color);
+  border: 2px solid var(--border-chrome);
+  box-shadow: var(--shadow-chrome);
+  transition: all 0.3s ease;
 }
 
 .btn-secondary:hover {
-  background: var(--bg-card-hover);
-  border-color: var(--accent-cyan);
+  background: var(--gradient-chrome);
+  border-color: var(--chrome-light);
+  color: #1a1a1f;
+  font-weight: 700;
+  transform: translateY(-2px);
 }
 
 /* Stats Grid */
@@ -443,8 +568,9 @@ body {
 }
 
 .stats-card:hover {
-  transform: translateY(-2px);
-  box-shadow: var(--shadow-md);
+  transform: translateY(-4px);
+  box-shadow: var(--shadow-highway);
+  border-color: var(--highway-yellow);
 }
 
 .stats-icon {
@@ -454,13 +580,13 @@ body {
 .stats-content h4 {
   font-size: 0.85rem;
   color: var(--text-secondary);
-  font-weight: 500;
+  font-weight: 700;
   margin-bottom: 0.25rem;
 }
 
 .stats-value {
   font-size: 1.5rem;
-  font-weight: 700;
+  font-weight: 800;
   color: var(--text-primary);
   font-family: var(--font-mono);
 }
@@ -469,8 +595,8 @@ body {
 .processing-card {
   text-align: center;
   padding: 3rem;
-  background: linear-gradient(135deg, rgba(79, 195, 247, 0.1) 0%, rgba(179, 136, 255, 0.1) 100%);
-  border: 1px solid rgba(79, 195, 247, 0.3);
+  background: linear-gradient(135deg, rgba(255, 140, 66, 0.1) 0%, rgba(255, 179, 128, 0.1) 100%);
+  border: 1px solid rgba(255, 140, 66, 0.3);
   border-radius: var(--border-radius-lg);
 }
 
@@ -478,15 +604,17 @@ body {
   width: 60px;
   height: 60px;
   border: 4px solid var(--border-color);
-  border-top-color: var(--accent-cyan);
-  border-right-color: var(--accent-purple);
+  border-top-color: var(--highway-yellow);
+  border-right-color: var(--highway-orange);
   border-radius: 50%;
-  animation: spin 1s linear infinite;
+  animation: spin 0.9s ease-in-out infinite;
   margin: 0 auto 1.5rem;
+  filter: drop-shadow(0 0 10px rgba(255, 215, 0, 0.5));
 }
 
 .processing-card h3 {
   font-size: 1.5rem;
+  font-weight: 700;
   margin-bottom: 0.75rem;
   color: var(--text-primary);
 }
@@ -505,13 +633,14 @@ body {
   color: var(--text-muted);
 }
 
-/* Completion Card */
+/* Completion Card - Highway Success */
 .completion-card {
   text-align: center;
   padding: 3rem;
-  background: linear-gradient(135deg, rgba(76, 175, 80, 0.1) 0%, rgba(102, 187, 106, 0.05) 100%);
-  border: 1px solid rgba(76, 175, 80, 0.3);
+  background: linear-gradient(135deg, rgba(50, 205, 50, 0.12) 0%, rgba(76, 255, 80, 0.08) 100%);
+  border: 2px solid rgba(50, 205, 50, 0.5);
   border-radius: var(--border-radius-lg);
+  box-shadow: 0 0 35px rgba(50, 205, 50, 0.3);
 }
 
 .completion-icon {
@@ -521,8 +650,15 @@ body {
 }
 
 @keyframes bounce {
-  0%, 100% { transform: translateY(0); }
-  50% { transform: translateY(-10px); }
+
+  0%,
+  100% {
+    transform: translateY(0);
+  }
+
+  50% {
+    transform: translateY(-10px);
+  }
 }
 
 .completion-card h3 {
@@ -539,20 +675,23 @@ body {
 .output-filename {
   display: inline-block;
   padding: 0.5rem 1rem;
-  background: var(--bg-card);
+  background: var(--bg-secondary);
   border-radius: 8px;
   font-family: var(--font-mono);
   font-size: 0.85rem;
-  color: var(--accent-cyan);
+  color: var(--highway-yellow);
+  border: 1px solid var(--highway-yellow);
+  box-shadow: 0 0 15px rgba(255, 215, 0, 0.3);
 }
 
-/* Error Card */
+/* Error Card - Highway Alert */
 .error-card {
   text-align: center;
   padding: 3rem;
-  background: linear-gradient(135deg, rgba(239, 83, 80, 0.1) 0%, rgba(229, 115, 115, 0.05) 100%);
-  border: 1px solid rgba(239, 83, 80, 0.3);
+  background: linear-gradient(135deg, rgba(255, 68, 68, 0.12) 0%, rgba(255, 100, 100, 0.08) 100%);
+  border: 2px solid rgba(255, 68, 68, 0.5);
   border-radius: var(--border-radius-lg);
+  box-shadow: 0 0 35px rgba(255, 68, 68, 0.25);
 }
 
 .error-icon {
@@ -587,9 +726,10 @@ body {
 }
 
 .info-card:hover {
-  transform: translateY(-4px);
-  box-shadow: var(--shadow-lg);
-  border-color: var(--accent-cyan);
+  transform: translateY(-6px);
+  box-shadow: var(--shadow-highway);
+  border-color: var(--highway-yellow);
+  background: var(--bg-card-hover);
 }
 
 .info-icon {
@@ -599,6 +739,7 @@ body {
 
 .info-card h4 {
   font-size: 1.1rem;
+  font-weight: 700;
   margin-bottom: 0.75rem;
   color: var(--text-primary);
 }
@@ -609,12 +750,14 @@ body {
   line-height: 1.7;
 }
 
-/* Footer */
+/* Footer - Highway Style */
 .footer {
   padding: 2rem;
   text-align: center;
-  background: var(--bg-secondary);
-  border-top: 1px solid var(--border-color);
+  background: var(--gradient-road);
+  border-top: 3px solid var(--highway-yellow);
+  border-image: var(--gradient-primary) 1;
+  box-shadow: 0 -4px 20px rgba(0, 0, 0, 0.5);
 }
 
 .footer p {
@@ -634,27 +777,27 @@ body {
     flex-direction: column;
     gap: 1rem;
   }
-  
+
   .header-stats {
     flex-wrap: wrap;
     justify-content: center;
   }
-  
+
   .section-header h2 {
     font-size: 1.75rem;
   }
-  
+
   .job-header {
     flex-direction: column;
     gap: 1rem;
     text-align: center;
   }
-  
+
   .job-actions {
     flex-wrap: wrap;
     justify-content: center;
   }
-  
+
   .file-upload {
     padding: 2rem 1.5rem;
   }
@@ -701,8 +844,10 @@ body {
 
 .tab-btn.active {
   background: var(--gradient-primary);
-  color: #000;
-  box-shadow: 0 4px 15px rgba(79, 195, 247, 0.3);
+  color: #1a1a1f;
+  font-weight: 800;
+  box-shadow: 0 6px 20px rgba(255, 215, 0, 0.5), 0 0 25px rgba(255, 215, 0, 0.3);
+  transform: translateY(-2px);
 }
 
 .tab-icon {
@@ -741,16 +886,17 @@ body {
 
 .audit-file-upload:hover,
 .audit-file-upload.drag-active {
-  border-color: var(--accent-cyan);
-  background: rgba(79, 195, 247, 0.05);
+  border-color: var(--accent-orange);
+  background: rgba(255, 140, 66, 0.05);
   box-shadow: var(--shadow-glow);
 }
 
 .audit-file-upload.has-file {
   border-style: solid;
   border-color: var(--accent-green);
-  background: rgba(76, 175, 80, 0.05);
+  background: rgba(50, 205, 50, 0.08);
   cursor: default;
+  box-shadow: 0 0 25px rgba(50, 205, 50, 0.25);
 }
 
 .audit-file-icon {
@@ -830,8 +976,8 @@ body {
 .audit-arrow span {
   font-size: 1.25rem;
   font-weight: 700;
-  color: var(--accent-purple);
-  background: rgba(179, 136, 255, 0.15);
+  color: var(--accent-orange-deep);
+  background: rgba(255, 140, 66, 0.15);
   padding: 0.75rem 1rem;
   border-radius: 50%;
 }
@@ -843,11 +989,14 @@ body {
 }
 
 .btn-audit {
-  background: linear-gradient(135deg, #ff9800 0%, #ffc107 100%);
-  color: #000;
+  background: linear-gradient(135deg, #FF8C00 0%, #FFD700 50%, #FFBF00 100%);
+  color: #1a1a1f;
   padding: 1rem 2.5rem;
   font-size: 1.1rem;
-  box-shadow: 0 4px 20px rgba(255, 152, 0, 0.3);
+  font-weight: 800;
+  box-shadow: 0 6px 25px rgba(255, 140, 0, 0.5), 0 0 35px rgba(255, 215, 0, 0.3);
+  text-transform: uppercase;
+  letter-spacing: 1px;
 }
 
 .btn-audit:hover:not(.disabled) {
@@ -939,7 +1088,7 @@ body {
 
 .accuracy-value.secondary {
   font-size: 2rem;
-  color: var(--accent-cyan);
+  color: var(--accent-orange);
 }
 
 .accuracy-label {
@@ -1019,7 +1168,7 @@ body {
 }
 
 .comparison-item.highlight {
-  background: rgba(79, 195, 247, 0.1);
+  background: rgba(255, 140, 66, 0.1);
   margin: 0.5rem -1.5rem -1.25rem;
   padding: 1rem 1.5rem;
   border-radius: 0 0 var(--border-radius) var(--border-radius);
@@ -1054,26 +1203,26 @@ body {
   .audit-uploads {
     flex-direction: column;
   }
-  
+
   .audit-arrow {
     transform: rotate(90deg);
     padding: 1rem 0;
   }
-  
+
   .accuracy-stats {
     flex-direction: column;
     gap: 1rem;
   }
-  
+
   .audit-stats-grid {
     grid-template-columns: repeat(2, 1fr);
   }
-  
+
   .tab-switcher {
     flex-direction: column;
     width: 100%;
   }
-  
+
   .tab-btn {
     justify-content: center;
   }
