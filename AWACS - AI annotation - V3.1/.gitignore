@@ -164,3 +164,6 @@ coverage.xml
 *.backup
 ~$*
 
+startup_log.txt
+
+check_keys.py

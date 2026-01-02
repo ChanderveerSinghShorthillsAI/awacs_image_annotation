@@ -58,20 +58,20 @@ def get_all_image_urls(driver, ad_id, timeout=10):
         driver.get(url)
         # Wait for images to load
         WebDriverWait(driver, timeout).until(EC.presence_of_all_elements_located((By.CSS_SELECTOR, "img.rsImg")))
-        time.sleep(1)  # Give extra time for lazy-loaded images
+        time.sleep(0.3)  # OPTIMIZED: 1s -> 0.3s
         
         # Try to interact with gallery to load more images (aim for 3 images)
         try:
             arrow = driver.find_element(By.CSS_SELECTOR, ".rsArrowRight .rsArrowIcn")
             action = ActionChains(driver)
-            # Click more times to reveal all images - try up to 10 times to get at least 3 images
-            for click_count in range(10):
+            # OPTIMIZED: Reduced max clicks from 10 to 4
+            for click_count in range(4):
                 try:
                     action.click(arrow).perform()
-                    time.sleep(0.4)  # Wait for images to load after each click
+                    time.sleep(0.15)  # OPTIMIZED: 0.4s -> 0.15s
                     # Check how many images we have now
                     current_imgs = driver.find_elements(By.CSS_SELECTOR, "img.rsImg")
-                    current_urls = []
+                    current_urls = []  
                     for img in current_imgs:
                         src = img.get_attribute("src") or img.get_attribute("data-src") or img.get_attribute("data-lazy-src")
                         if src and "placeholder" not in src.lower() and src not in current_urls:
@@ -83,8 +83,8 @@ def get_all_image_urls(driver, ad_id, timeout=10):
         except:
             pass  # No arrow found, continue anyway
         
-        # Wait a bit more for all images to load
-        time.sleep(0.8)
+        # OPTIMIZED: Reduced final wait from 0.8s to 0.2s
+        time.sleep(0.2)
         
         imgs = driver.find_elements(By.CSS_SELECTOR, "img.rsImg")
         urls = []
@@ -128,7 +128,7 @@ def get_images_with_caching(image_urls):
                         img_bytes_list.append(f.read())
                 else:
                     # Download with a short timeout using the session
-                    r = session.get(url, timeout=8)
+                    r = session.get(url, timeout=5)  # OPTIMIZED: 8s -> 5s
                     if r.status_code == 200:
                         content = r.content
                         img_bytes_list.append(content)

@@ -174,28 +174,38 @@ def check_promotional_image(ad_img_bytes: bytes, yoda_instance=None, key_queue: 
     
     prompt_text = """You are an image validator for truck listings. Your ONLY task is to determine if this image shows a REAL truck available for sale, or if it's a promotional/placeholder image.
 
-CRITICAL: Answer with ONLY "YES" or "NO" followed by a brief reason.
+CRITICAL: Your DEFAULT answer should be "NO" (real listing). ONLY answer "YES" if you are ABSOLUTELY CERTAIN it's a placeholder.
 
-Answer "YES" (this is a promotional/placeholder - DO NOT classify) ONLY if you see CLEAR and OBVIOUS evidence of:
-1. Explicit text saying "COMING SOON", "Coming Soon", "Available Soon", "Check Back Soon", "Image Coming Soon", "Photo Not Available", or "No Image Available" - text must be clearly visible and unambiguous
-2. Vehicle COMPLETELY covered with a sheet, cloth, tarp, or cover where NO vehicle parts are visible at all
-3. Clear placeholder graphics: camera icons with text, "Image Coming Soon" graphics, or obvious placeholder symbols
-4. Images showing ONLY a dealership building, sign, or logo with NO vehicle visible anywhere in the image
-5. Obvious promotional banners or advertisements with marketing text overlaying the image
-6. Watermarks clearly saying "Sample", "Example", "Stock Photo", or similar
+Answer "YES" (this is a promotional/placeholder - DO NOT classify) ONLY if you see ALL of these conditions:
+1. **ZERO vehicle is visible** - You cannot see ANY truck, cab, wheels, bed, body, or vehicle features whatsoever
+2. **AND** one of these OBVIOUS placeholder indicators is present:
+   - Large text saying "COMING SOON", "Coming Soon", "Available Soon", "Image Coming Soon", "Photo Not Available", "No Image Available" taking up most of the image
+   - Pure placeholder graphics: large camera icon with "no image" text, or "Image Coming Soon" graphic
+   - Completely black/white screen with NO vehicle visible
+   - Only a dealership building/logo with NO vehicle anywhere in frame
 
-Answer "NO" (this is a real listing - proceed with classification) if:
-- You can see an actual truck with visible body, wheels, or vehicle features (even if partially visible)
-- The image shows a real vehicle that can be classified, even if slightly blurry, dark, or has shadows
-- The vehicle is partially visible but main features (cab, bed, body type, wheels) are discernible
-- You can identify the vehicle type, even if the image quality is not perfect
-- The vehicle has minor obstructions but is still classifiable
+Answer "NO" (this is a real listing - proceed with classification) in ALL other cases, including:
+- ANY truck or vehicle is visible in the image, no matter how small, blurry, dark, or unclear
+- You can see vehicle parts like wheels, cab, bed, body type, bumper, or any identifiable truck features
+- The image is blurry but shows a truck shape or vehicle outline
+- The image is dark but you can make out a vehicle
+- The image has shadows, reflections, or poor lighting but a vehicle is present
+- The vehicle is partially obscured by objects, people, or other vehicles but still visible
+- The image has dealership backgrounds, watermarks, or text BUT a vehicle is visible
+- The vehicle is far away or small in the frame but still present
+- The image quality is poor but a vehicle can be identified
+- You have ANY doubt - default to "NO" (real listing)
+
+**KEY RULE: If you can see ANY truck or vehicle features at all, answer "NO" - it's a real listing!**
 
 IMPORTANT: 
-- When in doubt, answer "NO" (it's a real listing) - only flag as promotional if you are CERTAIN it's a placeholder
-- Slightly blurry images, dark images, or images with shadows are still REAL listings if you can see the vehicle
-- Images with dealership backgrounds are fine as long as a vehicle is visible
-- Only flag as promotional if the vehicle is COMPLETELY covered or there's CLEAR promotional text
+- Your job is NOT to judge image quality or clarity - your job is ONLY to filter out obvious placeholder/promotional images with NO vehicle
+- Blurry images of trucks are REAL listings (answer "NO")
+- Dark images of trucks are REAL listings (answer "NO")  
+- Low quality images of trucks are REAL listings (answer "NO")
+- Images with text/watermarks but showing a truck are REAL listings (answer "NO")
+- When in ANY doubt, answer "NO" (real listing)
+- ONLY answer "YES" if you are 100% CERTAIN there is NO vehicle visible and it's an obvious placeholder
 
 Format your response as: "YES - [reason]" or "NO - [reason]"
 """
@@ -244,7 +254,7 @@ Format your response as: "YES - [reason]" or "NO - [reason]"
             
             t_start = time.time()
             with open(os.devnull, 'w') as f, contextlib.redirect_stdout(f), contextlib.redirect_stderr(f):
-                response = model.generate_content(parts, request_options={'timeout': 60})
+                response = model.generate_content(parts, request_options={'timeout': 30})  # OPTIMIZED: 60s -> 30s
             duration = time.time() - t_start
 
             key_idx = _current_key_info['original_index']
@@ -279,8 +289,8 @@ Format your response as: "YES - [reason]" or "NO - [reason]"
                 
                 if attempt == 1:
                     if status_queue and "429" in error_msg: status_queue.put({"type": "rate_limit"})
-                    log_msg(f"⚠️ Promotional check hiccup (Strike 1). Waiting 5s. Error: {e}", worker_id)
-                    time.sleep(5)
+                    log_msg(f"⚠️ Promotional check hiccup (Strike 1). Waiting 3s. Error: {e}", worker_id)
+                    time.sleep(3)  # OPTIMIZED: 5s -> 3s
                 
                 elif attempt == 2:
                     if status_queue and "429" in error_msg: status_queue.put({"type": "rate_limit"})
@@ -379,32 +389,37 @@ CRITICAL RULES:
      * When in doubt between Single vs Dually, look for the "hip" bulge or dual rim pattern
    - **Default Assumption for Commercial Trucks:** Box Trucks, Cutaways, and Stepvans should be assumed Dually unless you clearly see a single thin rear tire
 
-3. **Promotional/Coming Soon Image Detection (VERIFICATION):**
-   - This image has already passed a pre-check, but verify if needed:
-     * ONLY use "Image Not Clear" if you see CLEAR, OBVIOUS promotional text like "COMING SOON", "Coming Soon", "Available Soon", "Image Coming Soon", or "Photo Not Available" - text must be clearly visible
-     * ONLY use "Image Not Clear" if the vehicle is COMPLETELY covered with a sheet/cloth/tarp/cover where NO vehicle parts are visible
-     * ONLY use "Image Not Clear" if you see obvious placeholder graphics with text like "Image Coming Soon" or camera icons with placeholder text
-     * ONLY use "Image Not Clear" if the image shows ONLY a dealership building/sign/logo with NO vehicle visible anywhere
-   - **DO NOT use "Image Not Clear"** for:
-     * Slightly blurry images where vehicle is still visible
-     * Dark images or images with shadows where vehicle features are discernible
-     * Images with dealership backgrounds (these are normal for listings)
-     * Images where vehicle is partially visible but classifiable
-   - **When in doubt, classify the vehicle normally** - only use "Image Not Clear" if you are CERTAIN it's a placeholder/promotional image.
-
-4. **"Image Not Clear" Rule (Use Sparingly):**
-   - Use "Image Not Clear" ONLY for:
-     * Clear promotional/Coming Soon images with obvious text (see rule #3 above)
-     * Images that are COMPLETELY unusable (completely black screen, pure noise/static, extreme blur where ZERO vehicle features are visible, or image completely failed to load)
-   - DO NOT use "Image Not Clear" if:
-     * The image is slightly blurry but you can still see the actual vehicle and identify its type
-     * The image has shadows but vehicle is visible and classifiable
-     * The image is dark but vehicle shape, body type, or wheels are discernible
-     * The image is partially obscured but main features (cab, bed, body type) are visible
-     * You can see an actual vehicle that can be classified, even if quality is not perfect
-     * The vehicle has minor obstructions but is still identifiable
-   - **Default to classifying the vehicle** - only use "Image Not Clear" when you are CERTAIN the image cannot be classified at all.
-   - If you can identify ANY real vehicle features (body type, wheels, cab, bed, etc.), you MUST classify it normally, even if the image quality is not perfect.
+3. **"Image Not Clear" Rule (EXTREMELY STRICT - Use Only When Truly Impossible to Classify):**
+   
+   ⚠️ **CRITICAL: This image has already passed a pre-check filter. Do NOT return "Image Not Clear" unless ABSOLUTELY NECESSARY!**
+   
+   **ONLY use "Image Not Clear" if the image is COMPLETELY IMPOSSIBLE to classify:**
+   - The image is completely black, white, or corrupted with NO vehicle visible
+   - The image failed to load (shows error or blank screen)
+   - You see ZERO vehicle features - no wheels, no cab, no body, no truck parts whatsoever
+   - The image is 100% a placeholder graphic (camera icon with "no image" text) and NO vehicle is present
+   
+   **You MUST classify the vehicle normally (DO NOT use "Image Not Clear") if:**
+   - You can see ANY truck or vehicle in the image, even if:
+     * The image is blurry, dark, grainy, or low quality
+     * The vehicle is far away or small in the frame
+     * There are shadows, reflections, or poor lighting
+     * The image has text, watermarks, or dealership backgrounds
+     * The vehicle is partially obscured by objects, people, or other vehicles
+     * Only part of the vehicle is visible (e.g., just the cab or just the bed)
+     * The image angle is awkward or unusual
+     * Multiple vehicles are in the frame
+   - You can identify ANY of these vehicle features:
+     * Wheels/tires (front or rear)
+     * Cab/driver compartment
+     * Bed/cargo area
+     * Body panels
+     * Bumpers or grille
+     * Vehicle outline or silhouette
+   
+   **STRICT RULE: If you can see a vehicle and identify what type it is (even with low confidence), you MUST classify it. DO NOT use "Image Not Clear" just because the image quality is poor.**
+   
+   **Your job is to classify vehicles, not judge image quality. Focus on identifying the truck type, not the image clarity.**
 
 OUTPUT FORMAT INSTRUCTIONS:
 - **ONLY** return the numbered list of categories with confidence scores.
@@ -463,7 +478,7 @@ OUTPUT FORMAT INSTRUCTIONS:
             
             t_start = time.time()
             with open(os.devnull, 'w') as f, contextlib.redirect_stdout(f), contextlib.redirect_stderr(f):
-                response = model.generate_content(parts, request_options={'timeout': 90})
+                response = model.generate_content(parts, request_options={'timeout': 45})  # OPTIMIZED: 90s -> 45s
             duration = time.time() - t_start
 
             key_idx = _current_key_info['original_index']
@@ -497,14 +512,14 @@ OUTPUT FORMAT INSTRUCTIONS:
                 
                 if attempt == 1:
                     if status_queue and "429" in error_msg: status_queue.put({"type": "rate_limit"})
-                    log_msg(f"⚠️ API Hiccup (Strike 1). Waiting 30s. Error: {e}", worker_id)
-                    time.sleep(30)
+                    log_msg(f"⚠️ API Hiccup (Strike 1). Waiting 5s. Error: {e}", worker_id)
+                    time.sleep(5)  # OPTIMIZED: 30s -> 5s
                 
                 elif attempt == 2:
                     if status_queue and "429" in error_msg: status_queue.put({"type": "rate_limit"})
                     if status_queue: status_queue.put({"worker_id": worker_id, "state": "🥶 Cooling", "ad_id": ad_id})
-                    log_msg(f"🧊 API Freeze (Strike 2). Cooling 3 MIN. Error: {e}", worker_id)
-                    time.sleep(180) 
+                    log_msg(f"🧊 API Freeze (Strike 2). Cooling 15s. Error: {e}", worker_id)
+                    time.sleep(15)  # OPTIMIZED: 180s -> 15s (Yoda handles rate limiting) 
                 
                 elif attempt >= max_retries:
                     log_msg(f"💀 Key #{_current_key_info['original_index']} DEAD (Strike 3). Switching.", worker_id)
@@ -581,7 +596,7 @@ def classify_with_refinement(categories: list, rule: dict, ad_img_bytes: bytes,
             log_msg(f"📤 Sending Refinement Request...", worker_id)
             model = setup_genai_client()
             with open(os.devnull, 'w') as f, contextlib.redirect_stdout(f), contextlib.redirect_stderr(f):
-                 response = model.generate_content([prompt, {"inline_data": {"mime_type": "image/jpeg", "data": base64.b64encode(ad_img_bytes).decode("utf-8")}}], request_options={'timeout': 90})
+                 response = model.generate_content([prompt, {"inline_data": {"mime_type": "image/jpeg", "data": base64.b64encode(ad_img_bytes).decode("utf-8")}}], request_options={'timeout': 45})  # OPTIMIZED: 90s -> 45s
             
             key_idx = _current_key_info['original_index']
             _key_usage_stats.setdefault(key_idx, {'success': 0, 'quota_failure': 0})['success'] += 1
@@ -624,13 +639,13 @@ def classify_with_refinement(categories: list, rule: dict, ad_img_bytes: bytes,
                 attempt += 1
                 if attempt == 1:
                     if status_queue and "429" in error_msg: status_queue.put({"type": "rate_limit"})
-                    log_msg(f"⚠️ Refinement Hiccup (Strike 1). Waiting 30s. Error: {e}", worker_id)
-                    time.sleep(30)
+                    log_msg(f"⚠️ Refinement Hiccup (Strike 1). Waiting 5s. Error: {e}", worker_id)
+                    time.sleep(5)  # OPTIMIZED: 30s -> 5s
                 elif attempt == 2:
                     if status_queue and "429" in error_msg: status_queue.put({"type": "rate_limit"})
                     if status_queue: status_queue.put({"worker_id": worker_id, "state": "🥶 Cooling", "ad_id": ad_id})
-                    log_msg(f"🧊 Refinement Freeze (Strike 2). Cooling 3 MIN...", worker_id)
-                    time.sleep(180)
+                    log_msg(f"🧊 Refinement Freeze (Strike 2). Cooling 15s...", worker_id)
+                    time.sleep(15)  # OPTIMIZED: 180s -> 15s
                 elif attempt >= max_retries:
                     log_msg(f"💀 Key DEAD during refinement. Switching.", worker_id)
                     key_idx = _current_key_info['original_index']
@@ -865,7 +880,7 @@ Examples:
             
             t_start = time.time()
             with open(os.devnull, 'w') as f, contextlib.redirect_stdout(f), contextlib.redirect_stderr(f):
-                response = model.generate_content(parts, request_options={'timeout': 90})
+                response = model.generate_content(parts, request_options={'timeout': 45})  # OPTIMIZED: 90s -> 45s
             duration = time.time() - t_start
 
             key_idx = _current_key_info['original_index']
@@ -903,8 +918,8 @@ Examples:
                 
                 if attempt == 1:
                     if status_queue and "429" in error_msg: status_queue.put({"type": "rate_limit"})
-                    log_msg(f"⚠️ Dually Verification Hiccup (Strike 1). Waiting 5s. Error: {e}", worker_id)
-                    time.sleep(5)
+                    log_msg(f"⚠️ Dually Verification Hiccup (Strike 1). Waiting 3s. Error: {e}", worker_id)
+                    time.sleep(3)  # OPTIMIZED: 5s -> 3s
                 
                 elif attempt == 2:
                     if status_queue and "429" in error_msg: status_queue.put({"type": "rate_limit"})
