@@ -9,13 +9,14 @@ from selenium.webdriver.chrome.options import Options
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 from selenium.webdriver.common.action_chains import ActionChains
+from webdriver_manager.chrome import ChromeDriverManager
 
 # Import the centrally managed config object
 from .config_loader import config
 from .utils import log_msg
 
 def setup_driver(headless=False):
-    """Initializes and returns a Selenium WebDriver instance using the local chromedriver."""
+    """Initializes and returns a Selenium WebDriver instance using automatically managed ChromeDriver."""
     chrome_options = Options()
     
     # --- CRITICAL SPEED FIX ---
@@ -40,8 +41,9 @@ def setup_driver(headless=False):
     chrome_options.add_experimental_option("useAutomationExtension", False)
     chrome_options.add_experimental_option("prefs", {"profile.default_content_setting_values.notifications": 2})
     
-    # Use the chromedriver_path from the central config
-    service = Service(config.chromedriver_path)
+    # Use webdriver-manager to automatically download and manage ChromeDriver
+    # This eliminates the need for chromedriver.exe in the repository
+    service = Service(ChromeDriverManager().install())
     # Suppress driver logs
     try:
         service.log_output = open(os.devnull, "w")

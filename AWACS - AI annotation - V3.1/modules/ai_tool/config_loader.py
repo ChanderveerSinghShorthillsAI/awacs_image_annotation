@@ -18,7 +18,6 @@ def load_config():
 
     try:
         # Paths
-        config.chromedriver_path = os.path.join(project_root, config_parser.get('Paths', 'ChromedriverPath'))
         config.scrapper_output_dir = os.path.join(project_root, config_parser.get('Paths', 'ScrapperOutputDir'))
         config.log_dir = os.path.join(project_root, config_parser.get('Paths', 'LogDir'))
         config.output_dir = os.path.join(project_root, config_parser.get('Paths', 'OutputDir'))

@@ -4,6 +4,7 @@ openpyxl>=3.1.2
 
 # For web scraping and browser automation
 selenium>=4.21.0
+webdriver-manager>=4.0.0
 
 # For making HTTP requests to download images
 requests>=2.31.0
@@ -13,3 +14,6 @@ google-generativeai>=0.7.1
 
 # For progress bar
 tqdm>=4.66.4
+
+# For computer vision and image processing
+opencv-python>=4.8.0
