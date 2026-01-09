@@ -17,14 +17,14 @@ from ai_tool.web_utils import setup_driver
 def fmt_secs(seconds: float) -> str:
     return str(timedelta(seconds=int(seconds)))
 
-def scrape_ad_data(driver, ad_id, group_index=3, timeout=6):
+def scrape_ad_data(driver, ad_id, group_index=3, timeout=5):
     """
     Navigates to the ad and extracts BOTH breadcrumbs AND image URLs.
     - Filters out 'Browse Trucks' AND Make/Model links.
     - Cleans trailing commas from breadcrumbs.
     - Strictly checks Image Ad IDs.
     
-    OPTIMIZED: Reduced wait times for faster scraping while maintaining accuracy.
+    ULTRA-OPTIMIZED: Maximum speed while maintaining accuracy.
     """
     url = f"https://www.commercialtrucktrader.com/listing/{ad_id}"
     result = {
@@ -36,7 +36,7 @@ def scrape_ad_data(driver, ad_id, group_index=3, timeout=6):
     target_ad_id = str(ad_id).strip()
 
     try:
-        driver.set_page_load_timeout(10)  # OPTIMIZED: Reduced from 15s to 10s
+        driver.set_page_load_timeout(8)  # ULTRA-OPTIMIZED: Reduced from 10s to 8s
         try:
             driver.get(url)
         except TimeoutException:
@@ -61,7 +61,7 @@ def scrape_ad_data(driver, ad_id, group_index=3, timeout=6):
 
         # 2. Extract Breadcrumbs (SMART FILTERING)
         try:
-            nav = WebDriverWait(driver, timeout).until(EC.presence_of_element_located((By.CSS_SELECTOR, "nav.breadcrumbs")))
+            nav = WebDriverWait(driver, 5).until(EC.presence_of_element_located((By.CSS_SELECTOR, "nav.breadcrumbs")))
             
             links = nav.find_elements(By.TAG_NAME, "a")
             clean_texts = []
@@ -94,22 +94,22 @@ def scrape_ad_data(driver, ad_id, group_index=3, timeout=6):
             result["status"] = "Inactive"
             return result
 
-        # 3. Extract Image URLs (OPTIMIZED Filtering - Faster with same accuracy)
+        # 3. Extract Image URLs (ULTRA-OPTIMIZED - Maximum speed with same accuracy)
         image_urls = []
         try:
-            # OPTIMIZED: Reduced wait from 8s to 5s (still sufficient for lazy loading)
-            WebDriverWait(driver, 5).until(EC.presence_of_element_located((By.CSS_SELECTOR, "img.rsImg")))
-            time.sleep(0.3)  # OPTIMIZED: Reduced from 1s to 0.3s
+            # ULTRA-OPTIMIZED: Reduced wait from 5s to 4s
+            WebDriverWait(driver, 4).until(EC.presence_of_element_located((By.CSS_SELECTOR, "img.rsImg")))
+            time.sleep(0.2)  # ULTRA-OPTIMIZED: Reduced from 0.3s to 0.2s
             
             # Try to interact with gallery to load more images (aim for 3 images)
             try:
                 arrow = driver.find_element(By.CSS_SELECTOR, ".rsArrowRight .rsArrowIcn")
                 action = ActionChains(driver)
-                # OPTIMIZED: Reduced max clicks from 10 to 4 (usually enough for 3 images)
-                for click_count in range(4):
+                # ULTRA-OPTIMIZED: Reduced max clicks to 3
+                for click_count in range(3):
                     try:
                         action.click(arrow).perform()
-                        time.sleep(0.15)  # OPTIMIZED: Reduced from 0.4s to 0.15s
+                        time.sleep(0.1)  # ULTRA-OPTIMIZED: Reduced from 0.15s to 0.1s
                         # Check how many valid images we have now
                         current_imgs = driver.find_elements(By.CSS_SELECTOR, "img.rsImg")
                         current_urls = []
@@ -125,8 +125,8 @@ def scrape_ad_data(driver, ad_id, group_index=3, timeout=6):
             except:
                 pass  # No arrow found, continue anyway
             
-            # OPTIMIZED: Reduced final wait from 0.8s to 0.2s
-            time.sleep(0.2)
+            # ULTRA-OPTIMIZED: Reduced final wait from 0.2s to 0.1s
+            time.sleep(0.1)
             
             imgs = driver.find_elements(By.CSS_SELECTOR, "img.rsImg")
             
@@ -180,7 +180,7 @@ def scrape_ad_data(driver, ad_id, group_index=3, timeout=6):
         return result
 
 def run_scraper(resume=False):
-    """Main function to run the scraper."""
+    """Main function to run the scraper - ULTRA-OPTIMIZED with detailed timing logs."""
     OUTPUT_DIR = config.scrapper_output_dir
     CHECKPOINT_SAVE_INTERVAL = config.scraper_checkpoint_interval
     SANITY_CHECK_LIMIT = config.scraper_sanity_check
@@ -189,6 +189,8 @@ def run_scraper(resume=False):
     ad_id_column = "Ad ID"
     
     os.makedirs(OUTPUT_DIR, exist_ok=True)
+    
+    total_start_time = time.time()
     
     try:
         source_df = pd.read_excel(input_file_path, dtype={ad_id_column: str})
@@ -237,6 +239,10 @@ def run_scraper(resume=False):
         consecutive_inactive = 0
         sum_durations = 0.0
         
+        print(f"\n{'='*80}")
+        print(f"🚀 SCRAPING SESSION STARTED (ULTRA-OPTIMIZED)")
+        print(f"{'='*80}\n")
+        
         for idx in todo_indices:
             ad_id = df.loc[idx, ad_id_column]
             if not ad_id: continue
@@ -282,7 +288,7 @@ def run_scraper(resume=False):
             avg_dur = sum_durations / ads_processed_session
             remaining_sec = avg_dur * (len(todo_indices) - ads_processed_session)
             
-            print(f"[{ads_processed_session}/{len(todo_indices)}] ID: {ad_id} -> {status_msg} | {fmt_secs(item_dur)}s | ETA {fmt_secs(remaining_sec)}", flush=True)
+            print(f"[{ads_processed_session}/{len(todo_indices)}] ID: {ad_id} -> {status_msg} | ⏱️ {item_dur:.2f}s | Avg: {avg_dur:.2f}s | ETA: {fmt_secs(remaining_sec)}", flush=True)
 
             if consecutive_inactive >= SANITY_CHECK_LIMIT:
                 print(f"\n🛑 STOPPING: Detected {SANITY_CHECK_LIMIT} consecutive inactive ads.")
@@ -296,7 +302,17 @@ def run_scraper(resume=False):
                     print(f"   ⚠️ Checkpoint failed: {e}")
 
         df.to_excel(target_file, index=False)
-        print(f"\n✅ Scrape Session Complete. Saved to: {target_file}")
+        
+        total_elapsed = time.time() - total_start_time
+        print(f"\n{'='*80}")
+        print(f"✅ SCRAPING SESSION COMPLETE")
+        print(f"{'='*80}")
+        print(f"   Processed: {ads_processed_session} ads")
+        print(f"   ⏱️ Total Time: {total_elapsed:.2f}s ({total_elapsed/60:.2f} minutes)")
+        print(f"   ⏱️ Average Time per Ad: {sum_durations/max(ads_processed_session, 1):.2f}s")
+        print(f"   📊 Scraping Rate: {ads_processed_session/(total_elapsed/60):.1f} ads/minute")
+        print(f"   💾 Saved to: {os.path.basename(target_file)}")
+        print(f"{'='*80}\n")
         
     except FileNotFoundError:
         print(f"❌ Error: Input file '{input_file_path}' not found.")

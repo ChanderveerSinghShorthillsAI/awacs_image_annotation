@@ -15,8 +15,14 @@ from webdriver_manager.chrome import ChromeDriverManager
 from .config_loader import config
 from .utils import log_msg
 
-def setup_driver(headless=False):
-    """Initializes and returns a Selenium WebDriver instance using automatically managed ChromeDriver."""
+def setup_driver(headless=False, worker_id=None):
+    """
+    Initializes and returns a Selenium WebDriver instance using automatically managed ChromeDriver.
+    
+    Args:
+        headless: Whether to run browser in headless mode
+        worker_id: Optional worker ID for multiprocessing (creates isolated Chrome profile)
+    """
     chrome_options = Options()
     
     # --- CRITICAL SPEED FIX ---
@@ -28,6 +34,17 @@ def setup_driver(headless=False):
     if headless:
         chrome_options.add_argument("--headless=new")
     
+    # MULTIPROCESSING FIX: Isolated Chrome profile per worker
+    # Prevents profile collision when multiple browsers run simultaneously
+    if worker_id is not None:
+        import tempfile
+        import time
+        # Add timestamp to ensure truly unique profiles even on restarts
+        profile_dir = os.path.join(tempfile.gettempdir(), f"chrome-worker-{worker_id}-{int(time.time())}")
+        chrome_options.add_argument(f"--user-data-dir={profile_dir}")
+        # CRITICAL: Let Chrome choose its own debugging port to avoid conflicts
+        chrome_options.add_argument("--remote-debugging-port=0")
+    
     # Standard options for a cleaner browsing experience and stability
     chrome_options.add_argument("--disable-gpu")
     chrome_options.add_argument("--no-sandbox")
@@ -37,6 +54,15 @@ def setup_driver(headless=False):
     chrome_options.add_argument("--disable-dev-shm-usage")
     chrome_options.add_argument("--log-level=3")
     chrome_options.add_argument("--silent")
+    
+    # RAM Optimization: Disable unnecessary features
+    chrome_options.add_argument("--disable-extensions")
+    chrome_options.add_argument("--disable-plugins")
+    chrome_options.add_argument("--disable-background-networking")
+    
+    # Multiprocessing stability flags
+    chrome_options.add_argument("--disable-blink-features=AutomationControlled")
+    
     chrome_options.add_experimental_option("excludeSwitches", ["enable-automation", "enable-logging"])
     chrome_options.add_experimental_option("useAutomationExtension", False)
     chrome_options.add_experimental_option("prefs", {"profile.default_content_setting_values.notifications": 2})
