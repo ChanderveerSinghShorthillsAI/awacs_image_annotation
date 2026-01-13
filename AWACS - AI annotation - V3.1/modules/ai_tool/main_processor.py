@@ -301,7 +301,8 @@ def _process_single_ad(ad_row: dict, category_data: dict, rules: dict,
             "stepvan",
             "cabover truck - coe",
             "cab-chassis",
-            "pickup truck"  # Heavy-duty pickups (F-350, RAM 3500, etc.) are commonly Duallys
+            "pickup truck",  # Heavy-duty pickups (F-350, RAM 3500, etc.) are commonly Duallys
+            "utility truck - service truck"  # Service trucks on heavy-duty chassis are often Duallys
         ]
         
         if any(hd_type in top_category for hd_type in high_dually_probability_types):

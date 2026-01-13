@@ -231,6 +231,68 @@ def scrape_process_worker(worker_id: int, job_queue, result_queue, max_images: i
                     except:
                         result["Image_URLs"] = ""
                 
+                # ==================== IMAGE RETRY MECHANISM ====================
+                # If active ad has 0 images, retry with longer wait times
+                if result["Breadcrumb_Top1"] and result["Breadcrumb_Top1"] != "Inactive ad":
+                    if not result["Image_URLs"]:  # 0 images for active ad
+                        print(f"   [W{worker_id}] 🔄 {ad_id}: 0 images - retrying with longer wait (2.5s)...", flush=True)
+                        time.sleep(2.5)  # Wait 2.5 seconds for images to fully load
+                        
+                        # Re-extract images with longer timeouts
+                        try:
+                            # Longer wait for image elements (12s instead of 8s)
+                            WebDriverWait(driver, 12).until(
+                                EC.presence_of_element_located((By.CSS_SELECTOR, "img.rsImg"))
+                            )
+                            time.sleep(0.8)  # Longer wait after detection
+                            
+                            # Try more gallery clicks with longer delays
+                            try:
+                                arrow = driver.find_element(By.CSS_SELECTOR, ".rsArrowRight .rsArrowIcn")
+                                action = ActionChains(driver)
+                                for click_count in range(7):  # More clicks on retry
+                                    try:
+                                        action.click(arrow).perform()
+                                        time.sleep(0.4)  # Longer delay between clicks
+                                        current_imgs = driver.find_elements(By.CSS_SELECTOR, "img.rsImg")
+                                        current_urls = []
+                                        for img in current_imgs:
+                                            src = img.get_attribute("src") or img.get_attribute("data-src") or img.get_attribute("data-lazy-src")
+                                            if src and "placeholder" not in src.lower() and src not in current_urls:
+                                                if src.startswith("http") or src.startswith("//"):
+                                                    current_urls.append(src)
+                                        if len(current_urls) >= 3:
+                                            break
+                                    except:
+                                        break
+                            except:
+                                pass
+                            
+                            time.sleep(0.6)  # Final wait before extraction
+                            
+                            imgs = driver.find_elements(By.CSS_SELECTOR, "img.rsImg")
+                            retry_image_urls = []
+                            
+                            for im in imgs:
+                                src = im.get_attribute("src") or im.get_attribute("data-src") or im.get_attribute("data-lazy-src")
+                                if not src:
+                                    continue
+                                elem_adid = im.get_attribute("data-adid")
+                                if elem_adid and str(elem_adid).strip() != ad_id:
+                                    continue
+                                if "placeholder" not in src.lower() and src not in retry_image_urls:
+                                    if src.startswith("http") or src.startswith("//"):
+                                        retry_image_urls.append(src)
+                            
+                            if retry_image_urls:
+                                result["Image_URLs"] = ",".join(retry_image_urls[:max_images])
+                                print(f"   [W{worker_id}] ✅ {ad_id}: Retry successful! Got {len(retry_image_urls)} images", flush=True)
+                            else:
+                                print(f"   [W{worker_id}] ⚠️ {ad_id}: Retry failed - still 0 images", flush=True)
+                        except Exception as retry_err:
+                            print(f"   [W{worker_id}] ⚠️ {ad_id}: Retry error: {str(retry_err)[:30]}", flush=True)
+                # ===============================================================
+                
                 listing_time = time.time() - listing_start
                 img_count = len(result["Image_URLs"].split(",")) if result["Image_URLs"] else 0
                 bc1 = result['Breadcrumb_Top1']

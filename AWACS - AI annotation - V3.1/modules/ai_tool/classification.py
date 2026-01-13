@@ -381,6 +381,7 @@ CRITICAL RULES:
      * Cutaway-Cube Van (90% are Duallys)
      * Stepvan (95% are Duallys)
      * Cab-Chassis with utility/service body (70% are Duallys)
+     * **Utility Truck - Service Truck (60% are Duallys - look for dual rear wheels under the service body compartments)**
      * Flatbed Truck (50% are Duallys)
      * Contractor Truck (40% are Duallys)
      * **Pickup Truck (30% are Duallys - especially heavy-duty models like Ford F-350, RAM 3500, Chevy 3500, GMC 3500)**
@@ -792,8 +793,10 @@ A "Dually" truck has TWO separate wheels/tires mounted on EACH SIDE of the rear 
    - **Cutaway-Cube Van** (90% are Duallys)
    - **Stepvan** (95% are Duallys)
    - **Cabover / COE commercial trucks** (80% are Duallys)
+   - **Utility Truck - Service Truck** (60% are Duallys) - Look for dual wheels under the service body compartments
    - **Heavy-Duty Pickup Trucks** (30% are Duallys) - Ford F-350/F-450, RAM 3500, Chevy 3500, GMC 3500
    - If you see these types, look EXTRA CAREFULLY for dually indicators
+   - **UTILITY/SERVICE TRUCK DUALLY TIPS**: Don't let the wide service body confuse you - look at the REAR WHEELS specifically (below/behind the compartments). Check for fender width at rear axle vs cab width.
    - **PICKUP TRUCK DUALLY TIPS**: Look for wide rear fenders that extend beyond the cab, double rear wheels visible from rear/side/3-quarter view, and front wheel hub extensions
 
 7. **Side Profile**: Rear appears noticeably wider/taller than front when viewed from side
