@@ -43,6 +43,11 @@ def load_config():
         config.enable_dually_llm_verification = config_parser.getboolean('Settings', 'EnableDuallyLLMVerification', fallback=True)
         config.darth_cv2_dually_threshold = config_parser.getint('Settings', 'DarthCV2DuallyThreshold', fallback=2)
 
+        # DB API Credentials
+        config.db_api_client_id = config_parser.get('DB_API', 'ClientId', fallback='')
+        config.db_api_client_secret = config_parser.get('DB_API', 'ClientSecret', fallback='')
+        config.db_api_grant_type = config_parser.get('DB_API', 'GrantType', fallback='client_credentials')
+
         # API Keys - Now stores a list of dictionaries for rich data
         config.gemini_api_keys_info = []
         for i, (_, key) in enumerate(config_parser.items('API_Keys')):

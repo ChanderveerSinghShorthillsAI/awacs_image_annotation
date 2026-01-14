@@ -302,12 +302,12 @@ def _process_single_ad(ad_row: dict, category_data: dict, rules: dict,
             "cabover truck - coe",
             "cab-chassis",
             "pickup truck",  # Heavy-duty pickups (F-350, RAM 3500, etc.) are commonly Duallys
-            "utility truck - service truck"  # Service trucks on heavy-duty chassis are often Duallys
+            # "utility truck - service truck"  # Service trucks on heavy-duty chassis are often Duallys
         ]
         
         if any(hd_type in top_category for hd_type in high_dually_probability_types):
             try:
-                utils.log_msg(f" [W-{worker_id}] 🔍 LLM Dually Verification for '{filtered[0][0]}' (high-probability type)", worker_id)
+                utils.log_msg(f"[W-{worker_id}] 🔍 LLM Dually Verification for '{filtered[0][0]}' (high-probability type)", worker_id)
                 is_dually_llm, confidence, t_in, t_out = classification.verify_dually_with_llm(
                     img_bytes_list[0], yoda_instance, key_queue, worker_id, ad_id, status_queue
                 )

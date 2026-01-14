@@ -45,6 +45,13 @@ const TabSwitcher = ({ activeTab, onTabChange }) => (
       AI Annotation
     </button>
     <button
+      className={`tab-btn ${activeTab === 'dbfetch' ? 'active' : ''}`}
+      onClick={() => onTabChange('dbfetch')}
+    >
+      <span className="tab-icon">🗄️</span>
+      DB Fetch
+    </button>
+    <button
       className={`tab-btn ${activeTab === 'audit' ? 'active' : ''}`}
       onClick={() => onTabChange('audit')}
     >
@@ -231,6 +238,788 @@ const AuditFileUpload = ({ label, description, file, onFileSelect, icon }) => {
           <span className="file-hint">Drop file here or click to browse</span>
         )}
       </div>
+    </div>
+  );
+};
+
+// Preview Modal Component
+const PreviewModal = ({ fetchResult, onClose, onStartAnnotation, isStarting }) => {
+  if (!fetchResult) return null;
+
+  return (
+    <div className="modal-overlay" onClick={onClose}>
+      <div className="modal-content" onClick={(e) => e.stopPropagation()}>
+        <div className="modal-header">
+          <h2>📊 Fetched Data Preview</h2>
+          <button className="modal-close" onClick={onClose}>✕</button>
+        </div>
+
+        <div className="modal-body">
+          {/* Summary Stats */}
+          <div className="preview-stats">
+            <div className="preview-stat">
+              <span className="preview-stat-value">{fetchResult.total_trucks}</span>
+              <span className="preview-stat-label">Total Trucks</span>
+            </div>
+            <div className="preview-stat">
+              <span className="preview-stat-value">{fetchResult.filename}</span>
+              <span className="preview-stat-label">File Name</span>
+            </div>
+          </div>
+
+          {/* Preview Table */}
+          <div className="preview-table-container">
+            <h3>First 10 Records Preview:</h3>
+            <div className="preview-table-wrapper">
+              <table className="preview-table">
+                <thead>
+                  <tr>
+                    <th>Ad ID</th>
+                    <th>Breadcrumb Top1</th>
+                    <th>Breadcrumb Top2</th>
+                    <th>Breadcrumb Top3</th>
+                    <th>Images</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {fetchResult.preview_data && fetchResult.preview_data.map((row, idx) => (
+                    <tr key={idx}>
+                      <td>{row['Ad ID']}</td>
+                      <td>{row['Breadcrumb_Top1'] || '-'}</td>
+                      <td>{row['Breadcrumb_Top2'] || '-'}</td>
+                      <td>{row['Breadcrumb_Top3'] || '-'}</td>
+                      <td>{row['Image_URLs'] ? row['Image_URLs'].split(',').length : 0}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+          {/* Pagination Guidance */}
+          {fetchResult.pagination && (
+            <div style={{
+              marginTop: '1rem',
+              padding: '1rem',
+              background: fetchResult.pagination.has_more_data
+                ? 'rgba(255, 165, 0, 0.15)'
+                : 'rgba(50, 205, 50, 0.15)',
+              border: `1px solid ${fetchResult.pagination.has_more_data
+                ? 'rgba(255, 165, 0, 0.4)'
+                : 'rgba(50, 205, 50, 0.4)'}`,
+              borderRadius: '8px'
+            }}>
+              <h3 style={{
+                margin: '0 0 0.75rem 0',
+                color: fetchResult.pagination.has_more_data ? 'var(--accent-orange)' : 'var(--accent-green)',
+                fontSize: '1rem'
+              }}>
+                📊 Pagination Info
+              </h3>
+
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.5rem', fontSize: '0.9rem' }}>
+                <div>
+                  <strong style={{ color: 'var(--accent-green)' }}>First Ad ID:</strong>
+                  <span style={{ marginLeft: '0.5rem', fontFamily: 'monospace' }}>{fetchResult.pagination.first_ad_id}</span>
+                </div>
+                <div>
+                  <strong style={{ color: 'var(--accent-orange)' }}>Last Ad ID:</strong>
+                  <span style={{ marginLeft: '0.5rem', fontFamily: 'monospace' }}>{fetchResult.pagination.last_ad_id}</span>
+                </div>
+                <div>
+                  <strong>Listing Range:</strong>
+                  <span style={{ marginLeft: '0.5rem' }}>{fetchResult.pagination.listing_start} - {fetchResult.pagination.listing_end}</span>
+                </div>
+                <div>
+                  <strong>Total in DB:</strong>
+                  <span style={{ marginLeft: '0.5rem' }}>{fetchResult.pagination.total_available}</span>
+                </div>
+              </div>
+
+              {/* Filter-specific info */}
+              {fetchResult.pagination.filters_applied && (
+                <div style={{
+                  marginTop: '0.75rem',
+                  padding: '0.5rem',
+                  background: 'rgba(147, 112, 219, 0.2)',
+                  border: '1px solid rgba(147, 112, 219, 0.4)',
+                  borderRadius: '4px',
+                  fontSize: '0.85rem'
+                }}>
+                  <div style={{ fontWeight: '600', color: '#b388ff', marginBottom: '0.5rem' }}>
+                    🔍 Category Filter Applied
+                  </div>
+                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.25rem' }}>
+                    <div>
+                      <span style={{ color: 'var(--text-muted)' }}>Fetched (unfiltered):</span>
+                      <span style={{ marginLeft: '0.5rem', fontWeight: '600' }}>{fetchResult.pagination.fetched_before_filter}</span>
+                    </div>
+                    <div>
+                      <span style={{ color: 'var(--accent-green)' }}>Matched (filtered):</span>
+                      <span style={{ marginLeft: '0.5rem', fontWeight: '600' }}>{fetchResult.pagination.matched_after_filter}</span>
+                    </div>
+                  </div>
+                  <div style={{ marginTop: '0.5rem', fontSize: '0.8rem', color: 'var(--text-muted)' }}>
+                    Filters: {fetchResult.pagination.category_filters?.slice(0, 2).join(', ')}
+                    {fetchResult.pagination.category_filters?.length > 2 && ` +${fetchResult.pagination.category_filters.length - 2} more`}
+                  </div>
+                </div>
+              )}
+
+              {/* Next fetch suggestion */}
+              <div style={{
+                marginTop: '1rem',
+                paddingTop: '0.75rem',
+                borderTop: '1px solid rgba(255,255,255,0.1)'
+              }}>
+                {fetchResult.pagination.has_more_data ? (
+                  <div>
+                    <strong style={{ color: 'var(--accent-orange)' }}>🔄 Next Batch:</strong>
+                    <span style={{ marginLeft: '0.5rem' }}>
+                      Start from <strong>{fetchResult.pagination.next_suggested_start}</strong> to <strong>{fetchResult.pagination.next_suggested_end}</strong>
+                    </span>
+                    <div style={{ marginTop: '0.25rem', fontSize: '0.85rem', color: 'var(--text-muted)' }}>
+                      Remaining listings (unfiltered): {fetchResult.pagination.remaining_listings}
+                      {fetchResult.pagination.filters_applied && (
+                        <span style={{ color: '#b388ff' }}> • Actual matching count will vary with filters</span>
+                      )}
+                    </div>
+                  </div>
+                ) : (
+                  <div style={{ color: 'var(--accent-green)', fontWeight: '600' }}>
+                    ✅ This was the LAST batch! No more listings to fetch for this date range.
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
+
+          {/* Message */}
+          <div className="preview-message">
+            <p>✅ Data has been fetched and saved to: <strong>{fetchResult.filename}</strong></p>
+            <p>Click "Start Annotation" to begin AI classification of these trucks.</p>
+          </div>
+        </div>
+
+        <div className="modal-footer">
+          <button className="btn btn-secondary" onClick={onClose} disabled={isStarting}>
+            <span>❌</span> Cancel
+          </button>
+          <button
+            className="btn btn-primary"
+            onClick={onStartAnnotation}
+            disabled={isStarting}
+          >
+            {isStarting ? (
+              <>
+                <div className="btn-spinner"></div>
+                Starting...
+              </>
+            ) : (
+              <>
+                <span>🤖</span> Start Annotation
+              </>
+            )}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+};
+
+// DB Fetch Section Component
+const DBFetchSection = ({ onJobCreated }) => {
+  const [clientId, setClientId] = useState('');
+  const [clientSecret, setClientSecret] = useState('');
+  const [grantType, setGrantType] = useState('client_credentials');
+  const [fromTimestamp, setFromTimestamp] = useState('');
+  const [toTimestamp, setToTimestamp] = useState('');
+  const [listingStart, setListingStart] = useState('0');
+  const [listingEnd, setListingEnd] = useState('1000');
+  const [isFetching, setIsFetching] = useState(false);
+  const [fetchResult, setFetchResult] = useState(null);
+  const [showPreview, setShowPreview] = useState(false);
+  const [isStartingAnnotation, setIsStartingAnnotation] = useState(false);
+  const [error, setError] = useState(null);
+  const [credentialsFromConfig, setCredentialsFromConfig] = useState(false);
+  const [selectedCategories, setSelectedCategories] = useState([]);
+
+  // Available categories for filtering
+  const AVAILABLE_CATEGORIES = [
+    'Pickup Truck',
+    'Cab-Chassis',
+    'Flatbed Truck',
+    'Dump Truck',
+    'Box Truck - Straight Truck',
+    'Utility Truck - Service Truck',
+    'Bucket Truck - Boom Truck',
+    'Conventional - Day Cab',
+    'Conventional - Sleeper Truck',
+    'Reefer/Refrigerated Truck',
+    'Tanker Truck',
+    'Crane Truck',
+    'Rollback Tow Truck',
+    'Wrecker Tow Truck',
+    'Mechanics Truck',
+    'Cutaway-Cube Van',
+    'Cargo Van',
+    'Stepvan',
+    'Garbage Truck',
+    'Mixer Truck - Concrete Truck',
+    'Flatbed Dump',
+    'Farm Truck - Grain Truck',
+    'Fuel Truck - Lube Truck',
+    'Vacuum Truck',
+    'Water Truck',
+    'Grapple Truck',
+    'Knucklebooms',
+    'Chipper Truck',
+    'Digger Derrick'
+  ];
+
+  // Load DB API credentials from config on mount
+  useEffect(() => {
+    const loadConfig = async () => {
+      try {
+        const res = await fetch(`${API_BASE}/api/config`);
+        const data = await res.json();
+
+        if (data.db_api_configured) {
+          setClientId(data.db_api_client_id);
+          setGrantType(data.db_api_grant_type);
+          setCredentialsFromConfig(true);
+          console.log('✅ DB API credentials loaded from config.ini');
+        }
+      } catch (err) {
+        console.error('Failed to load config:', err);
+      }
+    };
+
+    loadConfig();
+  }, []);
+
+  // Helper to convert date to Unix timestamp (using UTC to avoid timezone issues)
+  const dateToTimestamp = (dateString) => {
+    if (!dateString) return '';
+    // Parse as UTC to avoid local timezone offset issues
+    return Math.floor(Date.parse(dateString + 'T00:00:00Z') / 1000).toString();
+  };
+
+  // Helper to convert Unix timestamp to date (returns UTC date)
+  const timestampToDate = (timestamp) => {
+    if (!timestamp) return '';
+    const date = new Date(parseInt(timestamp) * 1000);
+    // Return UTC date to match the dateToTimestamp function
+    return date.toISOString().split('T')[0];
+  };
+
+  // Helper to convert Unix timestamp to detailed datetime string with hours:minutes:seconds
+  const timestampToDetailedDateTime = (timestamp) => {
+    if (!timestamp) return '';
+    const date = new Date(parseInt(timestamp) * 1000);
+    // Format: YYYY-MM-DD HH:MM:SS UTC
+    const year = date.getUTCFullYear();
+    const month = String(date.getUTCMonth() + 1).padStart(2, '0');
+    const day = String(date.getUTCDate()).padStart(2, '0');
+    const hours = String(date.getUTCHours()).padStart(2, '0');
+    const minutes = String(date.getUTCMinutes()).padStart(2, '0');
+    const seconds = String(date.getUTCSeconds()).padStart(2, '0');
+    return `${year}-${month}-${day} ${hours}:${minutes}:${seconds} UTC`;
+  };
+
+  // Allow fetch if either client secret is provided OR credentials are loaded from config
+  const canFetch = clientId && (clientSecret || credentialsFromConfig) && grantType && fromTimestamp && toTimestamp && listingStart && listingEnd && !isFetching;
+
+  const handleFetch = async () => {
+    if (!canFetch) {
+      console.warn('Cannot fetch: Missing required fields', {
+        clientId: !!clientId,
+        clientSecret: !!clientSecret,
+        credentialsFromConfig,
+        grantType: !!grantType,
+        fromTimestamp: !!fromTimestamp,
+        toTimestamp: !!toTimestamp,
+        listingStart: !!listingStart,
+        listingEnd: !!listingEnd,
+        isFetching
+      });
+      return;
+    }
+
+    console.log('🗄️ Starting DB Fetch...', {
+      credentialsFromConfig,
+      hasClientId: !!clientId,
+      hasClientSecret: !!clientSecret,
+      fromTimestamp,
+      toTimestamp,
+      listingRange: `${listingStart}-${listingEnd}`
+    });
+
+    setIsFetching(true);
+    setError(null);
+
+    try {
+      // Build payload - only include credentials if they're provided (otherwise backend uses config)
+      const payload = {
+        min_last_update: parseInt(fromTimestamp),
+        max_last_update: parseInt(toTimestamp),
+        listing_start: parseInt(listingStart),
+        listing_end: parseInt(listingEnd)
+      };
+
+      // Add category filters if any selected
+      if (selectedCategories.length > 0) {
+        payload.category_filters = selectedCategories;
+      }
+
+      // Only add credentials if explicitly provided (not from config)
+      if (clientId && !credentialsFromConfig) {
+        payload.client_id = clientId;
+      }
+      if (clientSecret) {
+        payload.client_secret = clientSecret;
+      }
+      if (grantType) {
+        payload.grant_type = grantType;
+      }
+
+      console.log('📤 Sending POST request to:', `${API_BASE}/api/db-fetch`);
+      console.log('📦 Payload:', payload);
+
+      const res = await fetch(`${API_BASE}/api/db-fetch`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify(payload)
+      });
+
+      console.log('📥 Response status:', res.status, res.statusText);
+
+      if (!res.ok) {
+        const errData = await res.json();
+        console.error('❌ Error response:', errData);
+        throw new Error(errData.detail || 'DB Fetch failed');
+      }
+
+      const data = await res.json();
+      console.log('✅ Success response:', data);
+
+      // Show preview modal
+      setFetchResult(data);
+      setShowPreview(true);
+
+    } catch (err) {
+      console.error('❌ Fetch error:', err);
+      setError(err.message);
+
+      // Show user-friendly error message
+      if (err.message.includes('No trucks found')) {
+        setError('No trucks found for the selected date range. Please try a different date range or listing range.');
+      }
+    } finally {
+      setIsFetching(false);
+    }
+  };
+
+  const handleStartAnnotation = async () => {
+    if (!fetchResult || !fetchResult.fetch_id) return;
+
+    setIsStartingAnnotation(true);
+    setError(null);
+
+    try {
+      const res = await fetch(`${API_BASE}/api/db-fetch/${fetchResult.fetch_id}/start-annotation`, {
+        method: 'POST'
+      });
+
+      if (!res.ok) {
+        const errData = await res.json();
+        throw new Error(errData.detail || 'Failed to start annotation');
+      }
+
+      const data = await res.json();
+
+      // Close preview and create job
+      setShowPreview(false);
+      onJobCreated({
+        id: data.job_id,
+        filename: fetchResult.filename,
+        status: data.status,
+        is_db_fetch: true,
+        adCount: fetchResult.total_trucks
+      });
+
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setIsStartingAnnotation(false);
+    }
+  };
+
+  const handleClosePreview = () => {
+    setShowPreview(false);
+    // Reset form to allow new fetch
+    setFetchResult(null);
+  };
+
+  return (
+    <div className="dbfetch-section">
+      {/* Preview Modal */}
+      {showPreview && (
+        <PreviewModal
+          fetchResult={fetchResult}
+          onClose={handleClosePreview}
+          onStartAnnotation={handleStartAnnotation}
+          isStarting={isStartingAnnotation}
+        />
+      )}
+
+      {/* Credentials Section */}
+      <div className="dbfetch-card">
+        <h3>🔑 API Credentials</h3>
+        {credentialsFromConfig && (
+          <div className="config-loaded-badge">
+            ✅ Credentials loaded from config.ini (you can override them below)
+          </div>
+        )}
+        <div className="form-grid">
+          <div className="form-group">
+            <label>Client ID {credentialsFromConfig && <span className="config-indicator">📋 from config</span>}</label>
+            <input
+              type="text"
+              value={clientId}
+              onChange={(e) => {
+                setClientId(e.target.value);
+                setCredentialsFromConfig(false);
+              }}
+              placeholder="Enter client ID or load from config.ini"
+              className="form-input"
+            />
+          </div>
+          <div className="form-group">
+            <label>Client Secret {credentialsFromConfig && <span className="config-indicator">🔒 using config</span>}</label>
+            <input
+              type="password"
+              value={clientSecret}
+              onChange={(e) => {
+                setClientSecret(e.target.value);
+                setCredentialsFromConfig(false);
+              }}
+              placeholder={credentialsFromConfig ? "••••••••••••••••  (stored in config)" : "Enter client secret or add to config.ini"}
+              className="form-input"
+              disabled={credentialsFromConfig}
+            />
+            {credentialsFromConfig && (
+              <small className="form-hint" style={{ color: 'var(--accent-green)' }}>
+                ✅ Using secure credentials from config.ini
+              </small>
+            )}
+          </div>
+          <div className="form-group">
+            <label>Grant Type {credentialsFromConfig && <span className="config-indicator">📋 from config</span>}</label>
+            <input
+              type="text"
+              value={grantType}
+              onChange={(e) => setGrantType(e.target.value)}
+              placeholder="client_credentials"
+              className="form-input"
+            />
+          </div>
+        </div>
+      </div>
+
+      {/* Date Range Section */}
+      <div className="dbfetch-card">
+        <h3>📅 Date Range</h3>
+        {fromTimestamp && toTimestamp && fromTimestamp === toTimestamp && (
+          <div style={{
+            padding: '0.75rem',
+            background: 'rgba(50, 205, 50, 0.15)',
+            border: '1px solid rgba(50, 205, 50, 0.4)',
+            borderRadius: 'var(--border-radius)',
+            marginBottom: '1rem',
+            fontSize: '0.85rem',
+            color: 'var(--accent-green)'
+          }}>
+            ℹ️ Same date selected - will automatically fetch all trucks for the full 24-hour period.
+          </div>
+        )}
+        <div className="form-grid">
+          <div className="form-group">
+            <label>From Date</label>
+            <input
+              type="date"
+              value={timestampToDate(fromTimestamp)}
+              onChange={(e) => setFromTimestamp(dateToTimestamp(e.target.value))}
+              className="form-input"
+            />
+            <small className="form-hint">Unix: {fromTimestamp || 'Not set'}</small>
+          </div>
+          <div className="form-group">
+            <label>To Date</label>
+            <input
+              type="date"
+              value={timestampToDate(toTimestamp)}
+              onChange={(e) => setToTimestamp(dateToTimestamp(e.target.value))}
+              className="form-input"
+            />
+            <small className="form-hint">Unix: {toTimestamp || 'Not set'}</small>
+          </div>
+        </div>
+        <div className="form-row">
+          <div className="form-group full-width">
+            <label>Or Enter Timestamps Manually</label>
+            <div className="timestamp-inputs">
+              <input
+                type="number"
+                value={fromTimestamp}
+                onChange={(e) => setFromTimestamp(e.target.value)}
+                placeholder="From timestamp (e.g., 1768262400)"
+                className="form-input"
+              />
+              <span className="separator">→</span>
+              <input
+                type="number"
+                value={toTimestamp}
+                onChange={(e) => setToTimestamp(e.target.value)}
+                placeholder="To timestamp (e.g., 1768348799)"
+                className="form-input"
+              />
+            </div>
+            <small className="form-hint" style={{ marginTop: '0.5rem', display: 'block' }}>
+              💡 Tip: Use <a href="https://www.unixtimestamp.com/" target="_blank" rel="noopener noreferrer" style={{ color: 'var(--accent-orange)' }}>unixtimestamp.com</a> to convert dates. Use the same timestamp for both to get a full day, or different timestamps for a range.
+            </small>
+            {fromTimestamp && toTimestamp && (() => {
+              // Calculate the ACTUAL timestamps that backend will use
+              // If same timestamp, backend expands max to include full 24 hours (+86399 seconds)
+              const actualFromTs = parseInt(fromTimestamp);
+              const actualToTs = fromTimestamp === toTimestamp
+                ? parseInt(toTimestamp) + 86399  // Add 23:59:59 for full day coverage
+                : parseInt(toTimestamp);
+
+              return (
+                <div style={{
+                  marginTop: '0.75rem',
+                  padding: '0.75rem',
+                  background: 'rgba(100, 150, 255, 0.1)',
+                  border: '1px solid rgba(100, 150, 255, 0.3)',
+                  borderRadius: '4px',
+                  fontSize: '0.85rem'
+                }}>
+                  <div style={{ marginBottom: '0.5rem', fontWeight: '600', color: 'var(--accent-blue)' }}>
+                    🕐 <strong>Exact Fetch Time Range:</strong>
+                  </div>
+                  <div style={{
+                    display: 'flex',
+                    flexDirection: 'column',
+                    gap: '0.4rem',
+                    padding: '0.5rem',
+                    background: 'rgba(0, 0, 0, 0.2)',
+                    borderRadius: '4px',
+                    fontFamily: 'monospace'
+                  }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                      <span style={{ color: 'var(--accent-green)', fontWeight: '600' }}>FROM:</span>
+                      <span>{timestampToDetailedDateTime(actualFromTs.toString())}</span>
+                    </div>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                      <span style={{ color: 'var(--accent-orange)', fontWeight: '600' }}>TO:</span>
+                      <span style={{ marginLeft: '1.1rem' }}>{timestampToDetailedDateTime(actualToTs.toString())}</span>
+                    </div>
+                  </div>
+                  <div style={{ marginTop: '0.5rem', fontSize: '0.75rem', color: 'var(--text-muted)' }}>
+                    {fromTimestamp === toTimestamp
+                      ? '✅ Same date selected - automatically expanded to full 24-hour period (00:00:00 to 23:59:59 UTC)'
+                      : 'Data will be fetched for ads updated within this exact time window.'
+                    }
+                  </div>
+                </div>
+              );
+            })()}
+          </div>
+        </div>
+      </div>
+      {/* Category Filter Section */}
+      <div className="dbfetch-card">
+        <h3>🏷️ Category Filter (Optional)</h3>
+        <p style={{ fontSize: '0.85rem', color: 'var(--text-muted)', marginBottom: '0.75rem' }}>
+          Select specific categories to fetch. Leave empty to fetch all categories.
+        </p>
+
+        {/* Quick actions */}
+        <div style={{ marginBottom: '0.75rem', display: 'flex', gap: '0.5rem' }}>
+          <button
+            className="range-btn"
+            style={{ padding: '0.4rem 0.75rem', fontSize: '0.8rem' }}
+            onClick={() => setSelectedCategories([...AVAILABLE_CATEGORIES])}
+          >
+            Select All
+          </button>
+          <button
+            className="range-btn"
+            style={{ padding: '0.4rem 0.75rem', fontSize: '0.8rem' }}
+            onClick={() => setSelectedCategories([])}
+          >
+            Clear All
+          </button>
+          {selectedCategories.length > 0 && (
+            <span style={{
+              marginLeft: 'auto',
+              color: 'var(--accent-orange)',
+              fontSize: '0.85rem',
+              fontWeight: '600'
+            }}>
+              {selectedCategories.length} selected
+            </span>
+          )}
+        </div>
+
+        {/* Category checkboxes */}
+        <div style={{
+          display: 'grid',
+          gridTemplateColumns: 'repeat(auto-fill, minmax(200px, 1fr))',
+          gap: '0.5rem',
+          maxHeight: '250px',
+          overflowY: 'auto',
+          padding: '0.5rem',
+          background: 'rgba(0, 0, 0, 0.2)',
+          borderRadius: '4px'
+        }}>
+          {AVAILABLE_CATEGORIES.map(category => (
+            <label
+              key={category}
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: '0.5rem',
+                padding: '0.4rem 0.5rem',
+                background: selectedCategories.includes(category)
+                  ? 'rgba(255, 165, 0, 0.2)'
+                  : 'transparent',
+                borderRadius: '4px',
+                cursor: 'pointer',
+                fontSize: '0.85rem',
+                border: selectedCategories.includes(category)
+                  ? '1px solid rgba(255, 165, 0, 0.4)'
+                  : '1px solid transparent',
+                transition: 'all 0.2s ease'
+              }}
+            >
+              <input
+                type="checkbox"
+                checked={selectedCategories.includes(category)}
+                onChange={(e) => {
+                  if (e.target.checked) {
+                    setSelectedCategories([...selectedCategories, category]);
+                  } else {
+                    setSelectedCategories(selectedCategories.filter(c => c !== category));
+                  }
+                }}
+                style={{ accentColor: 'var(--accent-orange)' }}
+              />
+              {category}
+            </label>
+          ))}
+        </div>
+
+        {selectedCategories.length > 0 && (
+          <div style={{
+            marginTop: '0.75rem',
+            padding: '0.5rem',
+            background: 'rgba(255, 165, 0, 0.15)',
+            border: '1px solid rgba(255, 165, 0, 0.3)',
+            borderRadius: '4px',
+            fontSize: '0.85rem'
+          }}>
+            <strong style={{ color: 'var(--accent-orange)' }}>🔍 Filtering by:</strong>
+            <span style={{ marginLeft: '0.5rem' }}>
+              {selectedCategories.slice(0, 3).join(', ')}
+              {selectedCategories.length > 3 && ` +${selectedCategories.length - 3} more`}
+            </span>
+          </div>
+        )}
+      </div>
+
+      {/* Listing Range Section */}
+      <div className="dbfetch-card">
+        <h3>📊 Listing Range</h3>
+        <div className="listing-range-options">
+          <button
+            className={`range-btn ${listingStart === '0' && listingEnd === '1000' ? 'active' : ''}`}
+            onClick={() => { setListingStart('0'); setListingEnd('1000'); }}
+          >
+            First 1000 (0-1000)
+          </button>
+          <button
+            className={`range-btn ${listingStart === '1000' && listingEnd === '2000' ? 'active' : ''}`}
+            onClick={() => { setListingStart('1000'); setListingEnd('2000'); }}
+          >
+            1000-2000
+          </button>
+          <button
+            className={`range-btn ${listingStart === '2000' && listingEnd === '3000' ? 'active' : ''}`}
+            onClick={() => { setListingStart('2000'); setListingEnd('3000'); }}
+          >
+            2000-3000
+          </button>
+        </div>
+        <div className="form-row">
+          <div className="form-group">
+            <label>Custom Start</label>
+            <input
+              type="number"
+              value={listingStart}
+              onChange={(e) => setListingStart(e.target.value)}
+              placeholder="0"
+              className="form-input"
+              min="0"
+            />
+          </div>
+          <div className="form-group">
+            <label>Custom End</label>
+            <input
+              type="number"
+              value={listingEnd}
+              onChange={(e) => setListingEnd(e.target.value)}
+              placeholder="1000"
+              className="form-input"
+              min="0"
+            />
+          </div>
+        </div>
+        <div className="listing-count">
+          Total Listings: {parseInt(listingEnd || 0) - parseInt(listingStart || 0)}
+        </div>
+      </div>
+
+      {/* Fetch Button */}
+      <div className="dbfetch-actions">
+        <button
+          className={`btn btn-primary ${canFetch ? '' : 'disabled'}`}
+          onClick={handleFetch}
+          disabled={!canFetch}
+        >
+          {isFetching ? (
+            <>
+              <div className="btn-spinner"></div>
+              Fetching Data...
+            </>
+          ) : (
+            <>
+              <span>🗄️</span> Fetch from Database
+            </>
+          )}
+        </button>
+      </div>
+
+      {/* Error message */}
+      {error && (
+        <div className="audit-error">
+          <span className="error-icon">❌</span>
+          <span>{error}</span>
+        </div>
+      )}
     </div>
   );
 };
@@ -567,6 +1356,12 @@ function App() {
     setJob(null);
   };
 
+  // Handle DB Fetch job creation
+  const handleDBFetchJobCreated = (jobData) => {
+    setJob(jobData);
+    setActiveTab('annotation'); // Switch to annotation tab to show job dashboard
+  };
+
   return (
     <div className="app">
       {/* Animated background */}
@@ -618,8 +1413,10 @@ function App() {
             <>
               {/* Title section */}
               <div className="section-header">
-                <h2>Scraper → Auto Parallel AI</h2>
-                <p className="mode-badge">High Accuracy Mode • No Vision v2</p>
+                <h2>{job?.is_db_fetch ? 'DB Fetch → Auto Parallel AI' : 'Scraper → Auto Parallel AI'}</h2>
+                <p className="mode-badge">
+                  {job?.is_db_fetch ? 'Database API → AI Annotation' : 'High Accuracy Mode • No Vision v2'}
+                </p>
               </div>
 
               {/* Upload section (shown when no job) */}
@@ -699,14 +1496,16 @@ function App() {
                       <div className="processing-spinner"></div>
                       <h3>
                         {job.status === 'scraping'
-                          ? '🌐 Scraping Ads...'
+                          ? (job.is_db_fetch ? '🗄️ Fetching from Database...' : '🌐 Scraping Ads...')
                           : job.status === 'verifying_dually'
                             ? '🔍 Verifying Dually Detections...'
                             : '🤖 AI Classification in Progress...'}
                       </h3>
                       <p>
                         {job.status === 'scraping'
-                          ? 'Extracting breadcrumbs and images from Commercial Truck Trader...'
+                          ? (job.is_db_fetch
+                            ? 'Fetching truck data directly from database API with breadcrumbs and images...'
+                            : 'Extracting breadcrumbs and images from Commercial Truck Trader...')
                           : job.status === 'verifying_dually'
                             ? `Double-checking Dually annotations using LLM verification (${job.dually_verification?.verified || 0}/${job.dually_verification?.total || 0})...`
                             : 'Classifying vehicles using Gemini AI...'}
@@ -775,6 +1574,37 @@ function App() {
                   <div className="info-icon">📊</div>
                   <h4>Smart Output</h4>
                   <p>Generates annotated Excel files with confidence scores, status updates, and cost tracking.</p>
+                </div>
+              </div>
+            </>
+          )}
+
+          {/* DB FETCH TAB */}
+          {activeTab === 'dbfetch' && (
+            <>
+              <div className="section-header">
+                <h2>Database Fetch + AI Annotation</h2>
+                <p className="mode-badge">Fetch from Database → AI Annotation → Annotated Excel</p>
+              </div>
+
+              <DBFetchSection onJobCreated={handleDBFetchJobCreated} />
+
+              {/* Info cards for DB fetch */}
+              <div className="info-section">
+                <div className="info-card">
+                  <div className="info-icon">🗄️</div>
+                  <h4>Database Fetch</h4>
+                  <p>Fetches truck data directly from database API with breadcrumbs and images. No web scraping needed.</p>
+                </div>
+                <div className="info-card">
+                  <div className="info-icon">🤖</div>
+                  <h4>AI Annotation</h4>
+                  <p>Automatically runs AI classification on fetched data using the same parallel processing as scraping.</p>
+                </div>
+                <div className="info-card">
+                  <div className="info-icon">📊</div>
+                  <h4>Same Output Format</h4>
+                  <p>Generates identical annotated Excel files with all the same columns and features as the scraping method.</p>
                 </div>
               </div>
             </>

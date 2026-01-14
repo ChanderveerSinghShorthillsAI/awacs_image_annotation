@@ -1080,6 +1080,345 @@ async def run_reannotation_pipeline(job_id: str, file_path: str):
     await loop.run_in_executor(None, run_reannotation_pipeline_sync, job_id, file_path)
 
 
+def run_db_annotation_pipeline_sync(job_id: str, file_path: str):
+    """
+    AI Annotation pipeline for already-fetched database data
+    
+    This runs ONLY the annotation phase (no fetching):
+    1. Load already-fetched data from Excel
+    2. Run AI annotation (same as scraping feature)
+    3. Run Dually verification (if enabled)
+    4. Output annotated Excel
+    """
+    job = jobs[job_id]
+    run_ts = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+    
+    try:
+        print(f"\n{'='*80}")
+        print(f"🤖 AI ANNOTATION JOB {job_id} STARTED (DB Fetched Data)")
+        print(f"{'='*80}")
+        print(f"   Source File: {os.path.basename(file_path)}")
+        print(f"{'='*80}\n")
+        
+        # Load already-fetched data
+        df = pd.read_excel(file_path, dtype={"Ad ID": str})
+        df["Ad ID"] = df["Ad ID"].astype(str).str.replace(r'\.0$', '', regex=True).str.strip()
+        
+        # Validate required columns exist
+        required_cols = ["Ad ID", "Breadcrumb_Top1", "Image_URLs"]
+        missing = [col for col in required_cols if col not in df.columns]
+        if missing:
+            raise ValueError(f"Missing required columns: {', '.join(missing)}")
+        
+        # Ensure all breadcrumb columns exist
+        for col in ["Breadcrumb_Top2", "Breadcrumb_Top3"]:
+            if col not in df.columns:
+                df[col] = ""
+        
+        job['total_ads'] = int(len(df))
+        
+        print(f"   ✅ Loaded {len(df)} ads from fetched data")
+        
+        # ========== PHASE 1: AI ANNOTATION ==========
+        print("\n" + "="*80)
+        print("🤖 PHASE 1: AI ANNOTATION")
+        print("="*80)
+        print(f"   Total Ads to Annotate: {len(df)}")
+        print("="*80 + "\n")
+        
+        # Run parallel AI annotation
+        num_workers = 5
+        print(f"\n🤖 Using {num_workers} parallel workers for AI annotation")
+        result_df = run_parallel_ai(df, run_ts, job_id, num_workers)
+        
+        # ========== PHASE 2: DUALLY VERIFICATION ==========
+        dually_verification_cost = 0
+        if not result_df.empty:
+            if config.enable_dually_llm_verification:
+                print("\n" + "="*60)
+                print("🔍 DUALLY LLM VERIFICATION: ✅ ENABLED")
+                print("   Starting post-processing verification for Dually annotations...")
+                print("="*60)
+                m_verify = Manager()
+                yoda_verify = Yoda(config.gemini_api_keys_info, config.rate_limit_rpm, m_verify)
+                result_df, dually_verification_cost = verify_dually_listings(result_df, job_id, yoda_verify)
+            else:
+                print("\n" + "="*60)
+                print("🔍 DUALLY LLM VERIFICATION: ❌ DISABLED (Skipping)")
+                print("="*60)
+        
+        # ========== PHASE 3: SAVE FINAL OUTPUT ==========
+        print("\n" + "="*80)
+        print("💾 PHASE 3: SAVING FINAL ANNOTATED OUTPUT")
+        print("="*80)
+        
+        output_filename = f"output_db_annotated_{run_ts}.xlsx"
+        output_path = os.path.join(config.output_dir, output_filename)
+        os.makedirs(config.output_dir, exist_ok=True)
+        result_df.to_excel(output_path, index=False)
+        
+        print(f"   ✅ Final annotated file saved: {output_filename}")
+        print(f"   📁 Path: {output_path}")
+        print("="*80 + "\n")
+        
+        job['status'] = JobStatus.COMPLETED
+        job['output_file'] = output_path
+        job['output_filename'] = output_filename
+        
+        # Calculate summary costs
+        annotation_cost = result_df['Cost_Cents'].sum() if 'Cost_Cents' in result_df.columns else 0
+        total_cost = annotation_cost + dually_verification_cost
+        job['total_cost'] = float(total_cost)
+        job['annotation_cost'] = float(annotation_cost)
+        job['dually_verification_cost'] = float(dually_verification_cost)
+        
+        # Merge session reports
+        merge_all_session_reports(run_ts)
+        
+        print(f"\n{'='*80}")
+        print(f"🎉 AI ANNOTATION JOB {job_id} COMPLETE!")
+        print(f"{'='*80}")
+        print(f"   🤖 Total Ads Annotated: {len(result_df)}")
+        print(f"   📄 Output File: {output_filename}")
+        print(f"   💰 Annotation Cost: {annotation_cost}¢")
+        print(f"   💰 Dually Verification Cost: {dually_verification_cost}¢")
+        print(f"   💰 TOTAL COST: {total_cost}¢")
+        print(f"{'='*80}\n")
+        
+    except Exception as e:
+        job['status'] = JobStatus.FAILED
+        job['error'] = str(e)
+        print(f"\n❌ AI ANNOTATION JOB {job_id} FAILED: {str(e)}\n")
+        import traceback
+        traceback.print_exc()
+
+
+def run_db_fetch_pipeline_sync(
+    job_id: str,
+    client_id: str,
+    client_secret: str, 
+    grant_type: str,
+    min_last_update: int,
+    max_last_update: int,
+    listing_start: int,
+    listing_end: int
+):
+    """
+    Complete DB Fetch + AI Annotation pipeline
+    
+    This is the NEW feature that:
+    1. Fetches data from database API (replaces scraping)
+    2. Runs AI annotation (same as before)
+    3. Outputs annotated Excel (same format as before)
+    """
+    job = jobs[job_id]
+    run_ts = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+    
+    try:
+        print(f"\n{'='*80}")
+        print(f"🗄️ DB FETCH + AI ANNOTATION JOB {job_id} STARTED")
+        print(f"{'='*80}")
+        print(f"   Date Range: {min_last_update} → {max_last_update}")
+        print(f"   Listing Range: {listing_start} → {listing_end}")
+        print(f"{'='*80}\n")
+        
+        # ========== PHASE 1: FETCH DATA FROM DATABASE API ==========
+        print("\n" + "="*80)
+        print("🗄️ PHASE 1: FETCHING DATA FROM DATABASE API")
+        print("="*80)
+        
+        # Step 1: Get access token
+        print(f"\n   🔑 Using credentials from: {'Request' if client_id != config.db_api_client_id else 'config.ini'}")
+        print(f"   🔑 Client ID: {client_id[:10]}...")
+        print(f"   🔑 Grant Type: {grant_type}\n")
+        
+        token_data = get_access_token(client_id, client_secret, grant_type)
+        access_token = token_data['access_token']
+        
+        # Step 2: Calculate how many trucks to fetch
+        total_listings_needed = listing_end - listing_start
+        print(f"\n   📊 Need to fetch {total_listings_needed} listings")
+        print(f"   📦 Will use pagination with max 500 per request\n")
+        
+        # Step 3: Fetch trucks with pagination
+        all_trucks = []
+        current_offset = listing_start
+        limit_per_request = 500
+        
+        print("="*80)
+        print("📦 FETCHING TRUCKS DATA WITH PAGINATION")
+        print("="*80)
+        
+        while len(all_trucks) < total_listings_needed:
+            remaining = total_listings_needed - len(all_trucks)
+            current_limit = min(limit_per_request, remaining)
+            
+            print(f"\n   🔄 Request {len(all_trucks) // 500 + 1}: Offset={current_offset}, Limit={current_limit}")
+            
+            batch_data = fetch_trucks_from_db(
+                access_token,
+                min_last_update,
+                max_last_update,
+                current_limit,
+                current_offset
+            )
+            
+            batch_trucks = batch_data.get('result', [])
+            pagination = batch_data.get('pagination', {})
+            total_available = pagination.get('total', 0)
+            
+            if not batch_trucks:
+                print(f"   ⚠️ No more trucks available")
+                break
+            
+            # Debug: Check for duplicates before extending
+            existing_ids = set(truck.get('id') for truck in all_trucks)
+            new_ids = [truck.get('id') for truck in batch_trucks]
+            duplicate_count = sum(1 for tid in new_ids if tid in existing_ids)
+            
+            if duplicate_count > 0:
+                print(f"   ⚠️ WARNING: {duplicate_count} duplicate Ad IDs detected in this batch!")
+            
+            all_trucks.extend(batch_trucks)
+            current_offset += len(batch_trucks)
+            
+            print(f"   ✅ Batch complete. Total fetched so far: {len(all_trucks)}")
+            print(f"   📊 API reports total available: {total_available}")
+            print(f"   📊 Unique Ad IDs so far: {len(set(truck.get('id') for truck in all_trucks))}")
+            
+            if current_offset >= total_available:
+                print(f"   ℹ️  Reached end of available data (total: {total_available})")
+                break
+        
+        print("\n" + "="*80)
+        print(f"✅ FETCHING COMPLETE - Retrieved {len(all_trucks)} trucks")
+        print("="*80 + "\n")
+        
+        # Step 4: Process truck data into DataFrame
+        print("="*80)
+        print("🔄 PROCESSING TRUCK DATA INTO DATAFRAME")
+        print("="*80)
+        
+        print(f"\n   📊 Input: {len(all_trucks)} trucks from API")
+        print(f"   📊 Unique IDs in raw data: {len(set(truck.get('id') for truck in all_trucks))}")
+        
+        processed_trucks = []
+        for i, truck in enumerate(all_trucks, 1):
+            processed = process_truck_data(truck)
+            processed_trucks.append(processed)
+            
+            if i % 100 == 0:
+                print(f"   ✅ Processed {i}/{len(all_trucks)} trucks")
+        
+        print(f"   ✅ Processed all {len(processed_trucks)} trucks")
+        print("="*80 + "\n")
+        
+        # Create DataFrame
+        df = pd.DataFrame(processed_trucks)
+        
+        print(f"   📊 Before deduplication: {len(df)} rows")
+        
+        df["Ad ID"] = df["Ad ID"].astype(str).str.replace(r'\.0$', '', regex=True).str.strip()
+        
+        # Check for duplicates after processing
+        duplicates = df[df.duplicated(subset=['Ad ID'], keep=False)]
+        if not duplicates.empty:
+            print(f"   ⚠️ Found {len(duplicates)} duplicate rows!")
+            print(f"   ⚠️ Duplicate Ad IDs: {duplicates['Ad ID'].unique().tolist()}")
+            # Remove duplicates, keeping first occurrence
+            df = df.drop_duplicates(subset=['Ad ID'], keep='first')
+            print(f"   ✅ After deduplication: {len(df)} rows")
+        else:
+            print(f"   ✅ No duplicates found")
+        
+        # Save intermediate DB fetch output
+        db_fetch_filename = f"DB_Fetch_{run_ts}.xlsx"
+        db_fetch_dir = os.path.join(config.project_root, "Scrapper output")
+        os.makedirs(db_fetch_dir, exist_ok=True)
+        db_fetch_path = os.path.join(db_fetch_dir, db_fetch_filename)
+        df.to_excel(db_fetch_path, index=False)
+        
+        print(f"   ✅ Intermediate DB Fetch file saved: {db_fetch_filename}")
+        print(f"   📁 Path: {db_fetch_path}\n")
+        
+        job['total_ads'] = int(len(df))
+        job['status'] = JobStatus.PROCESSING
+        
+        # ========== PHASE 2: AI ANNOTATION ==========
+        print("\n" + "="*80)
+        print("🤖 PHASE 2: AI ANNOTATION (Same as existing feature)")
+        print("="*80)
+        print(f"   Total Ads to Annotate: {len(df)}")
+        print("="*80 + "\n")
+        
+        # Run parallel AI annotation (same as existing feature)
+        num_workers = 5
+        print(f"\n🤖 Using {num_workers} parallel workers for AI annotation")
+        result_df = run_parallel_ai(df, run_ts, job_id, num_workers)
+        
+        # ========== PHASE 3: DUALLY VERIFICATION ==========
+        dually_verification_cost = 0
+        if not result_df.empty:
+            if config.enable_dually_llm_verification:
+                print("\n" + "="*60)
+                print("🔍 DUALLY LLM VERIFICATION: ✅ ENABLED")
+                print("   Starting post-processing verification for Dually annotations...")
+                print("="*60)
+                m_verify = Manager()
+                yoda_verify = Yoda(config.gemini_api_keys_info, config.rate_limit_rpm, m_verify)
+                result_df, dually_verification_cost = verify_dually_listings(result_df, job_id, yoda_verify)
+            else:
+                print("\n" + "="*60)
+                print("🔍 DUALLY LLM VERIFICATION: ❌ DISABLED (Skipping)")
+                print("="*60)
+        
+        # ========== PHASE 4: SAVE FINAL OUTPUT ==========
+        print("\n" + "="*80)
+        print("💾 PHASE 4: SAVING FINAL ANNOTATED OUTPUT")
+        print("="*80)
+        
+        output_filename = f"output_db_annotated_{run_ts}.xlsx"
+        output_path = os.path.join(config.output_dir, output_filename)
+        os.makedirs(config.output_dir, exist_ok=True)
+        result_df.to_excel(output_path, index=False)
+        
+        print(f"   ✅ Final annotated file saved: {output_filename}")
+        print(f"   📁 Path: {output_path}")
+        print("="*80 + "\n")
+        
+        job['status'] = JobStatus.COMPLETED
+        job['output_file'] = output_path
+        job['output_filename'] = output_filename
+        
+        # Calculate summary costs
+        annotation_cost = result_df['Cost_Cents'].sum() if 'Cost_Cents' in result_df.columns else 0
+        total_cost = annotation_cost + dually_verification_cost
+        job['total_cost'] = float(total_cost)
+        job['annotation_cost'] = float(annotation_cost)
+        job['dually_verification_cost'] = float(dually_verification_cost)
+        
+        # Merge session reports
+        merge_all_session_reports(run_ts)
+        
+        print(f"\n{'='*80}")
+        print(f"🎉 DB FETCH + AI ANNOTATION JOB {job_id} COMPLETE!")
+        print(f"{'='*80}")
+        print(f"   📊 Total Trucks Fetched: {len(df)}")
+        print(f"   🤖 Total Ads Annotated: {len(result_df)}")
+        print(f"   📄 Output File: {output_filename}")
+        print(f"   💰 Annotation Cost: {annotation_cost}¢")
+        print(f"   💰 Dually Verification Cost: {dually_verification_cost}¢")
+        print(f"   💰 TOTAL COST: {total_cost}¢")
+        print(f"{'='*80}\n")
+        
+    except Exception as e:
+        job['status'] = JobStatus.FAILED
+        job['error'] = str(e)
+        print(f"\n❌ DB FETCH + AI ANNOTATION JOB {job_id} FAILED: {str(e)}\n")
+        import traceback
+        traceback.print_exc()
+
+
 @app.get("/")
 async def root():
     return {"message": "AWACS AI Annotation API", "version": "1.0.0"}
@@ -1332,11 +1671,22 @@ async def download_result(job_id: str):
 @app.get("/api/config")
 async def get_config():
     """Get configuration info"""
+    # Check if DB API credentials are configured
+    db_api_configured = (
+        config.db_api_client_id and 
+        config.db_api_client_id != 'your_client_id_here' and
+        config.db_api_client_secret and 
+        config.db_api_client_secret != 'your_client_secret_here'
+    )
+    
     return {
         "api_keys_count": len(config.gemini_api_keys),
         "model": config.gemini_model,
         "max_images_per_ad": config.max_images,
-        "rate_limit_rpm": config.rate_limit_rpm
+        "rate_limit_rpm": config.rate_limit_rpm,
+        "db_api_configured": db_api_configured,
+        "db_api_client_id": config.db_api_client_id if db_api_configured else "",
+        "db_api_grant_type": config.db_api_grant_type if db_api_configured else "client_credentials"
     }
 
 
@@ -1644,6 +1994,504 @@ async def get_audit_status(audit_id: str):
         raise HTTPException(status_code=404, detail="Audit not found")
     
     return audit_jobs[audit_id]
+
+
+# ==================== DB FETCH FEATURE ====================
+
+import requests
+from pydantic import BaseModel
+from typing import Optional, List
+
+class DBFetchRequest(BaseModel):
+    client_id: Optional[str] = None  # Optional - will use config if not provided
+    client_secret: Optional[str] = None  # Optional - will use config if not provided
+    grant_type: Optional[str] = "client_credentials"  # Optional - will use config if not provided
+    min_last_update: int  # Unix timestamp
+    max_last_update: int  # Unix timestamp
+    listing_start: int = 0  # Starting offset (e.g., 0 for first 1000)
+    listing_end: int = 1000  # Ending offset (e.g., 1000 for first 1000)
+    category_filters: Optional[List[str]] = None  # Optional - filter by category names (e.g., ["Pickup Truck", "Cab-Chassis"])
+
+def get_access_token(client_id: str, client_secret: str, grant_type: str) -> dict:
+    """
+    Get access token from the authentication API
+    """
+    print("\n" + "="*80)
+    print("🔑 FETCHING ACCESS TOKEN FROM DB API")
+    print("="*80)
+    
+    token_url = "https://api-dev.traderonline.com/vLatest/token"
+    
+    form_data = {
+        'client_id': client_id,
+        'client_secret': client_secret,
+        'grant_type': grant_type
+    }
+    
+    try:
+        print(f"   📤 POST {token_url}")
+        print(f"   📝 Form Data: client_id={client_id}, grant_type={grant_type}")
+        
+        response = requests.post(token_url, data=form_data)
+        response.raise_for_status()
+        
+        token_data = response.json()
+        print(f"   ✅ Access token received: {token_data['access_token'][:20]}...")
+        print(f"   ⏱️  Expires in: {token_data['expires_in']} seconds")
+        print("="*80 + "\n")
+        
+        return token_data
+    except Exception as e:
+        print(f"   ❌ Error fetching access token: {str(e)}")
+        print("="*80 + "\n")
+        raise
+
+
+def fetch_trucks_from_db(access_token: str, min_last_update: int, max_last_update: int, limit: int = 500, offset: int = 0) -> dict:
+    """
+    Fetch truck data from the DB API with pagination
+    """
+    trucks_url = "https://api-dev.traderonline.com/vLatest/trucks"
+    
+    params = {
+        'bypassCache': 'true',
+        'minLastUpdate': min_last_update,
+        'maxLastUpdate': max_last_update,
+        'limit': limit,
+        'offset': offset
+    }
+    
+    headers = {
+        'Authorization': f'Bearer {access_token}'
+    }
+    
+    try:
+        print(f"   📤 GET {trucks_url}")
+        print(f"   📝 Params: minLastUpdate={min_last_update}, maxLastUpdate={max_last_update}, limit={limit}, offset={offset}")
+        
+        response = requests.get(trucks_url, params=params, headers=headers)
+        response.raise_for_status()
+        
+        data = response.json()
+        total = data.get('pagination', {}).get('total', 0)
+        returned = len(data.get('result', []))
+        
+        print(f"   ✅ Fetched {returned} trucks (Total available: {total})")
+        
+        return data
+    except Exception as e:
+        print(f"   ❌ Error fetching trucks: {str(e)}")
+        raise
+
+
+def process_truck_data(truck: dict, debug: bool = False) -> dict:
+    """
+    Process individual truck data to extract photos and categories
+    """
+    ad_id = truck.get('id', '')
+    
+    processed = {
+        'Ad ID': ad_id,
+        'Breadcrumb_Top1': '',
+        'Breadcrumb_Top2': '',
+        'Breadcrumb_Top3': '',
+        'Image_URLs': ''
+    }
+    
+    # Extract categories for breadcrumbs
+    categories = truck.get('categories', [])
+    if categories:
+        for i, category in enumerate(categories[:3]):  # Get up to 3 categories
+            category_name = category.get('name', '')
+            if i == 0:
+                processed['Breadcrumb_Top1'] = category_name
+            elif i == 1:
+                processed['Breadcrumb_Top2'] = category_name
+            elif i == 2:
+                processed['Breadcrumb_Top3'] = category_name
+    
+    # Extract photos and construct CDN URLs
+    photos = truck.get('photos', [])
+    
+    # Debug logging for first truck
+    if debug:
+        print(f"\n   🔍 DEBUG - Processing truck {ad_id}:")
+        print(f"      Photos array exists: {photos is not None}")
+        print(f"      Photos count: {len(photos) if photos else 0}")
+        if photos:
+            print(f"      First photo data: {photos[0]}")
+    
+    if photos:
+        cdn_urls = []
+        for photo in photos:
+            media_id = photo.get('mediaApiId', '')
+            if media_id:
+                # Use DEV media URL (media-dev.traderonline.com works for dev environment)
+                # For production, this would need to be: https://cdn-media.tilabs.io/v1/media/{media_id}.webp?...
+                cdn_url = f"https://media-dev.traderonline.com/vLatest/media/{media_id}.jpg"
+                cdn_urls.append(cdn_url)
+            elif debug:
+                print(f"      ⚠️ Photo missing mediaApiId: {photo}")
+        
+        processed['Image_URLs'] = ','.join(cdn_urls)
+        
+        if debug:
+            print(f"      Final Image_URLs: {processed['Image_URLs'][:100]}..." if len(processed['Image_URLs']) > 100 else f"      Final Image_URLs: {processed['Image_URLs']}")
+    elif debug:
+        print(f"      ⚠️ No photos array in truck data")
+    
+    return processed
+
+
+@app.post("/api/db-fetch")
+async def fetch_from_db(request: DBFetchRequest):
+    """
+    Fetch truck data from the database API (WITHOUT automatic annotation)
+    
+    This endpoint:
+    1. Gets an access token from the authentication API
+    2. Fetches truck data from the database API with pagination
+    3. Processes the data to extract photos and categories
+    4. Returns the data for preview
+    5. User can then start annotation separately
+    
+    Credentials can be provided in the request or will be loaded from config.ini
+    """
+    print("\n" + "="*80)
+    print("🗄️ DB FETCH - FETCHING DATA FROM DATABASE API")
+    print("="*80)
+    
+    # If min and max timestamps are the same, expand to full day (24 hours)
+    min_timestamp = request.min_last_update
+    max_timestamp = request.max_last_update
+    
+    if min_timestamp == max_timestamp:
+        # Expand to full day: from 00:00:00 to 23:59:59
+        max_timestamp = min_timestamp + 86399  # 86399 seconds = 23 hours, 59 minutes, 59 seconds
+        print(f"   ℹ️  Same timestamp detected - expanding to full day")
+        print(f"   📅 Original: {request.min_last_update}")
+        print(f"   📅 Expanded: {min_timestamp} → {max_timestamp} (full 24 hours)")
+    else:
+        print(f"   📅 Date Range: {min_timestamp} → {max_timestamp}")
+    
+    print(f"   📊 Listing Range: {request.listing_start} → {request.listing_end}")
+    print("="*80 + "\n")
+    
+    try:
+        # Use provided credentials or fallback to config.ini
+        client_id = request.client_id or config.db_api_client_id
+        client_secret = request.client_secret or config.db_api_client_secret
+        grant_type = request.grant_type or config.db_api_grant_type
+        
+        # Validate credentials
+        if not client_id or client_id == 'your_client_id_here':
+            raise HTTPException(
+                status_code=400, 
+                detail="DB API Client ID not configured. Please add credentials to config.ini or provide them in the request."
+            )
+        
+        if not client_secret or client_secret == 'your_client_secret_here':
+            raise HTTPException(
+                status_code=400, 
+                detail="DB API Client Secret not configured. Please add credentials to config.ini or provide them in the request."
+            )
+        
+        print(f"   🔑 Using credentials from: {'Request' if request.client_id else 'config.ini'}")
+        print(f"   🔑 Client ID: {client_id[:10]}...")
+        print(f"   🔑 Grant Type: {grant_type}\n")
+        
+        # Step 1: Get access token
+        token_data = get_access_token(
+            client_id,
+            client_secret,
+            grant_type
+        )
+        access_token = token_data['access_token']
+        
+        # Step 2: Calculate how many trucks to fetch
+        total_listings_needed = request.listing_end - request.listing_start
+        
+        print(f"\n   📊 Need to fetch {total_listings_needed} listings")
+        print(f"   📦 Will use pagination with max 500 per request\n")
+        
+        # Step 3: Fetch trucks with pagination
+        all_trucks = []
+        current_offset = request.listing_start
+        limit_per_request = 500  # Max allowed by API
+        
+        print("="*80)
+        print("📦 FETCHING TRUCKS DATA WITH PAGINATION")
+        print("="*80)
+        
+        # Track total available for pagination guidance
+        total_available_in_db = 0
+        
+        while len(all_trucks) < total_listings_needed:
+            # Calculate how many more we need
+            remaining = total_listings_needed - len(all_trucks)
+            current_limit = min(limit_per_request, remaining)
+            
+            print(f"\n   🔄 Request {len(all_trucks) // 500 + 1}: Offset={current_offset}, Limit={current_limit}")
+            
+            # Fetch batch (use expanded timestamps)
+            batch_data = fetch_trucks_from_db(
+                access_token,
+                min_timestamp,
+                max_timestamp,
+                current_limit,
+                current_offset
+            )
+            
+            batch_trucks = batch_data.get('result', [])
+            
+            if not batch_trucks:
+                print(f"   ⚠️ No more trucks available")
+                break
+            
+            all_trucks.extend(batch_trucks)
+            current_offset += len(batch_trucks)
+            
+            print(f"   ✅ Batch complete. Total fetched so far: {len(all_trucks)}")
+            
+            # Check if we've reached the total available
+            pagination = batch_data.get('pagination', {})
+            total_available_in_db = pagination.get('total', 0)
+            
+            if current_offset >= total_available_in_db:
+                print(f"   ℹ️  Reached end of available data (total: {total_available_in_db})")
+                break
+        
+        print("\n" + "="*80)
+        print(f"✅ FETCHING COMPLETE - Retrieved {len(all_trucks)} trucks")
+        print(f"   Total available in DB for this date range: {total_available_in_db}")
+        print("="*80 + "\n")
+        
+        # Step 4: Process truck data
+        print("="*80)
+        print("🔄 PROCESSING TRUCK DATA")
+        print("="*80)
+        
+        processed_trucks = []
+        for i, truck in enumerate(all_trucks, 1):
+            # Enable debug for first truck to see what we're getting
+            debug = (i == 1)
+            processed = process_truck_data(truck, debug=debug)
+            processed_trucks.append(processed)
+            
+            if i % 100 == 0:
+                print(f"   ✅ Processed {i}/{len(all_trucks)} trucks")
+        
+        print(f"   ✅ Processed all {len(processed_trucks)} trucks")
+        print("="*80 + "\n")
+        
+        # Step 5: Apply category filters if provided
+        if request.category_filters and len(request.category_filters) > 0:
+            print("="*80)
+            print("🔍 APPLYING CATEGORY FILTERS")
+            print("="*80)
+            print(f"   Filters: {request.category_filters}")
+            
+            # Convert filters to lowercase for case-insensitive matching
+            filters_lower = [f.lower().strip() for f in request.category_filters]
+            
+            filtered_trucks = []
+            for truck in processed_trucks:
+                # Get all breadcrumb categories
+                categories = [
+                    truck.get('Breadcrumb_Top1', '').lower(),
+                    truck.get('Breadcrumb_Top2', '').lower(),
+                    truck.get('Breadcrumb_Top3', '').lower()
+                ]
+                
+                # Check if any category matches any filter (partial match)
+                matches = False
+                for cat in categories:
+                    if cat:
+                        for f in filters_lower:
+                            if f in cat or cat in f:
+                                matches = True
+                                break
+                    if matches:
+                        break
+                
+                if matches:
+                    filtered_trucks.append(truck)
+            
+            print(f"   Before filtering: {len(processed_trucks)} trucks")
+            print(f"   After filtering: {len(filtered_trucks)} trucks")
+            print(f"   Filtered out: {len(processed_trucks) - len(filtered_trucks)} trucks")
+            print("="*80 + "\n")
+            
+            processed_trucks = filtered_trucks
+        
+        # Check if any data was fetched
+        if len(processed_trucks) == 0:
+            print("="*80)
+            print("⚠️ NO DATA FOUND")
+            print("="*80)
+            print("   No trucks found for the specified date range and listing range.")
+            print("   Please try:")
+            print("   1. Different date range")
+            print("   2. Different listing range")
+            print("   3. Check if data exists in the database for this period")
+            print("="*80 + "\n")
+            raise HTTPException(
+                status_code=404,
+                detail=f"No trucks found for date range {min_timestamp} to {max_timestamp}. Please try a different date range or check if data exists for this period."
+            )
+        
+        # Step 5: Create DataFrame and save intermediate file
+        print("="*80)
+        print("📄 CREATING INTERMEDIATE EXCEL FILE")
+        print("="*80)
+        
+        df = pd.DataFrame(processed_trucks)
+        df["Ad ID"] = df["Ad ID"].astype(str).str.replace(r'\.0$', '', regex=True).str.strip()
+        
+        # Save to file
+        timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+        fetch_id = str(uuid.uuid4())[:8]
+        output_filename = f"DB_Fetch_{timestamp}.xlsx"
+        output_dir = os.path.join(config.project_root, "Scrapper output")
+        os.makedirs(output_dir, exist_ok=True)
+        output_path = os.path.join(output_dir, output_filename)
+        
+        df.to_excel(output_path, index=False)
+        
+        print(f"   ✅ Excel file created: {output_filename}")
+        print(f"   📁 Path: {output_path}")
+        print("="*80 + "\n")
+        
+        jobs[fetch_id] = {
+            "id": fetch_id,
+            "filename": output_filename,
+            "file_path": output_path,
+            "status": "fetched",  # New status: data fetched, ready for annotation
+            "total_ads": int(len(df)),
+            "created_at": datetime.now().isoformat(),
+            "is_db_fetch": True,
+            "preview_data": processed_trucks[:10]  # First 10 rows for preview
+        }
+        
+        # Calculate pagination guidance
+        first_ad_id = processed_trucks[0]['Ad ID'] if processed_trucks else None
+        last_ad_id = processed_trucks[-1]['Ad ID'] if processed_trucks else None
+        next_start = request.listing_end
+        has_more_data = next_start < total_available_in_db
+        remaining_listings = max(0, total_available_in_db - next_start)
+        
+        # Check if filters were applied
+        filters_applied = request.category_filters and len(request.category_filters) > 0
+        fetched_before_filter = len(all_trucks)  # Count before filtering
+        matched_after_filter = len(processed_trucks)  # Count after filtering
+        
+        print("="*80)
+        print("🎉 DB FETCH COMPLETE - READY FOR PREVIEW!")
+        print("="*80)
+        print(f"   Total Trucks: {len(processed_trucks)}")
+        print(f"   File: {output_filename}")
+        print(f"   Fetch ID: {fetch_id}")
+        print(f"   Status: Ready for annotation")
+        print(f"\n   📊 PAGINATION INFO:")
+        print(f"   First Ad ID: {first_ad_id}")
+        print(f"   Last Ad ID: {last_ad_id}")
+        print(f"   Total Available in DB: {total_available_in_db}")
+        if filters_applied:
+            print(f"   🔍 Category Filters Applied: {request.category_filters}")
+            print(f"   Fetched (before filter): {fetched_before_filter}")
+            print(f"   Matched (after filter): {matched_after_filter}")
+        print(f"   Has More Data: {has_more_data}")
+        if has_more_data:
+            print(f"   Next Start: {next_start} (remaining: {remaining_listings})")
+        else:
+            print(f"   ✅ This was the last batch!")
+        print("="*80 + "\n")
+        
+        return {
+            "success": True,
+            "fetch_id": fetch_id,
+            "total_trucks": len(processed_trucks),
+            "filename": output_filename,
+            "file_path": output_path,
+            "preview_data": processed_trucks[:10],  # First 10 rows for preview
+            "message": f"Successfully fetched {len(processed_trucks)} trucks from database. Ready for annotation.",
+            # Pagination guidance
+            "pagination": {
+                "first_ad_id": first_ad_id,
+                "last_ad_id": last_ad_id,
+                "listing_start": request.listing_start,
+                "listing_end": request.listing_end,
+                "total_available": total_available_in_db,
+                "has_more_data": has_more_data,
+                "next_suggested_start": next_start if has_more_data else None,
+                "next_suggested_end": min(next_start + 1000, total_available_in_db) if has_more_data else None,
+                "remaining_listings": remaining_listings,
+                # Filter-specific info
+                "filters_applied": filters_applied,
+                "category_filters": request.category_filters if filters_applied else None,
+                "fetched_before_filter": fetched_before_filter if filters_applied else None,
+                "matched_after_filter": matched_after_filter if filters_applied else None
+            }
+        }
+        
+    except Exception as e:
+        print(f"\n❌ DB FETCH FAILED: {str(e)}\n")
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=f"Failed to fetch data from database: {str(e)}")
+
+
+@app.post("/api/db-fetch/{fetch_id}/start-annotation")
+async def start_db_annotation(fetch_id: str, background_tasks: BackgroundTasks):
+    """
+    Start AI annotation on already-fetched database data
+    
+    This endpoint:
+    1. Loads the fetched data from the previous fetch
+    2. Runs AI annotation pipeline
+    3. Returns job ID for tracking
+    """
+    if fetch_id not in jobs:
+        raise HTTPException(status_code=404, detail="Fetch ID not found")
+    
+    fetch_job = jobs[fetch_id]
+    
+    if fetch_job.get('status') != 'fetched':
+        raise HTTPException(status_code=400, detail="This fetch has already been processed or is invalid")
+    
+    file_path = fetch_job.get('file_path')
+    
+    if not file_path or not os.path.exists(file_path):
+        raise HTTPException(status_code=404, detail="Fetched data file not found")
+    
+    # Create annotation job
+    job_id = str(uuid.uuid4())[:8]
+    
+    jobs[job_id] = {
+        "id": job_id,
+        "filename": fetch_job.get('filename'),
+        "file_path": file_path,
+        "status": JobStatus.PROCESSING,
+        "total_ads": fetch_job.get('total_ads'),
+        "created_at": datetime.now().isoformat(),
+        "is_db_fetch": True,
+        "parent_fetch_id": fetch_id
+    }
+    
+    # Update fetch job status
+    fetch_job['status'] = 'annotating'
+    fetch_job['annotation_job_id'] = job_id
+    
+    # Start annotation pipeline in background
+    background_tasks.add_task(run_db_annotation_pipeline_sync, job_id, file_path)
+    
+    print(f"\n🤖 Starting AI annotation for fetch {fetch_id} (job {job_id})")
+    
+    return {
+        "job_id": job_id,
+        "status": JobStatus.PROCESSING,
+        "message": f"AI annotation started for {fetch_job.get('total_ads')} trucks"
+    }
 
 
 if __name__ == "__main__":
