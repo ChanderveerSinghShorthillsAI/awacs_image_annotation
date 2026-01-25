@@ -448,7 +448,7 @@ CRITICAL RULES:
    - **Stepvan** (95% are Duallys) - Assume Dually unless you clearly see single thin tire
    - **Cabover Truck - COE** (80% are Duallys) - Check carefully for dual wheels
    - **Cab-Chassis** with utility/service body (70% are Duallys) - Look for dual wheels under body
-   - **Utility Truck - Service Truck** (60% are Duallys) - Look for dual rear wheels under service body compartments, check fender width at rear axle vs cab width
+   - **Utility Truck - Service Truck** - ⚠️ CRITICAL: DO NOT assume Dually based on wide service body alone. REQUIRE clear visual evidence: Must see TWO separate rear wheels OR distinctive rear fender flare that extends beyond cab width. Service bodies are often wider than the chassis without being duallys. Be conservative - only mark as Dually if you have strong visual proof.
    - **Pickup Truck** (30% are Duallys) - Especially heavy-duty models: Ford F-350/F-450, RAM 3500, Chevy 3500, GMC 3500. Look for wide rear fenders extending beyond cab, double rear wheels visible from rear/side/3-quarter view, front wheel hub extensions
    - **Flatbed Truck** (50% are Duallys) - Check for dual rear wheels
    - **Contractor Truck** (40% are Duallys) - Check for dual rear wheels
@@ -460,24 +460,32 @@ CRITICAL RULES:
    - **When in doubt:** If multiple secondary indicators are present (fender flare + vehicle type + front hub extensions), lean towards Dually
    
    **==== COMMON FALSE POSITIVES TO AVOID ====**
-   - **Wide service body does NOT automatically mean Dually** - but check other cues like fender width at rear axle
+   - **⚠️ UTILITY-SERVICE TRUCK FALSE POSITIVE (VERY COMMON):** The wide service body with compartments/cabinets is NOT evidence of Dually. Many single-wheel utility trucks have wide service bodies. Do NOT mark as Dually unless you see ACTUAL dual wheels or rear fender flare extending beyond the cab.
+   - **Wide service body does NOT automatically mean Dually** - check for actual dual wheels or fender flare at rear axle
    - **Single wheel with decorative hub cap** - look for two separate wheels, not one wide wheel
    - **Dirt/shadows that look like extra tires** - verify actual wheel shapes, not just shadows
    - **Wide Body != Dually:** Service/utility bodies can be wider than cab even with single rear wheels
-   - **BUT:** If you see BOTH wide body AND any of the primary visual cues, it's likely a Dually
+   - **Conservative approach for Utility Trucks:** When in doubt on a Utility-Service Truck, default to NOT Dually unless you have strong visual evidence
    
    **==== DECISION LOGIC ====**
    **Include "Dually" as a category if ANY of these are true:**
    1. You can clearly see TWO separate wheels/rims on the rear (per side)
-   2. You see distinctive rear fender flare/bulge + vehicle type is typically Dually
+   2. You see distinctive rear fender flare/bulge + vehicle type is typically Dually (BUT NOT for Utility-Service Trucks - see special rule below)
    3. You see dual rim "dish" pattern + wider rear profile
    4. It's a Box Truck/Cutaway/Stepvan AND you don't see a single thin tire
    5. Multiple secondary indicators are present (fender flare + vehicle type + front hub extensions)
    
-   **Do NOT include "Dually" only if:**
+   **SPECIAL RULE FOR UTILITY-SERVICE TRUCKS:**
+   For Utility Truck - Service Truck category, ONLY include "Dually" if:
+   - You can see TWO separate rear wheels (most reliable), OR
+   - You see rear fender flare that clearly extends beyond the cab width AND at least one other indicator
+   - Do NOT mark as Dually based on wide service body alone
+   
+   **Do NOT include "Dually" if:**
    1. You clearly see a SINGLE thin rear tire with no dual pattern
    2. Rear width is same as front with no fender flare
    3. You're certain it's a single rear wheel configuration
+   4. It's a Utility-Service Truck with only a wide service body and no other indicators
    
    **==== OUTPUT FORMAT FOR DUALLY ====**
    - If you detect Dually, include it as a SECONDARY category (not primary)
@@ -1194,7 +1202,7 @@ A "Dually" truck has TWO separate wheels/tires mounted on EACH SIDE of the rear 
    - **Cabover / COE commercial trucks** (80% are Duallys)
    - **Heavy-Duty Pickup Trucks** (30% are Duallys) - Ford F-350/F-450, RAM 3500, Chevy 3500, GMC 3500
    - If you see these types, look EXTRA CAREFULLY for dually indicators
-   - **UTILITY/SERVICE TRUCK DUALLY TIPS**: Don't let the wide service body confuse you - look at the REAR WHEELS specifically (below/behind the compartments). Check for fender width at rear axle vs cab width.
+   - **UTILITY/SERVICE TRUCK DUALLY TIPS (VERY IMPORTANT)**: The wide service body with compartments is NOT evidence of Dually. MANY utility trucks have wide service bodies but single rear wheels. You MUST see ACTUAL dual wheels OR clear rear fender flare extending beyond cab width. Be very conservative - when in doubt for utility trucks, answer NO.
    - **PICKUP TRUCK DUALLY TIPS**: Look for wide rear fenders that extend beyond the cab, double rear wheels visible from rear/side/3-quarter view, and front wheel hub extensions
 
 7. **Side Profile**: Rear appears noticeably wider/taller than front when viewed from side
@@ -1223,8 +1231,12 @@ Answer "NO" if ANY of these are true:
 1. You clearly see a SINGLE thin rear tire with no dual pattern.
 2. Rear width is same as front with no fender flare.
 3. **The vehicle has MULTIPLE REAR AXLES (tires arranged lengthwise/tandem).**
+4. **It's a UTILITY/SERVICE TRUCK with only a wide body and no clear dual wheel or fender flare evidence.**
 
-When in doubt, lean towards "YES" if multiple secondary indicators are present AND it is clearly a single-axle truck.
+**SPECIAL INSTRUCTION FOR UNCERTAINTY:**
+- For Box Truck/Cutaway/Stepvan: When in doubt, lean towards "YES" if multiple secondary indicators are present.
+- For Utility/Service Truck: When in doubt, lean towards "NO" unless you have strong visual evidence of dual wheels or fender flare.
+- For other vehicle types: Require clear visual evidence (dual wheels or fender flare) to answer "YES".
 
 ==== RESPONSE FORMAT ====
 Respond with ONLY one of these formats:
