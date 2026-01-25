@@ -187,11 +187,14 @@ def _process_single_ad(ad_row: dict, category_data: dict, rules: dict,
 
     annotated = [(data_processing.normalize_text(c, rules['normalize_map'], worker_id), s) for c, s in result]
     
+    print(f"[W-{worker_id}] Ad {ad_id}: Initial AI classification result: {[(c, round(s, 1)) for c, s in annotated[:3]]}")
+    
     # 🛡️ PLACEHOLDER/COMING SOON SAFEGUARD 🛡️
     # If AI detected "Image Not Clear" (which includes placeholder/coming soon images), 
     # skip all further processing and set status appropriately
     if annotated and annotated[0][0] == "Image Not Clear":
         utils.log_msg(f" [W-{worker_id}] 🚫 Placeholder/Coming Soon detected - skipping classification", worker_id)
+        print(f"[W-{worker_id}] Ad {ad_id}: Image Not Clear detected - skipping further processing")
         filtered = annotated  # Keep as-is, no filtering needed
         status = data_processing.determine_status(breadcrumb, filtered, annotated, has_images=has_valid_images)
         
@@ -217,44 +220,61 @@ def _process_single_ad(ad_row: dict, category_data: dict, rules: dict,
         results_queue.put(final_row)
         return final_row
     
-    # 🚀 AI RE-CHECK FOR "JUST DUALLY" 🚀
-    if img_bytes_list and len(annotated) == 1 and annotated[0][0].lower() == "dually":
-        utils.log_msg(f" [W-{worker_id}] ⚠️ AI only saw 'Dually'. Forcing Body check...", worker_id)
-        
-        all_categories = list(category_data.keys())
-        body_options = [c for c in all_categories if c.lower() != "dually"]
-        options_str = ", ".join(body_options)
-        
-        body_check_rule = {
-            "decision_rule": (
-                f"You identified this chassis as a Dually. Dually is an attribute, not a specific body type. "
-                f"Analyze the rear body configuration carefully. "
-                f"From the following valid categories, select the one that best describes the truck body:\n"
-                f"[{options_str}]\n"
-                f"Output ONLY the specific Category Name from this list."
-            )
-        }
-        
-        found_body, t_in, t_out = classification.classify_with_refinement(
-            body_options, body_check_rule, img_bytes_list[0], 
-            yoda_instance, key_queue, worker_id, ad_id, status_queue
-        )
-        total_in_tokens += t_in
-        total_out_tokens += t_out
-        
-        if found_body:
-            norm_body = data_processing.normalize_text(found_body, rules['normalize_map'], worker_id)
-            utils.log_msg(f" [W-{worker_id}] -> AI Found Body: {norm_body}", worker_id)
-            annotated = [(norm_body, 95.0), annotated[0]]
-        else:
-            annotated = [("Cab-Chassis", 50.0), annotated[0]]
+    # =================================================================================
+    # COMMENTED OUT: Complex "Just Dually" safeguard logic
+    # Now handled in main prompt - AI should detect body type + dually together
+    # =================================================================================
+    # # 🚀 AI RE-CHECK FOR "JUST DUALLY" 🚀
+    # if img_bytes_list and len(annotated) == 1 and annotated[0][0].lower() == "dually":
+    #     utils.log_msg(f" [W-{worker_id}] ⚠️ AI only saw 'Dually'. Forcing Body check...", worker_id)
+    #     
+    #     all_categories = list(category_data.keys())
+    #     body_options = [c for c in all_categories if c.lower() != "dually"]
+    #     options_str = ", ".join(body_options)
+    #     
+    #     body_check_rule = {
+    #         "decision_rule": (
+    #             f"You identified this chassis as a Dually. Dually is an attribute, not a specific body type. "
+    #             f"Analyze the rear body configuration carefully. "
+    #             f"From the following valid categories, select the one that best describes the truck body:\n"
+    #             f"[{options_str}]\n"
+    #             f"Output ONLY the specific Category Name from this list."
+    #         )
+    #     }
+    #     
+    #     found_body, t_in, t_out = classification.classify_with_refinement(
+    #         body_options, body_check_rule, img_bytes_list[0], 
+    #         yoda_instance, key_queue, worker_id, ad_id, status_queue
+    #     )
+    #     total_in_tokens += t_in
+    #     total_out_tokens += t_out
+    #     
+    #     if found_body:
+    #         norm_body = data_processing.normalize_text(found_body, rules['normalize_map'], worker_id)
+    #         utils.log_msg(f" [W-{worker_id}] -> AI Found Body: {norm_body}", worker_id)
+    #         annotated = [(norm_body, 95.0), annotated[0]]
+    #     else:
+    #         annotated = [("Cab-Chassis", 50.0), annotated[0]]
+    # =================================================================================
+    
+    # =================================================================================
+    # COMMENTED OUT: Complex dually demotion logic
+    # Now handled in main prompt - AI should return body type first, dually second
+    # =================================================================================
+    # annotated = data_processing.handle_dually_logic(annotated, worker_id)
+    # =================================================================================
+    
+    # Simple dually demotion: If Dually is #1, swap with #2 (safety check only)
+    if len(annotated) >= 2 and annotated[0][0].lower() == "dually":
+        print(f"[W-{worker_id}] Ad {ad_id}: Dually detected as #1, swapping with #2 (safety check)")
+        annotated[0], annotated[1] = annotated[1], annotated[0]
 
-    annotated = data_processing.handle_dually_logic(annotated, worker_id)
-
-    # REFINEMENT (Overlap Rules)
+    # REFINEMENT (Overlap Rules) - Standard JSON overlap rules only (dually safeguard removed)
     if img_bytes_list and len(annotated) > 1 and annotated[0][1] < 95.0:
-        if overlap_result := data_processing.find_overlap_rule(annotated, rules.get('truck_overlaps', []), worker_id):
+        overlap_result = data_processing.find_overlap_rule(annotated, rules.get('truck_overlaps', []), worker_id)
+        if overlap_result:
             rule_dict, pair = overlap_result
+            print(f"[W-{worker_id}] Ad {ad_id}: Overlap rule triggered for {pair}")
             
             refined, t_in, t_out = classification.classify_with_refinement(
                 pair, rule_dict, img_bytes_list[0],
@@ -265,68 +285,82 @@ def _process_single_ad(ad_row: dict, category_data: dict, rules: dict,
             
             if refined:
                 refined_norm = data_processing.normalize_text(refined, rules['normalize_map'], worker_id)
+                print(f"[W-{worker_id}] Ad {ad_id}: Refinement result: {refined_norm}")
                 annotated = data_processing.apply_refinement_fix(annotated, refined_norm, pair, worker_id)
 
     filtered = data_processing.filter_by_exclusion_rules(annotated, rules['exclusion_rules'], worker_id)
     
-    # =================================================================================
-    # 🚀 ENHANCED DUALLY DETECTION - TWO-STAGE VERIFICATION 🚀
-    # Stage 1: CV2 local detection (Darth Vader)
-    # Stage 2: LLM verification for high-probability dually types
-    # =================================================================================
-    has_dually_before = any("dually" in c[0].lower() for c in filtered)
+    # Check if dually was detected in the main classification
+    has_dually = any("dually" in c[0].lower() for c in filtered)
+    if has_dually:
+        print(f"[W-{worker_id}] Ad {ad_id}: ✅ Dually detected in main classification: {[c[0] for c in filtered if 'dually' in c[0].lower()]}")
+    else:
+        print(f"[W-{worker_id}] Ad {ad_id}: ❌ No Dually detected in main classification")
     
-    # STAGE 1: CV2 Detection (if enabled)
-    if config.enable_darth_cv2_dually and img_bytes_list and not has_dually_before:
-        try:
-            # Check Image 0
-            is_dually_cv2, score = darth_vision.inspect_for_dually(img_bytes_list[0])
-            if is_dually_cv2:
-                utils.log_msg(f" [W-{worker_id}] 🌑 Darth (CV2) found Dually! (Score: {score})", worker_id)
-                filtered.append(("Dually", 90.0))
-                # Re-sort so Dually isn't #1
-                filtered = data_processing.handle_dually_logic(filtered, worker_id)
-                has_dually_before = True  # Update flag
-        except Exception as e:
-            utils.log_msg(f" [W-{worker_id}] Darth CV2 error: {e}", worker_id)
-    
-    # STAGE 2: LLM Verification for high-probability dually types (if still no dually found)
-    # This catches duallys that CV2 missed
-    if img_bytes_list and not has_dually_before and len(filtered) >= 1:
-        top_category = filtered[0][0].lower()
-        # These vehicle types are very commonly duallys - verify with LLM if not yet detected
-        high_dually_probability_types = [
-            "box truck - straight truck", 
-            "cutaway-cube van", 
-            "stepvan",
-            "cabover truck - coe",
-            "cab-chassis",
-            "pickup truck",  # Heavy-duty pickups (F-350, RAM 3500, etc.) are commonly Duallys
-            # "utility truck - service truck"  # Service trucks on heavy-duty chassis are often Duallys
-        ]
-        
-        if any(hd_type in top_category for hd_type in high_dually_probability_types):
-            try:
-                utils.log_msg(f"[W-{worker_id}] 🔍 LLM Dually Verification for '{filtered[0][0]}' (high-probability type)", worker_id)
-                is_dually_llm, confidence, t_in, t_out = classification.verify_dually_with_llm(
-                    img_bytes_list[0], yoda_instance, key_queue, worker_id, ad_id, status_queue
-                )
-                total_in_tokens += t_in
-                total_out_tokens += t_out
-                
-                if is_dually_llm:
-                    utils.log_msg(f" [W-{worker_id}] ✅ LLM Confirmed Dually! (Confidence: {confidence})", worker_id)
-                    filtered.append(("Dually", confidence))
-                    # Re-sort so Dually isn't #1
-                    filtered = data_processing.handle_dually_logic(filtered, worker_id)
-                else:
-                    utils.log_msg(f" [W-{worker_id}] ❌ LLM: Not a Dually", worker_id)
-            except Exception as e:
-                utils.log_msg(f" [W-{worker_id}] LLM Dually verification error: {e}", worker_id)
+    # =================================================================================
+    # COMMENTED OUT: Enhanced Two-Stage Dually Detection
+    # Now using simplified prompt-based detection only
+    # =================================================================================
+    # # 🚀 ENHANCED DUALLY DETECTION - TWO-STAGE VERIFICATION 🚀
+    # # Stage 1: CV2 local detection (Darth Vader)
+    # # Stage 2: LLM verification for high-probability dually types
+    # # =================================================================================
+    # has_dually_before = any("dually" in c[0].lower() for c in filtered)
+    # 
+    # # STAGE 1: CV2 Detection (if enabled)
+    # if config.enable_darth_cv2_dually and img_bytes_list and not has_dually_before:
+    #     try:
+    #         # Check Image 0
+    #         is_dually_cv2, score = darth_vision.inspect_for_dually(img_bytes_list[0])
+    #         if is_dually_cv2:
+    #             utils.log_msg(f" [W-{worker_id}] 🌑 Darth (CV2) found Dually! (Score: {score})", worker_id)
+    #             filtered.append(("Dually", 90.0))
+    #             # Re-sort so Dually isn't #1
+    #             filtered = data_processing.handle_dually_logic(filtered, worker_id)
+    #             has_dually_before = True  # Update flag
+    #     except Exception as e:
+    #         utils.log_msg(f" [W-{worker_id}] Darth CV2 error: {e}", worker_id)
+    # 
+    # # STAGE 2: LLM Verification for high-probability dually types (if still no dually found)
+    # # This catches duallys that CV2 missed
+    # if img_bytes_list and not has_dually_before and len(filtered) >= 1:
+    #     top_category = filtered[0][0].lower()
+    #     # These vehicle types are very commonly duallys - verify with LLM if not yet detected
+    #     high_dually_probability_types = [
+    #         "box truck - straight truck", 
+    #         "cutaway-cube van", 
+    #         "stepvan",
+    #         "cabover truck - coe",
+    #         "cab-chassis",
+    #         "pickup truck",  # Heavy-duty pickups (F-350, RAM 3500, etc.) are commonly Duallys
+    #         "utility truck - service truck"  # Service trucks on heavy-duty chassis are often Duallys
+    #     ]
+    #     
+    #     if any(hd_type in top_category for hd_type in high_dually_probability_types):
+    #         try:
+    #             utils.log_msg(f"[W-{worker_id}] 🔍 LLM Dually Verification for '{filtered[0][0]}' (high-probability type)", worker_id)
+    #             is_dually_llm, confidence, t_in, t_out = classification.verify_dually_with_llm(
+    #                 img_bytes_list[0], yoda_instance, key_queue, worker_id, ad_id, status_queue
+    #             )
+    #             total_in_tokens += t_in
+    #             total_out_tokens += t_out
+    #             
+    #             if is_dually_llm:
+    #                 utils.log_msg(f" [W-{worker_id}] ✅ LLM Confirmed Dually! (Confidence: {confidence})", worker_id)
+    #                 filtered.append(("Dually", confidence))
+    #                 # Re-sort so Dually isn't #1
+    #                 filtered = data_processing.handle_dually_logic(filtered, worker_id)
+    #             else:
+    #                 utils.log_msg(f" [W-{worker_id}] ❌ LLM: Not a Dually", worker_id)
+    #         except Exception as e:
+    #             utils.log_msg(f" [W-{worker_id}] LLM Dually verification error: {e}", worker_id)
     # =================================================================================
 
     # Determine status - pass has_images flag to properly handle no-image cases
     status = data_processing.determine_status(breadcrumb, filtered, annotated, has_images=has_valid_images)
+    
+    print(f"[W-{worker_id}] Ad {ad_id}: Final filtered results: {[(c, round(s, 1)) for c, s in filtered[:3]]}")
+    print(f"[W-{worker_id}] Ad {ad_id}: Status: {status}")
 
     # --- CALCULATE COST ---
     cost_cents = utils.calculate_cost_cents(total_in_tokens, total_out_tokens, config.gemini_model)

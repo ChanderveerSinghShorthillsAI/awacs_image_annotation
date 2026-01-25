@@ -388,140 +388,24 @@ def classify_with_gemini(breadcrumb: str, category_data: dict, ad_img_bytes: byt
             log_msg(f"⚠️ Promotional check failed, proceeding with classification: {e}", worker_id)
             # Continue with classification if check fails
 
-    prompt_text = f"""You are an expert vehicle classifier.
-Identify the vehicle in the provided 'Ad Image'.
-Note: The image may be a 'Mosaic' containing two different angles.
+    prompt_text = f"""Expert vehicle classifier. Image may be mosaic (2 angles). Context: "{breadcrumb}"
 
-Context Breadcrumb: "{breadcrumb}"
+RULES:
+1. Ladder Rack: Cabinets/Compartments=Utility Truck | Stakes/Slats=Contractor Truck
 
-CRITICAL RULES:
-1. **The Ladder Rack Trap:** Do NOT classify as 'Contractor Truck' just because you see a ladder rack. Utility Trucks also have ladder racks. 
-   - Look for **Cabinets/Compartments** -> Utility Truck.
-   - Look for **Removable Stakes/Slats** -> Contractor Truck.
+2. DUALLY (CRITICAL): 4 rear tires (2/side). Attribute, not body type. Include as SECONDARY if detected.
+   PRIMARY CUES: 1)Dual wheel pattern-two circles/rims per side with gap 2)Rear fender flare-hip bulge wider than front 3)Dual rim dish/concave 4)Wider rear wheel wells
+   SECONDARY: Front hub extensions, shadows/gaps between wheels, dual rim patterns
+   VEHICLE TYPES (commonly dually): Box Truck/Straight(90%), Cutaway-Cube(90%), Stepvan(95%), Cabover/COE(80%), Cab-Chassis(70%), Utility/Service(60%), Pickup F-350/RAM3500(30%), Flatbed(50%), Contractor(40%)
+   UNCERTAINTY: If rear unclear→check front hubs+fender+type. Box/Cutaway/Stepvan→assume Dually unless single tire visible
+   FALSE POSITIVES AVOID: Wide body alone≠Dually. Single wheel+hub cap≠dual. Dirt/shadows≠tires
+   INCLUDE DUALLY IF: See 2 wheels/rims rear OR fender flare+typical type OR dual dish+wide rear OR Box/Cutaway/Stepvan without single tire OR multiple secondary indicators
+   EXCLUDE IF: Single tire visible OR same front/rear width OR certain single-wheel
+   OUTPUT: Primary body first, then Dually as 2nd. Ex: 1.Box Truck(95%) 2.Dually(90%)
 
-2. **DUALLY DETECTION (CRITICAL - ALWAYS CHECK):**
-   - **CRITICAL: ALWAYS check for Dually indicators - false negatives are a major issue!**
-   - **What is a Dually?** A vehicle with DUAL REAR WHEELS - TWO separate wheels/tires mounted on EACH SIDE of the rear axle (4 rear tires total instead of 2)
-   - **Dually is an ATTRIBUTE, not a body type. If you detect Dually, include it as a SECONDARY category alongside the primary body type.**
-   
-   **==== PRIMARY VISUAL CUES (Check ALL of these carefully) ====**
-   - **1. Dual Wheel Pattern:** Can you see TWO distinct wheels, rims, or tires on each rear side?
-     * Look for two separate circular shapes (wheels/rims) on the same axle
-     * May see a gap or shadow between the two wheels
-     * Wheels appear "sandwiched" together
-     * NOT just one wide tire - must be TWO separate wheels
-   
-   - **2. Rear Fender Width/Flare:** Is the rear section noticeably WIDER than the front?
-     * Look for distinctive "hip" bulge where rear fenders flare outward
-     * Rear fender should extend beyond cab width
-     * Creates a noticeable "wide-hip" profile when viewed from side
-     * The rear appears wider/taller than front due to fender flares
-   
-   - **3. Dual Rim Profile:** Look for the deep "dish" (concave) or "sandwich" appearance
-     * Outer rim may appear deeply recessed or concave
-     * May see two distinct rim reflections or patterns per side
-     * Deep dish shape indicates dual wheel assembly
-   
-   - **4. Wheel Well Width:** Wider rear wheel wells to accommodate dual wheels
-     * Rear wheel opening appears taller/wider than front
-     * More space between body and wheels
-     * Wheel wells are noticeably larger on duallys
-   
-   **==== SECONDARY VISUAL CUES (Additional Evidence) ====**
-   - **5. Front Hub Extensions:** Dually trucks often have protruding metal hub caps on FRONT wheels
-     * Large circular extensions sticking out from front wheels
-     * This balances the wider rear stance
-     * Look for metal hub extensions on front wheels
-   
-   - **6. Shadows and Gaps:** Look for shadows or gaps between dual rear wheels
-     * There should be visible space or shadow between the two wheels
-     * This is NOT present on single-wheel configurations
-   
-   - **7. Rim Pattern:** Two distinct rim patterns/reflections visible on each rear side
-     * Each wheel has its own rim pattern
-     * May see two separate rim reflections
-   
-   **==== VEHICLE TYPE CONTEXT (Statistical Likelihood) ====**
-   These vehicle types are commonly Duallys - check EXTRA CAREFULLY:
-   - **Box Truck - Straight Truck** (90% are Duallys) - Assume Dually unless you clearly see single thin tire
-   - **Cutaway-Cube Van** (90% are Duallys) - Assume Dually unless you clearly see single thin tire
-   - **Stepvan** (95% are Duallys) - Assume Dually unless you clearly see single thin tire
-   - **Cabover Truck - COE** (80% are Duallys) - Check carefully for dual wheels
-   - **Cab-Chassis** with utility/service body (70% are Duallys) - Look for dual wheels under body
-   - **Utility Truck - Service Truck** (60% are Duallys) - Look for dual rear wheels under service body compartments, check fender width at rear axle vs cab width
-   - **Pickup Truck** (30% are Duallys) - Especially heavy-duty models: Ford F-350/F-450, RAM 3500, Chevy 3500, GMC 3500. Look for wide rear fenders extending beyond cab, double rear wheels visible from rear/side/3-quarter view, front wheel hub extensions
-   - **Flatbed Truck** (50% are Duallys) - Check for dual rear wheels
-   - **Contractor Truck** (40% are Duallys) - Check for dual rear wheels
-   
-   **==== HOW TO HANDLE UNCERTAINTY ====**
-   - **If rear wheels are NOT clearly visible:** Look at front wheels for hub extensions, check fender width, consider vehicle type
-   - **If you see wide body but unclear wheels:** Check for fender flare, wheel well width, and vehicle type context
-   - **If it's a Box Truck/Cutaway/Stepvan:** Assume Dually UNLESS you clearly see a single thin rear tire
-   - **When in doubt:** If multiple secondary indicators are present (fender flare + vehicle type + front hub extensions), lean towards Dually
-   
-   **==== COMMON FALSE POSITIVES TO AVOID ====**
-   - **Wide service body does NOT automatically mean Dually** - but check other cues like fender width at rear axle
-   - **Single wheel with decorative hub cap** - look for two separate wheels, not one wide wheel
-   - **Dirt/shadows that look like extra tires** - verify actual wheel shapes, not just shadows
-   - **Wide Body != Dually:** Service/utility bodies can be wider than cab even with single rear wheels
-   - **BUT:** If you see BOTH wide body AND any of the primary visual cues, it's likely a Dually
-   
-   **==== DECISION LOGIC ====**
-   **Include "Dually" as a category if ANY of these are true:**
-   1. You can clearly see TWO separate wheels/rims on the rear (per side)
-   2. You see distinctive rear fender flare/bulge + vehicle type is typically Dually
-   3. You see dual rim "dish" pattern + wider rear profile
-   4. It's a Box Truck/Cutaway/Stepvan AND you don't see a single thin tire
-   5. Multiple secondary indicators are present (fender flare + vehicle type + front hub extensions)
-   
-   **Do NOT include "Dually" only if:**
-   1. You clearly see a SINGLE thin rear tire with no dual pattern
-   2. Rear width is same as front with no fender flare
-   3. You're certain it's a single rear wheel configuration
-   
-   **==== OUTPUT FORMAT FOR DUALLY ====**
-   - If you detect Dually, include it as a SECONDARY category (not primary)
-   - Example: "1. Box Truck - Straight Truck (95%)" followed by "2. Dually (90%)"
-   - The primary body type should ALWAYS be listed first, Dually should be second
-   - Dually is an attribute that modifies the vehicle, not a standalone category
+3. "Image Not Clear" STRICT: Image passed pre-filter. Use ONLY if: completely black/white/corrupt/failed load/zero features/100% placeholder. MUST classify if ANY vehicle visible (blurry/dark/partial/obscured/distant/poor quality OK). If see wheels/cab/bed/body/bumper/outline→CLASSIFY. Job=classify vehicles not judge quality.
 
-3. **"Image Not Clear" Rule (EXTREMELY STRICT - Use Only When Truly Impossible to Classify):**
-   
-   ⚠️ **CRITICAL: This image has already passed a pre-check filter. Do NOT return "Image Not Clear" unless ABSOLUTELY NECESSARY!**
-   
-   **ONLY use "Image Not Clear" if the image is COMPLETELY IMPOSSIBLE to classify:**
-   - The image is completely black, white, or corrupted with NO vehicle visible
-   - The image failed to load (shows error or blank screen)
-   - You see ZERO vehicle features - no wheels, no cab, no body, no truck parts whatsoever
-   - The image is 100% a placeholder graphic (camera icon with "no image" text) and NO vehicle is present
-   
-   **You MUST classify the vehicle normally (DO NOT use "Image Not Clear") if:**
-   - You can see ANY truck or vehicle in the image, even if:
-     * The image is blurry, dark, grainy, or low quality
-     * The vehicle is far away or small in the frame
-     * There are shadows, reflections, or poor lighting
-     * The image has text, watermarks, or dealership backgrounds
-     * The vehicle is partially obscured by objects, people, or other vehicles
-     * Only part of the vehicle is visible (e.g., just the cab or just the bed)
-     * The image angle is awkward or unusual
-     * Multiple vehicles are in the frame
-   - You can identify ANY of these vehicle features:
-     * Wheels/tires (front or rear)
-     * Cab/driver compartment
-     * Bed/cargo area
-     * Body panels
-     * Bumpers or grille
-     * Vehicle outline or silhouette
-   
-   **STRICT RULE: If you can see a vehicle and identify what type it is (even with low confidence), you MUST classify it. DO NOT use "Image Not Clear" just because the image quality is poor.**
-   
-   **Your job is to classify vehicles, not judge image quality. Focus on identifying the truck type, not the image clarity.**
-
-OUTPUT FORMAT INSTRUCTIONS:
-- **ONLY** return the numbered list of categories with confidence scores.
-- Example Output:
-  1. Pickup Truck (98%)
-  2. Flatbed Truck (15%)
+OUTPUT: Numbered list with scores only. Ex: 1.Pickup Truck(98%) 2.Flatbed Truck(15%)
 """
     parts = [prompt_text]
     if ad_img_bytes:
@@ -1120,122 +1004,30 @@ def verify_dually_with_llm(ad_img_bytes_list: list[bytes], yoda_instance, key_qu
     mosaic_image = create_image_mosaic_multi(valid_images)
     image_count_text = f"{len(valid_images)} image{'s' if len(valid_images) > 1 else ''}"
     
-    # Detailed prompt for accurate Dually verification (ENHANCED - More Aggressive)
-    if len(valid_images) > 1:
-        prompt_text = f"""You are an expert vehicle analyst specializing in wheel configuration detection.
-
-Your CRITICAL task is to determine if this vehicle has DUAL REAR WHEELS (Dually) on a SINGLE REAR AXLE.
-
-You have been provided with a MOSAIC image showing {image_count_text} of this vehicle from different angles side-by-side. Examine ALL views in the mosaic to get the best view of the rear wheels and fenders.
-
-⚠️ IMPORTANT: False NEGATIVES are a major problem - we are MISSING many Duallys. Be thorough and look for ALL indicators across ALL views in the mosaic."""
-    else:
-        prompt_text = f"""You are an expert vehicle analyst specializing in wheel configuration detection.
-
-Your CRITICAL task is to determine if this vehicle has DUAL REAR WHEELS (Dually) on a SINGLE REAR AXLE.
-
-You have been provided with 1 image of this vehicle. Examine it carefully to determine if it has dual rear wheels.
-
-⚠️ IMPORTANT: False NEGATIVES are a major problem - we are MISSING many Duallys. Be thorough and look for ALL indicators."""
+    # Dually verification prompt (compressed)
+    mosaic_text = f"MOSAIC {image_count_text} side-by-side. Examine ALL views" if len(valid_images) > 1 else "1 image"
     
-    prompt_text += """
+    prompt_text = f"""Expert wheel configuration analyst. Determine: DUAL REAR WHEELS (Dually) on SINGLE REAR AXLE?
 
-==== WHAT IS A DUALLY (FOR THIS TASK)? ====
-A "Dually" truck has TWO separate wheels/tires mounted on EACH SIDE of the rear axle:
-- Total of 4 rear tires (2 per side).
-- **CRITICAL CONSTRAINT: It must have ONLY ONE rear axle.**
-- Creates a wider rear stance with distinctive "hip" bulge.
-- Often has flared rear fenders that protrude beyond the cab width.
+Image: {mosaic_text}. ⚠️False negatives critical-check ALL indicators.
 
-==== EXCLUSION RULE: MULTI-AXLE VEHICLES ====
-**🚫 DO NOT CLASSIFY AS DUALLY IF:**
-- The vehicle has **MULTIPLE REAR AXLES** (Tandem axle, Tri-axle, etc.).
-- If you see tires arranged **lengthwise** (one tire in front of another tire) on the rear side.
-- Even if those axles have dual tires, if there is more than one axle row, the answer must be **NO**.
-- We only want standard Dually trucks (4 rear tires total), NOT heavy commercial multi-axle trucks (8+ rear tires).
+DUALLY DEFINITION: 2 wheels/tires per side (4 rear total). ONE rear axle only. Hip bulge. Flared fenders.
 
-==== PRIMARY VISUAL CUES (Check ALL of these) ====
-**IMPORTANT: If viewing a mosaic, examine each view carefully. Different angles may show dually indicators more clearly.**
-- Look at side views for fender flare and wheel well width
-- Look at rear views for dual wheel pattern
-- Look at 3/4 views for overall width comparison
+EXCLUSION: Multiple axles (tandem/tri-axle)=NO. Tires lengthwise (row behind row)=NO. Want 4 rear tires only, not 8+.
 
-1. **Dual Wheel Pattern**: Can you see TWO distinct wheels, rims, or tires on each rear side?
-   - Look for two separate circular shapes (wheels/rims) on the same axle
-   - May see a gap or shadow between the two wheels
-   - Wheels appear "sandwiched" together
-   - Check rear-view and side-view images for best visibility
+PRIMARY CUES: 1)Dual pattern-TWO circles/rims per side, gap/shadow, sandwiched 2)Fender flare-hip bulge, rear wider than front 3)Dual rim dish-concave/recessed 4)Wider rear wheel wells vs front
 
-2. **Rear Fender Width/Flare**: Is the rear section noticeably WIDER than the front?
-   - Look for distinctive "hip" bulge where rear fenders flare outward
-   - Rear fender should extend beyond cab width
-   - Creates a noticeable "wide-hip" profile
-   - Side-view images are best for seeing this
+SECONDARY: Front hub extensions protruding. Shadows/gaps between rear wheels. Vehicle types: Box/Straight(90%), Cutaway-Cube(90%), Stepvan(95%), Cabover/COE(80%), Pickup F-350/RAM3500(30%). Utility/Service: check rear wheels below body, fender at axle. Rear wider/taller side profile.
 
-3. **Dual Rim Profile**: Look for the deep "dish" (concave) or "sandwich" appearance
-   - Outer rim may appear deeply recessed or concave
-   - May see two distinct rim reflections or patterns per side
-   - Check images from different angles to see rim depth
+UNCERTAINTY: Use ALL views. If rear unclear→check other angles/views. Wide body but unclear→check fender/wells/type. Box/Cutaway/Stepvan→assume YES unless single tire visible OR multi-axle. Cross-reference views for consistency.
 
-4. **Wheel Well Width**: Wider rear wheel wells to accommodate dual wheels
-   - Rear wheel opening appears taller/wider than front
-   - More space between body and wheels
-   - Compare front and rear wheel well sizes across images
+FALSE POSITIVES: Multi-axle=NO. Wide body alone≠dually. Single wheel+hub cap≠dual. Dirt/shadow≠tire.
 
-==== SECONDARY CUES (Additional Evidence) ====
-5. **Front Hub Extensions**: Dually trucks often have protruding metal hub caps on FRONT wheels
-   - Large circular extensions sticking out from front wheels
-   - This balances the wider rear stance
+DECISION: YES if: 2 wheels/rims rear visible OR fender flare+typical type AND single axle only
+NO if: Single tire clear OR same width front/rear OR multi-axle (lengthwise/tandem)
 
-6. **Vehicle Type Context**: These vehicle types are commonly Duallys:
-   - **Box Truck / Straight Truck** (90% are Duallys)
-   - **Cutaway-Cube Van** (90% are Duallys)
-   - **Stepvan** (95% are Duallys)
-   - **Cabover / COE commercial trucks** (80% are Duallys)
-   - **Heavy-Duty Pickup Trucks** (30% are Duallys) - Ford F-350/F-450, RAM 3500, Chevy 3500, GMC 3500
-   - If you see these types, look EXTRA CAREFULLY for dually indicators
-   - **UTILITY/SERVICE TRUCK DUALLY TIPS**: Don't let the wide service body confuse you - look at the REAR WHEELS specifically (below/behind the compartments). Check for fender width at rear axle vs cab width.
-   - **PICKUP TRUCK DUALLY TIPS**: Look for wide rear fenders that extend beyond the cab, double rear wheels visible from rear/side/3-quarter view, and front wheel hub extensions
-
-7. **Side Profile**: Rear appears noticeably wider/taller than front when viewed from side
-
-8. **Shadows and Gaps**: Look for shadows or gaps between dual rear wheels
-
-==== HOW TO HANDLE UNCERTAINTY ====
-- **Use ALL views in the mosaic**: If one view doesn't show rear wheels clearly, check other views from different angles
-- **If rear wheels are NOT clearly visible in one view**: Check other views - side views, rear views, or 3/4 views may show the wheels better
-- **If you see wide body but unclear wheels**: Check multiple views for fender flare, wheel well width, and vehicle type
-- **If it's a Box Truck/Cutaway/Stepvan**: Assume Dually UNLESS you clearly see a single thin rear tire OR you see multiple rear axles.
-- **Cross-reference between views**: If one view suggests dually but another doesn't, look for consistent indicators across multiple views
-
-==== COMMON FALSE POSITIVES TO AVOID ====
-- **MULTIPLE AXLES**: If you see tires behind other tires (lengthwise) -> **ANSWER NO**.
-- Wide service body does NOT automatically mean Dually (but check other cues!)
-- Single wheel with decorative hub cap (look for two separate wheels, not one wide wheel)
-- Dirt/shadows that look like extra tires (verify actual wheel shapes)
-
-==== DECISION LOGIC ====
-Answer "YES" if ALL of these are true:
-1. You can clearly see TWO separate wheels/rims on the rear (per side) OR distinctive dually fenders/width.
-2. The vehicle has only ONE rear axle (not a tandem/tri-axle setup).
-
-Answer "NO" if ANY of these are true:
-1. You clearly see a SINGLE thin rear tire with no dual pattern.
-2. Rear width is same as front with no fender flare.
-3. **The vehicle has MULTIPLE REAR AXLES (tires arranged lengthwise/tandem).**
-
-When in doubt, lean towards "YES" if multiple secondary indicators are present AND it is clearly a single-axle truck.
-
-==== RESPONSE FORMAT ====
-Respond with ONLY one of these formats:
-- "YES - [specific reason: what visual cues you saw]"
-- "NO - [specific reason: why you're certain it's single wheel OR multi-axle]"
-
-Examples:
-- "YES - I can see two distinct wheel rims on each rear side with a gap between them"
-- "YES - Box truck with distinctive rear fender flare extending beyond cab width"
-- "NO - I can clearly see a single thin rear tire on each side with no dual pattern"
-- "NO - Vehicle has tandem rear axles (multiple tires in length), which is excluded"
+FORMAT: "YES - [reason]" or "NO - [reason]"
+Examples: "YES-two rims each side with gap"|"YES-Box truck fender flare beyond cab"|"NO-single tire visible"|"NO-tandem axles"
 """
 
     parts = [prompt_text]

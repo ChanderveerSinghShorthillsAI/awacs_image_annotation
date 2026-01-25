@@ -116,13 +116,14 @@ def calculate_cost_cents(input_tokens, output_tokens, model_name):
     # Input: $0.30 | Output: $2.50
     price_input_per_m = 0.30
     price_output_per_m = 2.50
+    print(f"Calculating cost for {model_name} - Input: {price_input_per_m} | Output: {price_output_per_m}")
 
     # Logic: Gemini 2.5 Flash-8B (Lite)
     # Input: $0.10 | Output: $0.40
     if "lite" in model or "8b" in model:
         price_input_per_m = 0.10
         price_output_per_m = 0.40
-        
+        print(f"Calculating cost for {model_name} - Input: {price_input_per_m} | Output: {price_output_per_m}")
     # --- CALCULATION ---
     cost_usd = (input_tokens / 1_000_000 * price_input_per_m) + \
                (output_tokens / 1_000_000 * price_output_per_m)

@@ -79,47 +79,52 @@ def find_overlap_rule(classifications: list, overlap_rules: list, worker_id: int
     if not classifications: return None
     top_one_cat = classifications[0][0].lower()
     
-    # --- 1. AGGRESSIVE DUALLY SAFEGUARD (Updated for HD Trucks) ---
-    # If Dually is mentioned OR if it's a truck type that is ALMOST ALWAYS a dually
-    # (Box Trucks, Cutaways, etc.), we force a visual wheel check.
-    hd_trucks = ["box truck - straight truck", "cutaway-cube van", "stepvan", "cabover truck - coe"]
-    is_hd_without_dually = (top_one_cat in hd_trucks and not any("dually" in c[0].lower() for c in classifications))
-    
-    if "dually" in str(classifications).lower() or is_hd_without_dually:
-        other_cat = classifications[0][0]
-        if worker_id > 0:
-             log_msg(f"   ⚔️ Rule Triggered: Dually/HD Wheel Verification for '{other_cat}'", worker_id)
-        
-        dually_rule = {
-            "decision_rule": (
-                f"🔍 ENHANCED DUALLY WHEEL CHECK: You are analyzing a '{other_cat}'. Determine if it has DUAL REAR WHEELS (Dually).\n\n"
-                "⚠️ CRITICAL: False negatives are a major issue - look carefully for ALL dually indicators!\n\n"
-                "=== PRIMARY CHECKS (Look for ANY of these) ===\n"
-                "1. **REAR WHEELS**: Can you see TWO separate wheels/rims on each rear side? (Two wheels sandwiched together)\n"
-                "2. **REAR FENDERS**: Are the rear fenders noticeably WIDER than the front, creating a 'hip' bulge?\n"
-                "3. **DUAL RIM PATTERN**: Do the rear rims appear deeply concave (dish-shaped) or show dual wheel assembly?\n"
-                "4. **FRONT HUB EXTENSIONS**: Do the FRONT wheels have large protruding metal hub extensions? (Common on Duallys)\n"
-                "5. **WHEEL WELL WIDTH**: Are the rear wheel wells noticeably wider/taller than front?\n\n"
-                "=== VEHICLE TYPE CONTEXT ===\n"
-                f"Vehicle Type: '{other_cat}'\n"
-                "- Box Truck / Straight Truck: 90% are Duallys\n"
-                "- Cutaway-Cube Van: 90% are Duallys\n"
-                "- Stepvan: 95% are Duallys\n"
-                "- Cab-Chassis w/ body: 70% are Duallys\n\n"
-                "=== DECISION LOGIC ===\n"
-                "✅ Answer 'Dually' if:\n"
-                "  - You see TWO distinct wheels on rear (per side), OR\n"
-                "  - You see rear fender flare + it's a commercial truck type, OR\n"
-                "  - It's a Box Truck/Cutaway/Stepvan AND you don't see a single thin tire\n\n"
-                "❌ Answer 'Single Wheel' ONLY if:\n"
-                "  - You clearly see a SINGLE thin rear tire with no dual pattern\n\n"
-                "When uncertain, default to Dually for commercial truck types.\n\n"
-                "Output ONLY: Category Name + 'Dually' (if confirmed) OR just Category Name (if single wheel confirmed)"
-            )
-        }
-        return dually_rule, [other_cat, "Dually"]
+    # =================================================================================
+    # COMMENTED OUT: Aggressive Dually Safeguard
+    # Now using simplified prompt-based detection only
+    # =================================================================================
+    # # --- 1. AGGRESSIVE DUALLY SAFEGUARD (Updated for HD Trucks) ---
+    # # If Dually is mentioned OR if it's a truck type that is ALMOST ALWAYS a dually
+    # # (Box Trucks, Cutaways, etc.), we force a visual wheel check.
+    # hd_trucks = ["box truck - straight truck", "cutaway-cube van", "stepvan", "cabover truck - coe"]
+    # is_hd_without_dually = (top_one_cat in hd_trucks and not any("dually" in c[0].lower() for c in classifications))
+    # 
+    # if "dually" in str(classifications).lower() or is_hd_without_dually:
+    #     other_cat = classifications[0][0]
+    #     if worker_id > 0:
+    #          log_msg(f"   ⚔️ Rule Triggered: Dually/HD Wheel Verification for '{other_cat}'", worker_id)
+    #     
+    #     dually_rule = {
+    #         "decision_rule": (
+    #             f"🔍 ENHANCED DUALLY WHEEL CHECK: You are analyzing a '{other_cat}'. Determine if it has DUAL REAR WHEELS (Dually).\n\n"
+    #             "⚠️ CRITICAL: False negatives are a major issue - look carefully for ALL dually indicators!\n\n"
+    #             "=== PRIMARY CHECKS (Look for ANY of these) ===\n"
+    #             "1. **REAR WHEELS**: Can you see TWO separate wheels/rims on each rear side? (Two wheels sandwiched together)\n"
+    #             "2. **REAR FENDERS**: Are the rear fenders noticeably WIDER than the front, creating a 'hip' bulge?\n"
+    #             "3. **DUAL RIM PATTERN**: Do the rear rims appear deeply concave (dish-shaped) or show dual wheel assembly?\n"
+    #             "4. **FRONT HUB EXTENSIONS**: Do the FRONT wheels have large protruding metal hub extensions? (Common on Duallys)\n"
+    #             "5. **WHEEL WELL WIDTH**: Are the rear wheel wells noticeably wider/taller than front?\n\n"
+    #             "=== VEHICLE TYPE CONTEXT ===\n"
+    #             f"Vehicle Type: '{other_cat}'\n"
+    #             "- Box Truck / Straight Truck: 90% are Duallys\n"
+    #             "- Cutaway-Cube Van: 90% are Duallys\n"
+    #             "- Stepvan: 95% are Duallys\n"
+    #             "- Cab-Chassis w/ body: 70% are Duallys\n\n"
+    #             "=== DECISION LOGIC ===\n"
+    #             "✅ Answer 'Dually' if:\n"
+    #             "  - You see TWO distinct wheels on rear (per side), OR\n"
+    #             "  - You see rear fender flare + it's a commercial truck type, OR\n"
+    #             "  - It's a Box Truck/Cutaway/Stepvan AND you don't see a single thin tire\n\n"
+    #             "❌ Answer 'Single Wheel' ONLY if:\n"
+    #             "  - You clearly see a SINGLE thin rear tire with no dual pattern\n\n"
+    #             "When uncertain, default to Dually for commercial truck types.\n\n"
+    #             "Output ONLY: Category Name + 'Dually' (if confirmed) OR just Category Name (if single wheel confirmed)"
+    #         )
+    #     }
+    #     return dually_rule, [other_cat, "Dually"]
+    # =================================================================================
 
-    # --- 2. STANDARD JSON OVERLAP RULES ---
+    # --- STANDARD JSON OVERLAP RULES ONLY ---
     if len(classifications) < 2: return None
     top_two_cat = classifications[1][0]
     top_pair_set = {top_one_cat, top_two_cat.lower()}
@@ -132,15 +137,20 @@ def find_overlap_rule(classifications: list, overlap_rules: list, worker_id: int
             
     return None
 
-def handle_dually_logic(classifications: list, worker_id: int = 0) -> list:
-    if len(classifications) < 2: return classifications
-    dually_index = next((i for i, (cat, _) in enumerate(classifications) if cat.lower() == 'dually'), -1)
-    
-    if dually_index == 0:
-        log_msg(f"   📏 Rule Triggered: Dually Demotion (Rank 1 -> Rank 2)", worker_id)
-        classifications[0], classifications[1] = classifications[1], classifications[0]
-        
-    return classifications
+# =================================================================================
+# COMMENTED OUT: Complex handle_dually_logic function
+# Now using simple inline check in main_processor.py
+# =================================================================================
+# def handle_dually_logic(classifications: list, worker_id: int = 0) -> list:
+#     if len(classifications) < 2: return classifications
+#     dually_index = next((i for i, (cat, _) in enumerate(classifications) if cat.lower() == 'dually'), -1)
+#     
+#     if dually_index == 0:
+#         log_msg(f"   📏 Rule Triggered: Dually Demotion (Rank 1 -> Rank 2)", worker_id)
+#         classifications[0], classifications[1] = classifications[1], classifications[0]
+#         
+#     return classifications
+# =================================================================================
 
 def apply_refinement_fix(annotated_norm: list, refined_cat_norm: str, ambiguous_pair: list, worker_id: int = 0) -> list:
     if refined_cat_norm.lower() == 'dually':

@@ -656,7 +656,7 @@ def verify_dually_listings(result_df: pd.DataFrame, job_id: str, yoda_instance):
         jobs[job_id]['dually_verified'] = 0
     
     # STEP 1: Pre-fetch all images first (fast, uses cache)
-    print("   📥 Pre-fetching images from cache...")
+    print("   📥 Pre-fetching ALL images from cache (using all images for better accuracy)...")
     prefetched_images = {}
     for idx, row in dually_listings.iterrows():
         ad_id = str(row.get("Ad ID", "")).strip()
@@ -664,11 +664,15 @@ def verify_dually_listings(result_df: pd.DataFrame, job_id: str, yoda_instance):
         if image_urls_str:
             image_urls = [url.strip() for url in image_urls_str.split(",") if url.strip()]
             if image_urls:
-                img_bytes_list = web_utils.get_images_with_caching(image_urls[:1])
-                if img_bytes_list and img_bytes_list[0]:
-                    prefetched_images[idx] = (ad_id, img_bytes_list[0])
+                # Get ALL images instead of just the first one
+                img_bytes_list = web_utils.get_images_with_caching(image_urls)
+                # Filter out None/empty images
+                valid_images = [img for img in img_bytes_list if img]
+                if valid_images:
+                    prefetched_images[idx] = (ad_id, valid_images)
+                    print(f"   📸 Ad {ad_id}: Pre-fetched {len(valid_images)} image(s)")
     
-    print(f"   ✅ Pre-fetched {len(prefetched_images)} images")
+    print(f"   ✅ Pre-fetched images for {len(prefetched_images)} listings")
     
     # Initialize for LLM calls - reuse existing resources efficiently
     m = Manager()
@@ -698,19 +702,20 @@ def verify_dually_listings(result_df: pd.DataFrame, job_id: str, yoda_instance):
         if job_id in jobs:
             jobs[job_id]['dually_verified'] = int(current_num)  # Convert to native int
         
-        # Check if we have pre-fetched image
+        # Check if we have pre-fetched images
         if idx not in prefetched_images:
             listing_time = time.time() - listing_verify_start
-            print(f"   [{current_num}/{total_dually}] ⚠️ {ad_id}: No image available, keeping Dually | ⏱️ {listing_time:.2f}s")
+            print(f"   [{current_num}/{total_dually}] ⚠️ {ad_id}: No images available, keeping Dually | ⏱️ {listing_time:.2f}s")
             error_count += 1
             continue
         
-        ad_id, img_bytes = prefetched_images[idx]
+        ad_id, img_bytes_list = prefetched_images[idx]
         
         try:
-            # Call LLM verification (Yoda handles rate limiting, no sleep needed)
+            # Call LLM verification with ALL images (Yoda handles rate limiting, no sleep needed)
+            print(f"   [{current_num}/{total_dually}] 🔍 {ad_id}: Verifying with {len(img_bytes_list)} image(s)...")
             is_dually, confidence, in_tok, out_tok = classification.verify_dually_with_llm(
-                img_bytes, 
+                img_bytes_list, 
                 yoda_instance, 
                 key_queue, 
                 worker_id=0, 
@@ -729,7 +734,13 @@ def verify_dually_listings(result_df: pd.DataFrame, job_id: str, yoda_instance):
                 current_cost = float(current_cost) if pd.notna(current_cost) else 0
             except:
                 current_cost = 0
-            result_df.at[idx, 'Cost_Cents'] = current_cost + cost
+            
+            # Update Cost_Cents with verification cost
+            new_cost = current_cost + cost
+            result_df.at[idx, 'Cost_Cents'] = new_cost
+            
+            # Debug: Print to verify the update
+            print(f"      💰 Cost update: {current_cost:.4f}¢ + {cost:.4f}¢ = {new_cost:.4f}¢")
             
             if is_dually:
                 # LLM confirmed Dually - keep it
@@ -817,12 +828,22 @@ def verify_dually_listings(result_df: pd.DataFrame, job_id: str, yoda_instance):
     total_verification_elapsed = time.time() - verification_start
     avg_verify_time = verification_loop_elapsed / total_dually if total_dually > 0 else 0
     
+    # VERIFICATION: Check that costs were actually added to the DataFrame
+    print("\n" + "="*80)
+    print("📊 VERIFICATION: Checking Cost_Cents Updates")
+    print("="*80)
+    cost_sum_before = result_df['Cost_Cents'].sum() if 'Cost_Cents' in result_df.columns else 0
+    print(f"   Total Cost_Cents in DataFrame: {cost_sum_before:.4f}¢")
+    print(f"   Expected (with dually costs added): {cost_sum_before:.4f}¢")
+    print(f"   Dually verification costs calculated: {total_cost:.4f}¢")
+    print("="*80 + "\n")
+    
     print("\n" + "="*80)
     print("🔍 DUALLY VERIFICATION PHASE COMPLETE")
     print("="*80)
     print(f"   Total checked: {total_dually}")
     print(f"   ✅ Confirmed: {verified_count} | ❌ Removed: {removed_count} | ⚠️ Errors: {error_count}")
-    print(f"   💰 Cost: {total_cost}¢")
+    print(f"   💰 Dually Verification Cost: {total_cost}¢")
     print(f"   ⏱️ Total Time: {total_verification_elapsed:.2f}s ({total_verification_elapsed/60:.2f} minutes)")
     print(f"   ⏱️ Average Time per Listing: {avg_verify_time:.2f}s")
     print(f"   📊 Verification Rate: {total_dually/verification_loop_elapsed*60:.1f} listings/minute")
@@ -954,12 +975,15 @@ def run_job_pipeline_sync(job_id: str, file_path: str):
         job['output_file'] = output_path
         job['output_filename'] = output_filename
         
-        # Calculate summary - Include BOTH annotation cost AND dually verification cost
-        annotation_cost = result_df['Cost_Cents'].sum() if 'Cost_Cents' in result_df.columns else 0
-        total_cost = annotation_cost + dually_verification_cost
-        job['total_cost'] = float(total_cost)  # Convert to native float
-        job['annotation_cost'] = float(annotation_cost)  # Convert to native float
-        job['dually_verification_cost'] = float(dually_verification_cost)  # Convert to native float
+        # Calculate summary - Cost_Cents already includes dually verification costs (added in line 737)
+        total_cost_in_df = result_df['Cost_Cents'].sum() if 'Cost_Cents' in result_df.columns else 0
+        
+        # For reporting: separate annotation cost (before dually) and dually cost
+        annotation_cost_only = total_cost_in_df - dually_verification_cost  # Back-calculate annotation-only cost
+        
+        job['total_cost'] = float(total_cost_in_df)  # Total cost (includes dually costs already)
+        job['annotation_cost'] = float(annotation_cost_only)  # Annotation cost without dually
+        job['dually_verification_cost'] = float(dually_verification_cost)  # Separate dually cost for reporting
         
         # Merge session reports
         merge_all_session_reports(run_ts)
@@ -967,9 +991,9 @@ def run_job_pipeline_sync(job_id: str, file_path: str):
         print(f"\n{'='*60}")
         print(f"🎉 JOB {job_id} COMPLETE!")
         print(f"Output: {output_filename}")
-        print(f"💰 Annotation Cost: {annotation_cost}¢")
+        print(f"💰 Annotation Cost: {annotation_cost_only}¢")
         print(f"💰 Dually Verification Cost: {dually_verification_cost}¢")
-        print(f"💰 TOTAL COST: {total_cost}¢")
+        print(f"💰 TOTAL COST: {total_cost_in_df}¢")
         print(f"{'='*60}\n")
         
     except Exception as e:
@@ -1049,11 +1073,13 @@ def run_reannotation_pipeline_sync(job_id: str, file_path: str):
         job['output_filename'] = output_filename
         
         # Calculate summary
-        annotation_cost = result_df['Cost_Cents'].sum() if 'Cost_Cents' in result_df.columns else 0
-        total_cost = annotation_cost + dually_verification_cost
-        job['total_cost'] = float(total_cost)  # Convert to native float
-        job['annotation_cost'] = float(annotation_cost)  # Convert to native float
-        job['dually_verification_cost'] = float(dually_verification_cost)  # Convert to native float
+        # Calculate summary - Cost_Cents already includes dually verification costs (added in line 737)
+        total_cost_in_df = result_df['Cost_Cents'].sum() if 'Cost_Cents' in result_df.columns else 0
+        annotation_cost_only = total_cost_in_df - dually_verification_cost  # Back-calculate annotation-only cost
+        
+        job['total_cost'] = float(total_cost_in_df)  # Total cost (includes dually costs already)
+        job['annotation_cost'] = float(annotation_cost_only)  # Annotation cost without dually
+        job['dually_verification_cost'] = float(dually_verification_cost)  # Separate dually cost for reporting
         
         # Merge session reports
         merge_all_session_reports(run_ts)
@@ -1061,9 +1087,9 @@ def run_reannotation_pipeline_sync(job_id: str, file_path: str):
         print(f"\n{'='*60}")
         print(f"🎉 RE-ANNOTATION JOB {job_id} COMPLETE!")
         print(f"Output: {output_filename}")
-        print(f"💰 Annotation Cost: {annotation_cost}¢")
+        print(f"💰 Annotation Cost: {annotation_cost_only}¢")
         print(f"💰 Dually Verification Cost: {dually_verification_cost}¢")
-        print(f"💰 TOTAL COST: {total_cost}¢")
+        print(f"💰 TOTAL COST: {total_cost_in_df}¢")
         print(f"{'='*60}\n")
         
     except Exception as e:
@@ -1165,12 +1191,13 @@ def run_db_annotation_pipeline_sync(job_id: str, file_path: str):
         job['output_file'] = output_path
         job['output_filename'] = output_filename
         
-        # Calculate summary costs
-        annotation_cost = result_df['Cost_Cents'].sum() if 'Cost_Cents' in result_df.columns else 0
-        total_cost = annotation_cost + dually_verification_cost
-        job['total_cost'] = float(total_cost)
-        job['annotation_cost'] = float(annotation_cost)
-        job['dually_verification_cost'] = float(dually_verification_cost)
+        # Calculate summary costs - Cost_Cents already includes dually verification costs (added in line 737)
+        total_cost_in_df = result_df['Cost_Cents'].sum() if 'Cost_Cents' in result_df.columns else 0
+        annotation_cost_only = total_cost_in_df - dually_verification_cost  # Back-calculate annotation-only cost
+        
+        job['total_cost'] = float(total_cost_in_df)  # Total cost (includes dually costs already)
+        job['annotation_cost'] = float(annotation_cost_only)  # Annotation cost without dually
+        job['dually_verification_cost'] = float(dually_verification_cost)  # Separate dually cost for reporting
         
         # Merge session reports
         merge_all_session_reports(run_ts)
@@ -1180,9 +1207,9 @@ def run_db_annotation_pipeline_sync(job_id: str, file_path: str):
         print(f"{'='*80}")
         print(f"   🤖 Total Ads Annotated: {len(result_df)}")
         print(f"   📄 Output File: {output_filename}")
-        print(f"   💰 Annotation Cost: {annotation_cost}¢")
+        print(f"   💰 Annotation Cost: {annotation_cost_only}¢")
         print(f"   💰 Dually Verification Cost: {dually_verification_cost}¢")
-        print(f"   💰 TOTAL COST: {total_cost}¢")
+        print(f"   💰 TOTAL COST: {total_cost_in_df}¢")
         print(f"{'='*80}\n")
         
     except Exception as e:
@@ -1390,12 +1417,13 @@ def run_db_fetch_pipeline_sync(
         job['output_file'] = output_path
         job['output_filename'] = output_filename
         
-        # Calculate summary costs
-        annotation_cost = result_df['Cost_Cents'].sum() if 'Cost_Cents' in result_df.columns else 0
-        total_cost = annotation_cost + dually_verification_cost
-        job['total_cost'] = float(total_cost)
-        job['annotation_cost'] = float(annotation_cost)
-        job['dually_verification_cost'] = float(dually_verification_cost)
+        # Calculate summary costs - Cost_Cents already includes dually verification costs (added in line 737)
+        total_cost_in_df = result_df['Cost_Cents'].sum() if 'Cost_Cents' in result_df.columns else 0
+        annotation_cost_only = total_cost_in_df - dually_verification_cost  # Back-calculate annotation-only cost
+        
+        job['total_cost'] = float(total_cost_in_df)  # Total cost (includes dually costs already)
+        job['annotation_cost'] = float(annotation_cost_only)  # Annotation cost without dually
+        job['dually_verification_cost'] = float(dually_verification_cost)  # Separate dually cost for reporting
         
         # Merge session reports
         merge_all_session_reports(run_ts)
@@ -1406,9 +1434,9 @@ def run_db_fetch_pipeline_sync(
         print(f"   📊 Total Trucks Fetched: {len(df)}")
         print(f"   🤖 Total Ads Annotated: {len(result_df)}")
         print(f"   📄 Output File: {output_filename}")
-        print(f"   💰 Annotation Cost: {annotation_cost}¢")
+        print(f"   💰 Annotation Cost: {annotation_cost_only}¢")
         print(f"   💰 Dually Verification Cost: {dually_verification_cost}¢")
-        print(f"   💰 TOTAL COST: {total_cost}¢")
+        print(f"   💰 TOTAL COST: {total_cost_in_df}¢")
         print(f"{'='*80}\n")
         
     except Exception as e:
