@@ -1,0 +1,102 @@
+{
+    "Flatbed Truck": {
+        "definition": "A flat, open platform truck with no fixed sides (other than a headache rack), NO dump capability. Used for hauling large items, building materials, and equipment.",
+        "image_base64": ""
+    },
+    "Pickup Truck": {
+        "definition": "A light-duty truck with an open cargo bed, typically integrated with the cab or a separate, fixed bed. It does NOT have enclosed service compartments forming the main body, nor is it a dedicated dump body.",
+        "image_base64": ""
+    },
+    "Mechanics Truck": {
+        "definition": "A service body truck with a visible crane attached. The crane is the key differentiator from a standard Utility Truck - Service Truck. Always overrides Utility Truck classification.",
+        "image_base64": ""
+    },
+    "Utility Truck - Service Truck": {
+        "definition": "A specialized type of Utility/Service Truck. Its DEFINING feature is a large, prominent ladder or material rack mounted over the service body, designed to carry long items like pipes, lumber, or ladders. The presence of this rack is the key identifier.",
+        "image_base64": ""
+    },
+    "Dump Truck": {
+        "definition": "A heavy-duty truck where ONLY the back gate opens for unloading. All FOUR sides are EQUAL in height and FIXED/RIGID (cannot fold down). Left side, right side, and front wall are WELDED/PERMANENTLY ATTACHED with NO HINGES visible on left or right side panels. Deep, tall cargo box with walls typically at or above cab height. Rear tires are usually LARGER than front tires.",
+        "image_base64": ""
+    },
+    "Flatbed Dump": {
+        "definition": "A truck where THREE liftgates/sides can OPEN or FOLD DOWN: left side + right side + back. The LEFT and RIGHT side gates are clearly SHORTER/SMALLER than the FIXED FRONT WALL of the bed. Side gates height is approximately HALF or less compared to cab height. Has hydraulic dump capability. Equal-sized front and rear tires.",
+        "image_base64": ""
+    },
+    "Landscape Truck": {
+        "definition": "A truck designed for landscaping tasks with features such as: a TALL MESH CAGE structure surrounding the entire bed; OR THREE fold-down gates where ALL THREE gates are EQUAL in height (sides same height as back); OR a DOVETAIL RAMP BED (rear section angles down for loading equipment); OR a shallow dump body with overall design suited for landscaping tasks.",
+        "image_base64": ""
+    },
+    "Contractor Truck": {
+        "definition": "A truck that requires ALL three components: toolboxes + stakebed + ladder rack. This is a very specific combination.",
+        "image_base64": ""
+    },
+    "Stake Bed": {
+        "definition": "A Flatbed Truck with tall removable stake sides, NO permanent toolboxes, NO fold-down gates (distinguishes from Flatbed Dump).",
+        "image_base64": ""
+    },
+    "Hauler": {
+        "definition": "A truck with any visible gooseneck hitch or bed cutout, designed for hauling trailers or heavy equipment.",
+        "image_base64": ""
+    },
+    "Cab Chassis": {
+        "definition": "A truck with No bed or box installed (no flatbed, dump, box, etc. of any kind). The rear frame rails, suspension, or fuel tank must be clearly visible behind the cab, with no installed body.",
+        "image_base64": ""
+    },
+    "Stepvan": {
+        "definition": "A walk-in delivery van (UPS/FedEx style), typically with a distinct upright driver position and cargo area accessible from the cab.",
+        "image_base64": ""
+    },
+    "Selfloader": {
+        "definition": "A specialized tow truck with wheel-lift claws (no ramp or flatbed) for loading vehicles.",
+        "image_base64": ""
+    },
+    "Bucket Truck - Boom Truck": {
+        "definition": "A truck with a hydraulic boom + bucket attached for aerial work. Always overrides Utility Truck classification.",
+        "image_base64": ""
+    },
+    "Cabover Truck - COE": {
+        "definition": "A truck where the driver sits ABOVE the engine. The cab is positioned directly over the engine, giving the truck a flat front appearance. Also known as Cab Over Engine (COE).",
+        "image_base64": ""
+    },
+    "Box Truck - Straight Truck": {
+        "definition": "A truck with a large rectangular cargo box attached to the cab. The box is a fully enclosed cargo area. ALWAYS check for Moving Van features (slide-out ramp or liftgate).",
+        "image_base64": ""
+    },
+    "Moving Van": {
+        "definition": "A Box Truck or Straight Truck that has a visible SLIDE-OUT RAMP or a LIFTGATE mechanism at the rear, designed for moving personal belongings.",
+        "image_base64": ""
+    },
+    "Refrigerated Truck": {
+        "definition": "A truck with a visible refrigeration unit above the cab, designed for transporting temperature-sensitive cargo. Mutually exclusive with Box Truck if primary classification.",
+        "image_base64": ""
+    },
+    "Cutaway Cube Van": {
+        "definition": "A box truck or van built on a van chassis where there is a clear pass-through door/opening from the cab to the cargo box.",
+        "image_base64": ""
+    },
+    "Van": {
+        "definition": "A general van classification without specific body type modifiers.",
+        "image_base64": ""
+    },
+    "Cargo Van": {
+        "definition": "A van designed primarily for hauling cargo rather than passengers. Features an enclosed cargo area.",
+        "image_base64": ""
+    },
+    "Passanger Van": {
+        "definition": "A van designed primarily for transporting passengers, with seating capacity beyond the front row.",
+        "image_base64": ""
+    },
+    "Rollback - Tow Truck": {
+        "definition": "A tow truck with a sliding/inclining flatbed for vehicle transport. The bed can tilt and slide back to load vehicles.",
+        "image_base64": ""
+    },
+    "Conventional Day Cab": {
+        "definition": "A large hood + no sleeper + tractor-style truck configuration where the driver sits behind the engine. Must have visible chassis frame or hitch behind cab. Cannot be combined with other truck bodies except Cab Chassis.",
+        "image_base64": ""
+    },
+    "Dually": {
+        "definition": "A vehicle with DUAL REAR WHEELS - characterized by 4 REAR TIRES instead of 2 (2 tires on each side of rear axle). This allows the vehicle to carry more weight. Rear fenders BULGE OUT significantly wider than front fenders.",
+        "image_base64": ""
+    }
+}

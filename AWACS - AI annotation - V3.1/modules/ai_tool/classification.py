@@ -448,16 +448,22 @@ CRITICAL RULES:
    - **Stepvan** (95% are Duallys) - Assume Dually unless you clearly see single thin tire
    - **Cabover Truck - COE** (80% are Duallys) - Check carefully for dual wheels
    - **Cab-Chassis** with utility/service body (70% are Duallys) - Look for dual wheels under body
-   - **Utility Truck - Service Truck** - ⚠️ CRITICAL: DO NOT assume Dually based on wide service body alone. REQUIRE clear visual evidence: Must see TWO separate rear wheels OR distinctive rear fender flare that extends beyond cab width. Service bodies are often wider than the chassis without being duallys. Be conservative - only mark as Dually if you have strong visual proof.
+   - **Utility Truck - Service Truck** - 🚨 EXTREME CAUTION REQUIRED: This category has the HIGHEST false positive rate. The wide service body with compartments is DESIGNED to be wide for storage - this is NORMAL and does NOT indicate Dually. You must have IRONCLAD visual proof. ONLY mark as Dually if you can see ACTUAL dual wheels (two separate wheels on each rear side). Fender flare alone is NOT sufficient. Body width is NOT sufficient. If you cannot clearly see the rear wheels themselves showing dual configuration, the answer is NOT Dually.
    - **Pickup Truck** (30% are Duallys) - Especially heavy-duty models: Ford F-350/F-450, RAM 3500, Chevy 3500, GMC 3500. Look for wide rear fenders extending beyond cab, double rear wheels visible from rear/side/3-quarter view, front wheel hub extensions
    - **Flatbed Truck** (50% are Duallys) - Check for dual rear wheels
    - **Contractor Truck** (40% are Duallys) - Check for dual rear wheels
    
    **==== HOW TO HANDLE UNCERTAINTY ====**
-   - **If rear wheels are NOT clearly visible:** Look at front wheels for hub extensions, check fender width, consider vehicle type
-   - **If you see wide body but unclear wheels:** Check for fender flare, wheel well width, and vehicle type context
+   - **🚨 FOR UTILITY-SERVICE TRUCKS - READ THIS FIRST:**
+     * If you cannot SEE the actual rear wheels clearly → Answer is NOT Dually (no exceptions)
+     * If rear wheels are hidden by the service body → Answer is NOT Dually
+     * If you're using body width, fender appearance, or "it looks wider" as reasoning → STOP. Answer is NOT Dually
+     * The ONLY acceptable reason to mark utility truck as Dually: "I can clearly see TWO separate wheel rims on each rear side"
+   - **For other vehicle types - If rear wheels are NOT clearly visible:** Look at front wheels for hub extensions, check fender width, consider vehicle type
+   - **For other vehicle types - If you see wide body but unclear wheels:** Check for fender flare, wheel well width, and vehicle type context
    - **If it's a Box Truck/Cutaway/Stepvan:** Assume Dually UNLESS you clearly see a single thin rear tire
-   - **When in doubt:** If multiple secondary indicators are present (fender flare + vehicle type + front hub extensions), lean towards Dually
+   - **When in doubt (non-utility vehicles):** If multiple secondary indicators are present (fender flare + vehicle type + front hub extensions), lean towards Dually
+   - **When in doubt (UTILITY-SERVICE TRUCKS):** Answer is NOT Dually
    
    **==== COMMON FALSE POSITIVES TO AVOID ====**
    - **⚠️ UTILITY-SERVICE TRUCK FALSE POSITIVE (VERY COMMON):** The wide service body with compartments/cabinets is NOT evidence of Dually. Many single-wheel utility trucks have wide service bodies. Do NOT mark as Dually unless you see ACTUAL dual wheels or rear fender flare extending beyond the cab.
@@ -475,17 +481,35 @@ CRITICAL RULES:
    4. It's a Box Truck/Cutaway/Stepvan AND you don't see a single thin tire
    5. Multiple secondary indicators are present (fender flare + vehicle type + front hub extensions)
    
-   **SPECIAL RULE FOR UTILITY-SERVICE TRUCKS:**
-   For Utility Truck - Service Truck category, ONLY include "Dually" if:
-   - You can see TWO separate rear wheels (most reliable), OR
-   - You see rear fender flare that clearly extends beyond the cab width AND at least one other indicator
-   - Do NOT mark as Dually based on wide service body alone
+   **🚨 SPECIAL RULE FOR UTILITY-SERVICE TRUCKS (MOST IMPORTANT RULE - READ CAREFULLY):**
+   
+   This category has 80%+ false positive rate if you're not careful. Follow this rule EXACTLY:
+   
+   **ONLY mark Utility-Service Truck as Dually if you meet THIS requirement:**
+   ✅ You can CLEARLY SEE two separate, distinct wheel rims/tires on EACH side of the rear axle
+      - Look for two circular wheel shapes side-by-side on each rear corner
+      - You should see a visible gap or separation between the two wheels
+      - This must be UNAMBIGUOUS - not "maybe" or "it looks like"
+   
+   **NEVER mark Utility-Service Truck as Dually based on:**
+   ❌ Wide service body (service bodies are DESIGNED to be wide - this is normal)
+   ❌ Rear fender appears wider than front (fenders can be wider without dual wheels)
+   ❌ Body compartments/cabinets make it look bulky (this is the truck's purpose)
+   ❌ "It looks like it should be a dually based on size" (not valid reasoning)
+   ❌ Front wheel hub extensions (not sufficient alone)
+   ❌ Wheel well width differences (not sufficient alone)
+   ❌ Any inference or assumption (must SEE the wheels)
+   
+   **If rear wheels are NOT clearly visible in the image:**
+   → Answer is NOT Dually (no exceptions, no guessing)
    
    **Do NOT include "Dually" if:**
    1. You clearly see a SINGLE thin rear tire with no dual pattern
    2. Rear width is same as front with no fender flare
    3. You're certain it's a single rear wheel configuration
-   4. It's a Utility-Service Truck with only a wide service body and no other indicators
+   4. **🚨 It's a Utility-Service Truck and you CANNOT see the actual rear wheels clearly**
+   5. **🚨 It's a Utility-Service Truck and your only evidence is "wide body" or "looks wider"**
+   6. **🚨 It's a Utility-Service Truck and rear wheels are hidden/obscured by service body compartments**
    
    **==== OUTPUT FORMAT FOR DUALLY ====**
    - If you detect Dually, include it as a SECONDARY category (not primary)
@@ -1202,7 +1226,14 @@ A "Dually" truck has TWO separate wheels/tires mounted on EACH SIDE of the rear 
    - **Cabover / COE commercial trucks** (80% are Duallys)
    - **Heavy-Duty Pickup Trucks** (30% are Duallys) - Ford F-350/F-450, RAM 3500, Chevy 3500, GMC 3500
    - If you see these types, look EXTRA CAREFULLY for dually indicators
-   - **UTILITY/SERVICE TRUCK DUALLY TIPS (VERY IMPORTANT)**: The wide service body with compartments is NOT evidence of Dually. MANY utility trucks have wide service bodies but single rear wheels. You MUST see ACTUAL dual wheels OR clear rear fender flare extending beyond cab width. Be very conservative - when in doubt for utility trucks, answer NO.
+   - **🚨 UTILITY/SERVICE TRUCK DUALLY TIPS (CRITICAL - 80% FALSE POSITIVE RATE)**: 
+     * Wide service body with compartments is DESIGNED to be wide - this is NORMAL, NOT evidence of Dually
+     * Service bodies often extend beyond cab width even with single rear wheels
+     * You MUST SEE the actual rear wheels themselves showing dual configuration
+     * Fender flare alone is NOT sufficient for utility trucks
+     * Body width is NOT sufficient for utility trucks
+     * If you cannot clearly see TWO separate wheels on each rear side → Answer is NO
+     * When in doubt for utility trucks → Answer is NO (no exceptions)
    - **PICKUP TRUCK DUALLY TIPS**: Look for wide rear fenders that extend beyond the cab, double rear wheels visible from rear/side/3-quarter view, and front wheel hub extensions
 
 7. **Side Profile**: Rear appears noticeably wider/taller than front when viewed from side
@@ -1212,12 +1243,23 @@ A "Dually" truck has TWO separate wheels/tires mounted on EACH SIDE of the rear 
 ==== HOW TO HANDLE UNCERTAINTY ====
 - **Use ALL views in the mosaic**: If one view doesn't show rear wheels clearly, check other views from different angles
 - **If rear wheels are NOT clearly visible in one view**: Check other views - side views, rear views, or 3/4 views may show the wheels better
-- **If you see wide body but unclear wheels**: Check multiple views for fender flare, wheel well width, and vehicle type
+- **🚨 CRITICAL - If this is a UTILITY/SERVICE TRUCK:**
+  * If rear wheels are NOT clearly visible in ANY of the views → Answer is NO
+  * If you see wide body but cannot see actual wheels → Answer is NO
+  * If you're basing decision on body width, fender appearance, or inferences → Answer is NO
+  * The ONLY valid reason to answer YES: "I can clearly see TWO separate wheel rims on each rear side in at least one of the views"
+- **If you see wide body but unclear wheels (non-utility vehicles)**: Check multiple views for fender flare, wheel well width, and vehicle type
 - **If it's a Box Truck/Cutaway/Stepvan**: Assume Dually UNLESS you clearly see a single thin rear tire OR you see multiple rear axles.
 - **Cross-reference between views**: If one view suggests dually but another doesn't, look for consistent indicators across multiple views
 
 ==== COMMON FALSE POSITIVES TO AVOID ====
 - **MULTIPLE AXLES**: If you see tires behind other tires (lengthwise) -> **ANSWER NO**.
+- **🚨 UTILITY/SERVICE TRUCK WIDE BODY (MOST COMMON FALSE POSITIVE - 80% of errors)**: 
+  * Service bodies with compartments/cabinets are DESIGNED to be wide
+  * This wide body is for storage and does NOT mean dual wheels
+  * You MUST see the actual rear wheels to confirm
+  * If rear wheels are hidden by the service body → Answer is NO
+  * Body width alone is NEVER sufficient evidence for utility trucks
 - Wide service body does NOT automatically mean Dually (but check other cues!)
 - Single wheel with decorative hub cap (look for two separate wheels, not one wide wheel)
 - Dirt/shadows that look like extra tires (verify actual wheel shapes)
@@ -1226,16 +1268,19 @@ A "Dually" truck has TWO separate wheels/tires mounted on EACH SIDE of the rear 
 Answer "YES" if ALL of these are true:
 1. You can clearly see TWO separate wheels/rims on the rear (per side) OR distinctive dually fenders/width.
 2. The vehicle has only ONE rear axle (not a tandem/tri-axle setup).
+3. **🚨 ADDITIONAL CHECK FOR UTILITY/SERVICE TRUCKS:** If this is a utility/service truck, you MUST be able to see the actual rear wheels showing dual configuration. Body width and fender appearance alone are NOT sufficient.
 
 Answer "NO" if ANY of these are true:
 1. You clearly see a SINGLE thin rear tire with no dual pattern.
 2. Rear width is same as front with no fender flare.
 3. **The vehicle has MULTIPLE REAR AXLES (tires arranged lengthwise/tandem).**
-4. **It's a UTILITY/SERVICE TRUCK with only a wide body and no clear dual wheel or fender flare evidence.**
+4. **🚨 It's a UTILITY/SERVICE TRUCK and you CANNOT clearly see the rear wheels in ANY view.**
+5. **🚨 It's a UTILITY/SERVICE TRUCK and your only evidence is wide body or fender appearance.**
+6. **🚨 It's a UTILITY/SERVICE TRUCK and rear wheels are hidden/obscured by service body compartments.**
 
 **SPECIAL INSTRUCTION FOR UNCERTAINTY:**
 - For Box Truck/Cutaway/Stepvan: When in doubt, lean towards "YES" if multiple secondary indicators are present.
-- For Utility/Service Truck: When in doubt, lean towards "NO" unless you have strong visual evidence of dual wheels or fender flare.
+- **For Utility/Service Truck: CRITICAL - Answer is "NO" unless you can SEE actual dual rear wheels. Fender flare, body width, and all other indicators are NOT sufficient. If rear wheels not visible → Answer must be "NO".**
 - For other vehicle types: Require clear visual evidence (dual wheels or fender flare) to answer "YES".
 
 ==== RESPONSE FORMAT ====
