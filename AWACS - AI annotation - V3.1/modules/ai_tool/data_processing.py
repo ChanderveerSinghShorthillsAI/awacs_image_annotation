@@ -153,10 +153,14 @@ def find_overlap_rule(classifications: list, overlap_rules: list, worker_id: int
 # =================================================================================
 
 def apply_refinement_fix(annotated_norm: list, refined_cat_norm: str, ambiguous_pair: list, worker_id: int = 0) -> list:
+    # Check if this is a Dually + Body Type pair (e.g., Flatbed Truck + Dually)
+    # These are NOT mutually exclusive - a truck can be BOTH
+    pair_has_dually = any(c.lower() == 'dually' for c in ambiguous_pair)
+    other_category = next((c for c in ambiguous_pair if c.lower() != 'dually'), None)
+    
     if refined_cat_norm.lower() == 'dually':
         log_msg(f"   ✅ Refinement Result: Dually Confirmed.", worker_id)
-        primary_cat = next((c for c in ambiguous_pair if c.lower() != 'dually'), None)
-        if not primary_cat: primary_cat = "Cab-Chassis"
+        primary_cat = other_category if other_category else "Cab-Chassis"
 
         new_results = []
         new_results.append((primary_cat, 99.9))
@@ -166,7 +170,27 @@ def apply_refinement_fix(annotated_norm: list, refined_cat_norm: str, ambiguous_
         new_results.extend([(c, s) for c, s in annotated_norm if c.lower() not in ambiguous_lower])
         return new_results
     else:
-        log_msg(f"   ✅ Refinement Result: Selected '{refined_cat_norm}'.", worker_id)
+        # Refinement returned a non-Dually category
+        # IMPORTANT: If Dually was in the pair and was detected with high confidence in original,
+        # we should STILL keep it because Dually is an ATTRIBUTE, not exclusive with body types
+        if pair_has_dually:
+            # Check if Dually was in the original classification with decent confidence
+            dually_in_original = next(((cat, score) for cat, score in annotated_norm if cat.lower() == 'dually'), None)
+            
+            if dually_in_original and dually_in_original[1] >= 85.0:
+                # Keep BOTH - the body type (e.g., Flatbed Truck) AND Dually
+                log_msg(f"   ✅ Refinement Result: '{refined_cat_norm}' selected, but keeping Dually too (score: {dually_in_original[1]}%).", worker_id)
+                new_results = [(refined_cat_norm, 99.9), ("Dually", 99.8)]
+                ambiguous_lower = {p.lower() for p in ambiguous_pair}
+                new_results.extend([(cat, score) for cat, score in annotated_norm if cat.lower() not in ambiguous_lower])
+                return new_results
+            else:
+                # Dually wasn't confident enough, just keep the body type
+                log_msg(f"   ✅ Refinement Result: Selected '{refined_cat_norm}' (Dually not confident enough).", worker_id)
+        else:
+            log_msg(f"   ✅ Refinement Result: Selected '{refined_cat_norm}'.", worker_id)
+        
+        # Standard case: remove both ambiguous categories, add refined one
         ambiguous_lower = {c.lower() for c in ambiguous_pair}
         new_results = [(refined_cat_norm, 99.9)]
         new_results.extend([(cat, score) for cat, score in annotated_norm if cat.lower() not in ambiguous_lower])

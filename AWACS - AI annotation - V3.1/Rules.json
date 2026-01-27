@@ -419,7 +419,8 @@
         "Dually",
         "Flatbed Truck"
       ],
-      "decision_rule": "VISUAL WHEEL CHECK: Flatbeds are wide, so don't trust the width. Look strictly at the rim geometry. Deep dish rear rims = 'Dually'. Flat/Flush rims = 'Flatbed Truck'."
+      "decision_rule": "IMPORTANT: Flatbed Truck and Dually are NOT mutually exclusive - a Flatbed Truck CAN be a Dually! Your task is to determine if this Flatbed Truck ALSO has dual rear wheels. Look at the rear axle: Do you see TWO separate wheels/tires on EACH side (4 rear tires total)? Look for deep dish rims, dual wheel assembly, or wider rear fender flare. Answer 'Dually' if you see dual rear wheels, answer 'Flatbed Truck' ONLY if you are certain it has single rear wheels.",
+      "keep_both_if_dually": true
     },
     {
       "pair": [
