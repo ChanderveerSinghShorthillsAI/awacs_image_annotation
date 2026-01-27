@@ -429,6 +429,7 @@ const PreviewModal = ({ fetchResult, onClose, onStartAnnotation, isStarting }) =
 
 // DB Fetch Section Component
 const DBFetchSection = ({ onJobCreated }) => {
+  const [fetchMode, setFetchMode] = useState('daterange'); // 'daterange' or 'adids'
   const [clientId, setClientId] = useState('');
   const [clientSecret, setClientSecret] = useState('');
   const [grantType, setGrantType] = useState('client_credentials');
@@ -443,6 +444,10 @@ const DBFetchSection = ({ onJobCreated }) => {
   const [error, setError] = useState(null);
   const [credentialsFromConfig, setCredentialsFromConfig] = useState(false);
   const [selectedCategories, setSelectedCategories] = useState([]);
+  
+  // State for Ad IDs mode
+  const [uploadedFile, setUploadedFile] = useState(null);
+  const [isUploadingIds, setIsUploadingIds] = useState(false);
 
   // Available categories for filtering
   const AVAILABLE_CATEGORIES = [
@@ -661,11 +666,126 @@ const DBFetchSection = ({ onJobCreated }) => {
     setShowPreview(false);
     // Reset form to allow new fetch
     setFetchResult(null);
+    setUploadedFile(null);  // Also reset uploaded file for Ad IDs mode
+  };
+
+  const handleUploadAdIds = async (file) => {
+    if (!file) return;
+
+    setIsUploadingIds(true);
+    setError(null);
+    setUploadedFile(file);
+
+    try {
+      const formData = new FormData();
+      formData.append('file', file);
+
+      const res = await fetch(`${API_BASE}/api/db-fetch-by-ids`, {
+        method: 'POST',
+        body: formData
+      });
+
+      if (!res.ok) {
+        const errData = await res.json();
+        throw new Error(errData.detail || 'Upload failed');
+      }
+
+      const data = await res.json();
+      const fetchId = data.fetch_id;
+      
+      // Poll for fetch status
+      console.log(`🔄 Polling for fetch status (ID: ${fetchId})...`);
+      
+      const pollInterval = setInterval(async () => {
+        try {
+          const statusRes = await fetch(`${API_BASE}/api/db-fetch-by-ids/${fetchId}/status`);
+          if (!statusRes.ok) {
+            clearInterval(pollInterval);
+            throw new Error('Failed to check fetch status');
+          }
+          
+          const statusData = await statusRes.json();
+          console.log(`📊 Fetch status: ${statusData.status}`);
+          
+          if (statusData.status === 'fetched') {
+            // Fetch complete! Show preview modal
+            clearInterval(pollInterval);
+            setFetchResult(statusData);
+            setShowPreview(true);
+            setIsUploadingIds(false);
+          } else if (statusData.status === 'failed') {
+            // Fetch failed
+            clearInterval(pollInterval);
+            throw new Error(statusData.error || 'Fetch failed');
+          }
+          // If still 'fetching', keep polling
+          
+        } catch (err) {
+          clearInterval(pollInterval);
+          setError(err.message);
+          setUploadedFile(null);
+          setIsUploadingIds(false);
+        }
+      }, 2000); // Poll every 2 seconds
+
+    } catch (err) {
+      setError(err.message);
+      setUploadedFile(null);
+      setIsUploadingIds(false);
+    }
   };
 
   return (
     <div className="dbfetch-section">
-      {/* Preview Modal */}
+      {/* Mode Switcher */}
+      <div style={{
+        display: 'flex',
+        gap: '1rem',
+        marginBottom: '2rem',
+        padding: '0.5rem',
+        background: 'rgba(0, 0, 0, 0.3)',
+        borderRadius: 'var(--border-radius)',
+        border: '1px solid rgba(255, 255, 255, 0.1)'
+      }}>
+        <button
+          onClick={() => setFetchMode('daterange')}
+          style={{
+            flex: 1,
+            padding: '0.75rem 1rem',
+            background: fetchMode === 'daterange' ? '#ff9800' : 'transparent',
+            color: fetchMode === 'daterange' ? '#000' : '#e0e0e0',
+            border: 'none',
+            borderRadius: '8px',
+            cursor: 'pointer',
+            fontWeight: '600',
+            fontSize: '0.95rem',
+            transition: 'all 0.2s ease',
+            boxShadow: fetchMode === 'daterange' ? '0 2px 8px rgba(255, 152, 0, 0.3)' : 'none'
+          }}
+        >
+          📅 Fetch by Date Range
+        </button>
+        <button
+          onClick={() => setFetchMode('adids')}
+          style={{
+            flex: 1,
+            padding: '0.75rem 1rem',
+            background: fetchMode === 'adids' ? '#4caf50' : 'transparent',
+            color: fetchMode === 'adids' ? '#000' : '#e0e0e0',
+            border: 'none',
+            borderRadius: '8px',
+            cursor: 'pointer',
+            fontWeight: '600',
+            fontSize: '0.95rem',
+            transition: 'all 0.2s ease',
+            boxShadow: fetchMode === 'adids' ? '0 2px 8px rgba(76, 175, 80, 0.3)' : 'none'
+          }}
+        >
+          ⚡ Fetch by Ad IDs (Faster!)
+        </button>
+      </div>
+
+      {/* Preview Modal - Shared by both modes */}
       {showPreview && (
         <PreviewModal
           fetchResult={fetchResult}
@@ -675,6 +795,119 @@ const DBFetchSection = ({ onJobCreated }) => {
         />
       )}
 
+      {/* Fetch by Ad IDs Mode */}
+      {fetchMode === 'adids' && (
+        <div className="dbfetch-adids-mode">
+          <div className="dbfetch-card">
+            <h3>⚡ Fetch by Ad IDs - Much Faster!</h3>
+            <div style={{
+              padding: '1rem',
+              background: 'rgba(76, 175, 80, 0.15)',
+              border: '1px solid rgba(76, 175, 80, 0.4)',
+              borderRadius: 'var(--border-radius)',
+              marginBottom: '1.5rem'
+            }}>
+              <div style={{ fontSize: '0.95rem', marginBottom: '0.5rem', fontWeight: '600', color: 'var(--accent-green)' }}>
+                🚀 Why this is faster:
+              </div>
+              <ul style={{ margin: '0.5rem 0', paddingLeft: '1.5rem', fontSize: '0.85rem', lineHeight: '1.6' }}>
+                <li>Direct API fetch: ~1-2 seconds per truck</li>
+                <li>No browser needed, no page loading</li>
+                <li>Parallel processing: Fetches multiple trucks simultaneously</li>
+                <li><strong>10x faster than web scraping!</strong></li>
+              </ul>
+            </div>
+
+            <div style={{ marginBottom: '1.5rem' }}>
+              <h4 style={{ fontSize: '0.9rem', marginBottom: '0.75rem', color: 'var(--text-muted)' }}>
+                📋 Instructions:
+              </h4>
+              <ol style={{ margin: '0', paddingLeft: '1.5rem', fontSize: '0.85rem', lineHeight: '1.8', color: 'var(--text-muted)' }}>
+                <li>Prepare an Excel file with an "Ad ID" column</li>
+                <li>Upload the file below</li>
+                <li>System will fetch all truck data directly from the database</li>
+                <li>Data will be ready for AI annotation in seconds!</li>
+              </ol>
+            </div>
+
+            {/* File Upload */}
+            <div style={{
+              border: '2px dashed rgba(76, 175, 80, 0.4)',
+              borderRadius: 'var(--border-radius)',
+              padding: '2rem',
+              textAlign: 'center',
+              background: 'rgba(0, 0, 0, 0.2)',
+              cursor: uploadedFile ? 'default' : 'pointer',
+              transition: 'all 0.2s ease'
+            }}
+            onClick={() => !uploadedFile && !isUploadingIds && document.getElementById('adids-file-input').click()}
+            onDragOver={(e) => {
+              e.preventDefault();
+              e.currentTarget.style.borderColor = 'var(--accent-green)';
+              e.currentTarget.style.background = 'rgba(76, 175, 80, 0.1)';
+            }}
+            onDragLeave={(e) => {
+              e.currentTarget.style.borderColor = 'rgba(76, 175, 80, 0.4)';
+              e.currentTarget.style.background = 'rgba(0, 0, 0, 0.2)';
+            }}
+            onDrop={(e) => {
+              e.preventDefault();
+              e.currentTarget.style.borderColor = 'rgba(76, 175, 80, 0.4)';
+              e.currentTarget.style.background = 'rgba(0, 0, 0, 0.2)';
+              if (!uploadedFile && !isUploadingIds && e.dataTransfer.files[0]) {
+                handleUploadAdIds(e.dataTransfer.files[0]);
+              }
+            }}
+            >
+              <input
+                id="adids-file-input"
+                type="file"
+                accept=".xlsx,.xls"
+                onChange={(e) => e.target.files[0] && handleUploadAdIds(e.target.files[0])}
+                style={{ display: 'none' }}
+                disabled={isUploadingIds || uploadedFile}
+              />
+              
+              {isUploadingIds ? (
+                <>
+                  <div className="btn-spinner" style={{ margin: '0 auto 1rem' }}></div>
+                  <div style={{ fontSize: '1rem', fontWeight: '600', color: 'var(--accent-green)' }}>
+                    🗄️ Fetching from Database...
+                  </div>
+                  <div style={{ fontSize: '0.85rem', color: 'var(--text-muted)', marginTop: '0.5rem' }}>
+                    Reading Ad IDs and fetching truck data from API
+                  </div>
+                  <div style={{ fontSize: '0.85rem', color: 'var(--accent-blue)', marginTop: '0.5rem' }}>
+                    ⚡ This is 10x faster than scraping!
+                  </div>
+                </>
+              ) : (
+                <>
+                  <div style={{ fontSize: '2rem', marginBottom: '0.5rem' }}>📤</div>
+                  <div style={{ fontSize: '1rem', fontWeight: '600', marginBottom: '0.5rem' }}>
+                    Drop Excel file here or click to browse
+                  </div>
+                  <div style={{ fontSize: '0.85rem', color: 'var(--text-muted)' }}>
+                    Must have "Ad ID" column • .xlsx or .xls files only
+                  </div>
+                </>
+              )}
+            </div>
+          </div>
+
+          {/* Error message */}
+          {error && (
+            <div className="audit-error" style={{ marginTop: '1rem' }}>
+              <span className="error-icon">❌</span>
+              <span>{error}</span>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Fetch by Date Range Mode (existing) */}
+      {fetchMode === 'daterange' && (
+        <>
       {/* Credentials Section */}
       <div className="dbfetch-card">
         <h3>🔑 API Credentials</h3>
@@ -1014,11 +1247,13 @@ const DBFetchSection = ({ onJobCreated }) => {
       </div>
 
       {/* Error message */}
-      {error && (
+      {error && fetchMode === 'daterange' && (
         <div className="audit-error">
           <span className="error-icon">❌</span>
           <span>{error}</span>
         </div>
+      )}
+        </>
       )}
     </div>
   );

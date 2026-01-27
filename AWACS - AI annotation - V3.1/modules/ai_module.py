@@ -1,4 +1,6 @@
 import glob, os
+import queue
+import time
 from ai_tool.config_loader import config, load_config
 
 def run_ai(fast_mode=False):
@@ -30,3 +32,163 @@ def start_worker(worker_id, run_ts, job_queue, results_queue, status_queue, key_
         log_path = os.path.join("logs", f"CRASH_{worker_id}_{run_ts}.txt")
         os.makedirs("logs", exist_ok=True)
         with open(log_path, "w") as f: f.write(str(e))
+
+
+# ==================== DUALLY VERIFICATION WORKER FUNCTIONS ====================
+
+def _verify_single_dually(verification_job: dict, key_queue, status_queue, 
+                          results_queue, worker_id: int, yoda_instance):
+    """
+    Worker function to verify a single dually listing.
+    Processes one listing and puts the result in the results queue.
+    """
+    from ai_tool.utils import calculate_cost_cents
+    from ai_tool import classification
+    
+    idx = verification_job['idx']
+    ad_id = verification_job['ad_id']
+    img_bytes_list = verification_job['images']
+    row_data = verification_job['row_data']
+    
+    print(f"   [W-{worker_id}] 🔍 Starting verification for Ad {ad_id} with {len(img_bytes_list)} image(s)...")
+    
+    listing_verify_start = time.time()
+    
+    try:
+        # Call LLM verification with ALL images (Yoda handles rate limiting)
+        print(f"   [W-{worker_id}] 📤 Sending Ad {ad_id} to LLM for verification...")
+        is_dually, confidence, in_tok, out_tok = classification.verify_dually_with_llm(
+            img_bytes_list, 
+            yoda_instance, 
+            key_queue, 
+            worker_id=worker_id, 
+            ad_id=ad_id, 
+            status_queue=status_queue
+        )
+        
+        # Calculate cost for this verification
+        cost = calculate_cost_cents(in_tok, out_tok, config.gemini_model)
+        listing_time = time.time() - listing_verify_start
+        
+        # Prepare result
+        result = {
+            'idx': idx,
+            'ad_id': ad_id,
+            'is_dually': is_dually,
+            'confidence': confidence,
+            'cost': cost,
+            'in_tokens': in_tok,
+            'out_tokens': out_tok,
+            'listing_time': listing_time,
+            'row_data': row_data,
+            'success': True
+        }
+        
+        if is_dually:
+            print(f"   [W-{worker_id}] ✅ Ad {ad_id}: CONFIRMED as Dually | Cost: {cost:.4f}¢ | Time: {listing_time:.2f}s")
+        else:
+            print(f"   [W-{worker_id}] ❌ Ad {ad_id}: FALSE POSITIVE - NOT Dually | Cost: {cost:.4f}¢ | Time: {listing_time:.2f}s")
+        
+        results_queue.put(result)
+        return result
+        
+    except Exception as e:
+        listing_time = time.time() - listing_verify_start
+        print(f"   [W-{worker_id}] ⚠️ Ad {ad_id}: Error during verification - {str(e)[:50]} | Time: {listing_time:.2f}s")
+        
+        # Put error result in queue
+        error_result = {
+            'idx': idx,
+            'ad_id': ad_id,
+            'is_dually': True,  # Keep as dually on error
+            'confidence': 0,
+            'cost': 0,
+            'in_tokens': 0,
+            'out_tokens': 0,
+            'listing_time': listing_time,
+            'row_data': row_data,
+            'success': False,
+            'error': str(e)
+        }
+        results_queue.put(error_result)
+        return error_result
+
+
+def start_dually_verification_worker(worker_id: int, job_queue, results_queue,
+                                     status_queue, key_queue, yoda_instance):
+    """
+    Worker process for dually verification.
+    Pulls jobs from queue and verifies each one.
+    """
+    try:
+        load_config()
+        from ai_tool import classification
+        
+        # Initialize classification trackers for this worker
+        classification.initialize_all_trackers()
+        
+        print(f"   [W-{worker_id}] 🚀 Dually Verification Worker {worker_id} STARTED")
+        
+        processed = 0
+        
+        status_queue.put({"worker_id": worker_id, "state": "WAITING", "ad_id": None, "progress": 0})
+        
+        while True:
+            verification_job = None
+            try:
+                # Get next verification job from queue
+                verification_job = job_queue.get(timeout=2)
+                ad_id = verification_job['ad_id']
+                
+                print(f"   [W-{worker_id}] 📋 Picked up verification job for Ad {ad_id}")
+                
+                status_queue.put({
+                    "worker_id": worker_id,
+                    "state": "VERIFYING",
+                    "ad_id": ad_id,
+                    "progress": processed
+                })
+                
+                # Process the verification job
+                _verify_single_dually(
+                    verification_job, 
+                    key_queue, 
+                    status_queue, 
+                    results_queue, 
+                    worker_id, 
+                    yoda_instance
+                )
+                
+                processed += 1
+                status_queue.put({
+                    "worker_id": worker_id,
+                    "state": "WAITING",
+                    "ad_id": ad_id,
+                    "progress": processed
+                })
+                
+            except queue.Empty:
+                # No more jobs in queue
+                status_queue.put({"worker_id": worker_id, "state": "FINISHED", "progress": processed})
+                print(f"   [W-{worker_id}] ✅ Worker {worker_id} FINISHED - Processed {processed} verifications")
+                break
+                
+            except Exception as e:
+                print(f"   [W-{worker_id}] ⚠️ Worker {worker_id} encountered error: {e}")
+                if verification_job and verification_job.get('ad_id'):
+                    # Put error result in queue
+                    error_result = {
+                        'idx': verification_job['idx'],
+                        'ad_id': verification_job['ad_id'],
+                        'is_dually': True,
+                        'success': False,
+                        'error': str(e),
+                        'cost': 0
+                    }
+                    results_queue.put(error_result)
+                processed += 1
+                status_queue.put({"worker_id": worker_id, "state": "ERROR", "progress": processed})
+    
+    except Exception as e:
+        print(f"   [W-{worker_id}] 💀 Worker {worker_id} CRASHED: {e}")
+        status_queue.put({"worker_id": worker_id, "state": "CRASHED", "progress": processed})

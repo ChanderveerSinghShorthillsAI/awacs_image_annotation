@@ -9,7 +9,7 @@ import threading
 from datetime import datetime
 from typing import Dict
 from pathlib import Path
-from multiprocessing import Process, Manager, freeze_support
+from multiprocessing import Process, Manager, Queue, freeze_support
 import queue
 # import random
 # from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -614,13 +614,14 @@ def run_parallel_ai(df: pd.DataFrame, run_ts: str, job_id: str, num_workers: int
 
 def verify_dually_listings(result_df: pd.DataFrame, job_id: str, yoda_instance):
     """
-    ULTRA-OPTIMIZED Post-processing step: LLM verification for Dually false positives.
+    MULTI-THREADED Post-processing step: LLM verification for Dually false positives with 5 workers.
     
     This function:
     1. Identifies all listings marked with "Dually" in any annotation column
     2. Pre-fetches all images to avoid delays during LLM calls
-    3. Makes LLM calls to verify if each one really has dual rear wheels
-    4. Removes "Dually" from annotations if the LLM says it's a false positive
+    3. Distributes verification jobs across 5 workers for parallel processing
+    4. Makes LLM calls to verify if each one really has dual rear wheels
+    5. Removes "Dually" from annotations if the LLM says it's a false positive
     
     Returns: (Updated DataFrame, verification_cost_cents)
     """
@@ -629,7 +630,7 @@ def verify_dually_listings(result_df: pd.DataFrame, job_id: str, yoda_instance):
     verification_start = time.time()
     
     print("\n" + "="*80)
-    print("🔍 DUALLY VERIFICATION PHASE - Checking for False Positives (ULTRA-OPTIMIZED)")
+    print("🔍 DUALLY VERIFICATION PHASE - Multi-Threaded with 5 Workers (ULTRA-OPTIMIZED)")
     print("="*80)
     
     # Find all rows that have "Dually" in any annotation column
@@ -647,17 +648,23 @@ def verify_dually_listings(result_df: pd.DataFrame, job_id: str, yoda_instance):
         return result_df, 0  # Return 0 cost when no verification needed
     
     total_dually = len(dually_listings)
+    num_workers = 5  # Fixed to 5 workers as requested
+    
     print(f"   Found {total_dually} listings marked as Dually")
+    print(f"   🧵 Using {num_workers} workers for parallel verification")
+    print(f"   📊 Expected speedup: ~{num_workers}x faster than sequential processing")
     
     # Update job status for frontend
     if job_id in jobs:
         jobs[job_id]['status'] = JobStatus.VERIFYING_DUALLY
-        jobs[job_id]['dually_total'] = int(total_dually)  # Convert numpy.int64 to native int
+        jobs[job_id]['dually_total'] = int(total_dually)
         jobs[job_id]['dually_verified'] = 0
     
     # STEP 1: Pre-fetch all images first (fast, uses cache)
-    print("   📥 Pre-fetching ALL images from cache (using all images for better accuracy)...")
+    print("\n   📥 STEP 1: Pre-fetching ALL images from cache...")
+    prefetch_start = time.time()
     prefetched_images = {}
+    
     for idx, row in dually_listings.iterrows():
         ad_id = str(row.get("Ad ID", "")).strip()
         image_urls_str = str(row.get("Image_URLs", "")).strip()
@@ -669,196 +676,239 @@ def verify_dually_listings(result_df: pd.DataFrame, job_id: str, yoda_instance):
                 # Filter out None/empty images
                 valid_images = [img for img in img_bytes_list if img]
                 if valid_images:
-                    prefetched_images[idx] = (ad_id, valid_images)
+                    prefetched_images[idx] = (ad_id, valid_images, row)
                     print(f"   📸 Ad {ad_id}: Pre-fetched {len(valid_images)} image(s)")
     
-    print(f"   ✅ Pre-fetched images for {len(prefetched_images)} listings")
+    prefetch_time = time.time() - prefetch_start
+    print(f"   ✅ Pre-fetched images for {len(prefetched_images)} listings in {prefetch_time:.2f}s")
     
-    # Initialize for LLM calls - reuse existing resources efficiently
+    if len(prefetched_images) == 0:
+        print("   ⚠️ No images available for any dually listings. Skipping verification.")
+        return result_df, 0
+    
+    # STEP 2: Setup multiprocessing resources
+    print(f"\n   🔧 STEP 2: Setting up {num_workers} workers...")
     m = Manager()
-    key_queue = m.Queue()
+    job_q = m.Queue()
+    res_q = m.Queue()
+    stat_q = m.Queue()
+    key_q = m.Queue()
+    
+    # Load Keys
     for k in config.gemini_api_keys_info:
-        key_queue.put(k)
-    status_queue = m.Queue()
+        key_q.put(k)
+    print(f"   🔑 Loaded {len(config.gemini_api_keys_info)} API keys into queue")
     
-    # Initialize classification trackers once
-    classification.initialize_all_trackers()
+    # Load verification jobs into queue
+    print(f"   📋 Loading {len(prefetched_images)} verification jobs into queue...")
+    for idx, (ad_id, img_bytes_list, row) in prefetched_images.items():
+        verification_job = {
+            'idx': idx,
+            'ad_id': ad_id,
+            'images': img_bytes_list,
+            'row_data': row.to_dict()
+        }
+        job_q.put(verification_job)
+        print(f"   ➕ Added verification job for Ad {ad_id} to queue")
     
+    print(f"   ✅ All {len(prefetched_images)} jobs loaded into queue")
+    
+    # STEP 3: Start worker processes
+    print(f"\n   🚀 STEP 3: Starting {num_workers} worker processes...")
+    procs = []
+    for i in range(1, num_workers + 1):
+        p = Process(
+            target=ai_module.start_dually_verification_worker,
+            args=(i, job_q, res_q, stat_q, key_q, yoda_instance)
+        )
+        p.start()
+        procs.append(p)
+        print(f"   ✅ Started Dually Verification Worker-{i} (PID: {p.pid})")
+        time.sleep(0.3)  # Small delay to avoid race conditions
+    
+    print(f"\n   🏃 All {num_workers} workers started. Beginning parallel verification...")
+    print(f"   📊 Real-time results will appear below:\n")
+    
+    # STEP 4: Collect results from workers
+    verification_loop_start = time.time()
     verified_count = 0
     removed_count = 0
     error_count = 0
     total_cost = 0
+    results_collected = 0
     
-    # STEP 2: Fast LLM verification loop (no unnecessary delays)
-    print("   🔍 Starting ultra-fast LLM verification...")
-    verification_loop_start = time.time()
+    print("="*80)
+    print("📊 REAL-TIME VERIFICATION RESULTS")
+    print("="*80 + "\n")
     
-    for idx, row in dually_listings.iterrows():
-        listing_verify_start = time.time()
-        ad_id = str(row.get("Ad ID", "")).strip()
-        current_num = verified_count + removed_count + error_count + 1
-        
-        # Update job progress for frontend
-        if job_id in jobs:
-            jobs[job_id]['dually_verified'] = int(current_num)  # Convert to native int
-        
-        # Check if we have pre-fetched images
-        if idx not in prefetched_images:
-            listing_time = time.time() - listing_verify_start
-            print(f"   [{current_num}/{total_dually}] ⚠️ {ad_id}: No images available, keeping Dually | ⏱️ {listing_time:.2f}s")
-            error_count += 1
-            continue
-        
-        ad_id, img_bytes_list = prefetched_images[idx]
-        
+    # Result Collector
+    while any(p.is_alive() for p in procs) or not res_q.empty():
         try:
-            # Call LLM verification with ALL images (Yoda handles rate limiting, no sleep needed)
-            print(f"   [{current_num}/{total_dually}] 🔍 {ad_id}: Verifying with {len(img_bytes_list)} image(s)...")
-            is_dually, confidence, in_tok, out_tok = classification.verify_dually_with_llm(
-                img_bytes_list, 
-                yoda_instance, 
-                key_queue, 
-                worker_id=0, 
-                ad_id=ad_id, 
-                status_queue=status_queue
-            )
+            result = res_q.get(timeout=2)
+            results_collected += 1
+            current_num = results_collected
             
-            # Calculate cost for this verification
-            cost = calculate_cost_cents(in_tok, out_tok, config.gemini_model)
-            total_cost += cost
-            listing_time = time.time() - listing_verify_start
+            idx = result['idx']
+            ad_id = result['ad_id']
+            is_dually = result['is_dually']
+            cost = result.get('cost', 0)
+            listing_time = result.get('listing_time', 0)
+            success = result.get('success', True)
             
-            # ADD verification cost to this listing's Cost_Cents in the dataframe
-            current_cost = result_df.at[idx, 'Cost_Cents'] if 'Cost_Cents' in result_df.columns else 0
-            try:
-                current_cost = float(current_cost) if pd.notna(current_cost) else 0
-            except:
-                current_cost = 0
+            # Update job progress for frontend
+            if job_id in jobs:
+                jobs[job_id]['dually_verified'] = int(current_num)
             
-            # Update Cost_Cents with verification cost
-            new_cost = current_cost + cost
-            result_df.at[idx, 'Cost_Cents'] = new_cost
+            # Calculate timing stats
+            elapsed = time.time() - verification_loop_start
+            avg_time = elapsed / current_num if current_num > 0 else 0
+            rate = current_num / elapsed if elapsed > 0 else 0
+            eta = (total_dually - current_num) / rate if rate > 0 else 0
             
-            # Debug: Print to verify the update
-            print(f"      💰 Cost update: {current_cost:.4f}¢ + {cost:.4f}¢ = {new_cost:.4f}¢")
-            
-            if is_dually:
-                # LLM confirmed Dually - keep it
-                print(f"   [{current_num}/{total_dually}] ✅ {ad_id}: CONFIRMED (+{cost}¢) | ⏱️ {listing_time:.2f}s")
-                verified_count += 1
-                
-                # RECALCULATE STATUS for confirmed dually too (in case it was wrong before)
-                breadcrumbs = [
-                    str(result_df.at[idx, "Breadcrumb_Top1"]).strip() if pd.notna(result_df.at[idx, "Breadcrumb_Top1"]) else "",
-                    str(result_df.at[idx, "Breadcrumb_Top2"]).strip() if pd.notna(result_df.at[idx, "Breadcrumb_Top2"]) else "",
-                    str(result_df.at[idx, "Breadcrumb_Top3"]).strip() if pd.notna(result_df.at[idx, "Breadcrumb_Top3"]) else ""
-                ]
-                annotations = [
-                    str(result_df.at[idx, "Annotated_Top1"]).strip() if pd.notna(result_df.at[idx, "Annotated_Top1"]) else "",
-                    str(result_df.at[idx, "Annotated_Top2"]).strip() if pd.notna(result_df.at[idx, "Annotated_Top2"]) else "",
-                    str(result_df.at[idx, "Annotated_Top3"]).strip() if pd.notna(result_df.at[idx, "Annotated_Top3"]) else ""
-                ]
-                
-                # Normalize and compare
-                bc_set = {b.lower() for b in breadcrumbs if b}
-                ann_set = {a.lower() for a in annotations if a}
-                
-                result_df.at[idx, "Status"] = "No change" if bc_set == ann_set else "Require Update"
-                
+            if not success:
+                error_count += 1
+                error_msg = result.get('error', 'Unknown error')
+                print(f"   [{current_num}/{total_dually}] ⚠️ {ad_id}: ERROR - {error_msg[:40]} | ⏱️ {listing_time:.2f}s | ETA: {eta:.0f}s")
             else:
-                # LLM says NOT Dually - remove it from annotations
-                print(f"   [{current_num}/{total_dually}] ❌ {ad_id}: FALSE POSITIVE - Removing (+{cost}¢) | ⏱️ {listing_time:.2f}s")
-                removed_count += 1
+                # Update cost tracking
+                total_cost += cost
                 
-                # Remove "Dually" from each annotation column
-                for col in annotation_cols:
-                    val = str(result_df.at[idx, col]).strip()
-                    if "dually" in val.lower():
-                        # If it's "Something Dually", remove the Dually part
-                        if " dually" in val.lower():
-                            result_df.at[idx, col] = val.lower().replace(" dually", "").title().strip()
-                        elif "dually " in val.lower():
-                            result_df.at[idx, col] = val.lower().replace("dually ", "").title().strip()
-                        elif val.lower() == "dually":
-                            result_df.at[idx, col] = ""
-                        else:
-                            result_df.at[idx, col] = val.replace("Dually", "").replace("dually", "").strip()
+                # ADD verification cost to this listing's Cost_Cents in the dataframe
+                current_cost = result_df.at[idx, 'Cost_Cents'] if 'Cost_Cents' in result_df.columns else 0
+                try:
+                    current_cost = float(current_cost) if pd.notna(current_cost) else 0
+                except:
+                    current_cost = 0
                 
-                # Shift annotations up if Annotated_Top1 became empty
-                if not result_df.at[idx, "Annotated_Top1"]:
-                    result_df.at[idx, "Annotated_Top1"] = result_df.at[idx, "Annotated_Top2"]
-                    result_df.at[idx, "Annotated_Top1_Score"] = result_df.at[idx, "Annotated_Top2_Score"]
-                    result_df.at[idx, "Annotated_Top2"] = result_df.at[idx, "Annotated_Top3"]
-                    result_df.at[idx, "Annotated_Top2_Score"] = result_df.at[idx, "Annotated_Top3_Score"]
-                    result_df.at[idx, "Annotated_Top3"] = ""
-                    result_df.at[idx, "Annotated_Top3_Score"] = 0
-            
-            # RECALCULATE STATUS after removing Dually
-            # Get breadcrumbs for comparison
-            breadcrumbs = [
-                str(result_df.at[idx, "Breadcrumb_Top1"]).strip() if pd.notna(result_df.at[idx, "Breadcrumb_Top1"]) else "",
-                str(result_df.at[idx, "Breadcrumb_Top2"]).strip() if pd.notna(result_df.at[idx, "Breadcrumb_Top2"]) else "",
-                str(result_df.at[idx, "Breadcrumb_Top3"]).strip() if pd.notna(result_df.at[idx, "Breadcrumb_Top3"]) else ""
-            ]
-            annotations = [
-                str(result_df.at[idx, "Annotated_Top1"]).strip() if pd.notna(result_df.at[idx, "Annotated_Top1"]) else "",
-                str(result_df.at[idx, "Annotated_Top2"]).strip() if pd.notna(result_df.at[idx, "Annotated_Top2"]) else "",
-                str(result_df.at[idx, "Annotated_Top3"]).strip() if pd.notna(result_df.at[idx, "Annotated_Top3"]) else ""
-            ]
-            
-            # Normalize and compare (case-insensitive, remove empty)
-            bc_set = {b.lower() for b in breadcrumbs if b}
-            ann_set = {a.lower() for a in annotations if a}
-            
-            # Update status based on match
-            if bc_set == ann_set:
-                result_df.at[idx, "Status"] = "No change"
-            else:
-                result_df.at[idx, "Status"] = "Require Update"
+                new_cost = current_cost + cost
+                result_df.at[idx, 'Cost_Cents'] = new_cost
+                
+                if is_dually:
+                    verified_count += 1
+                    print(f"   [{current_num}/{total_dually}] ✅ {ad_id}: CONFIRMED | Cost: {cost:.4f}¢ → Total: {new_cost:.4f}¢ | Time: {listing_time:.2f}s | Avg: {avg_time:.2f}s | Rate: {rate*60:.1f}/min | ETA: {eta:.0f}s")
                     
-        except Exception as e:
-            listing_time = time.time() - listing_verify_start
-            print(f"   [{current_num}/{total_dually}] ⚠️ {ad_id}: Error - {str(e)[:30]} | ⏱️ {listing_time:.2f}s")
-            error_count += 1
+                    # RECALCULATE STATUS for confirmed dually
+                    breadcrumbs = [
+                        str(result_df.at[idx, "Breadcrumb_Top1"]).strip() if pd.notna(result_df.at[idx, "Breadcrumb_Top1"]) else "",
+                        str(result_df.at[idx, "Breadcrumb_Top2"]).strip() if pd.notna(result_df.at[idx, "Breadcrumb_Top2"]) else "",
+                        str(result_df.at[idx, "Breadcrumb_Top3"]).strip() if pd.notna(result_df.at[idx, "Breadcrumb_Top3"]) else ""
+                    ]
+                    annotations = [
+                        str(result_df.at[idx, "Annotated_Top1"]).strip() if pd.notna(result_df.at[idx, "Annotated_Top1"]) else "",
+                        str(result_df.at[idx, "Annotated_Top2"]).strip() if pd.notna(result_df.at[idx, "Annotated_Top2"]) else "",
+                        str(result_df.at[idx, "Annotated_Top3"]).strip() if pd.notna(result_df.at[idx, "Annotated_Top3"]) else ""
+                    ]
+                    
+                    bc_set = {b.lower() for b in breadcrumbs if b}
+                    ann_set = {a.lower() for a in annotations if a}
+                    result_df.at[idx, "Status"] = "No change" if bc_set == ann_set else "Require Update"
+                    
+                else:
+                    removed_count += 1
+                    print(f"   [{current_num}/{total_dually}] ❌ {ad_id}: FALSE POSITIVE - REMOVING | Cost: {cost:.4f}¢ → Total: {new_cost:.4f}¢ | Time: {listing_time:.2f}s | Avg: {avg_time:.2f}s | Rate: {rate*60:.1f}/min | ETA: {eta:.0f}s")
+                    
+                    # Remove "Dually" from each annotation column
+                    for col in annotation_cols:
+                        val = str(result_df.at[idx, col]).strip()
+                        if "dually" in val.lower():
+                            if " dually" in val.lower():
+                                result_df.at[idx, col] = val.lower().replace(" dually", "").title().strip()
+                            elif "dually " in val.lower():
+                                result_df.at[idx, col] = val.lower().replace("dually ", "").title().strip()
+                            elif val.lower() == "dually":
+                                result_df.at[idx, col] = ""
+                            else:
+                                result_df.at[idx, col] = val.replace("Dually", "").replace("dually", "").strip()
+                    
+                    # Shift annotations up if Annotated_Top1 became empty
+                    if not result_df.at[idx, "Annotated_Top1"]:
+                        result_df.at[idx, "Annotated_Top1"] = result_df.at[idx, "Annotated_Top2"]
+                        result_df.at[idx, "Annotated_Top1_Score"] = result_df.at[idx, "Annotated_Top2_Score"]
+                        result_df.at[idx, "Annotated_Top2"] = result_df.at[idx, "Annotated_Top3"]
+                        result_df.at[idx, "Annotated_Top2_Score"] = result_df.at[idx, "Annotated_Top3_Score"]
+                        result_df.at[idx, "Annotated_Top3"] = ""
+                        result_df.at[idx, "Annotated_Top3_Score"] = 0
+                    
+                    # RECALCULATE STATUS after removing Dually
+                    breadcrumbs = [
+                        str(result_df.at[idx, "Breadcrumb_Top1"]).strip() if pd.notna(result_df.at[idx, "Breadcrumb_Top1"]) else "",
+                        str(result_df.at[idx, "Breadcrumb_Top2"]).strip() if pd.notna(result_df.at[idx, "Breadcrumb_Top2"]) else "",
+                        str(result_df.at[idx, "Breadcrumb_Top3"]).strip() if pd.notna(result_df.at[idx, "Breadcrumb_Top3"]) else ""
+                    ]
+                    annotations = [
+                        str(result_df.at[idx, "Annotated_Top1"]).strip() if pd.notna(result_df.at[idx, "Annotated_Top1"]) else "",
+                        str(result_df.at[idx, "Annotated_Top2"]).strip() if pd.notna(result_df.at[idx, "Annotated_Top2"]) else "",
+                        str(result_df.at[idx, "Annotated_Top3"]).strip() if pd.notna(result_df.at[idx, "Annotated_Top3"]) else ""
+                    ]
+                    
+                    bc_set = {b.lower() for b in breadcrumbs if b}
+                    ann_set = {a.lower() for a in annotations if a}
+                    result_df.at[idx, "Status"] = "No change" if bc_set == ann_set else "Require Update"
+            
+        except queue.Empty:
+            # Check if all workers are still alive
+            alive = sum(1 for p in procs if p.is_alive())
+            if alive == 0 and res_q.empty():
+                print(f"   ⏳ All workers finished. Breaking out of result collection loop.")
+                break
             continue
-        
-        # NO SLEEP HERE - Yoda handles rate limiting!
+    
+    # Wait for all workers to finish
+    print(f"\n   ⏳ Waiting for all workers to complete...")
+    for i, p in enumerate(procs, 1):
+        p.join(timeout=30)
+        if p.is_alive():
+            print(f"   ⚠️ Worker-{i} did not finish in time, terminating...")
+            p.terminate()
+            p.join()
+        else:
+            print(f"   ✅ Worker-{i} finished successfully")
     
     verification_loop_elapsed = time.time() - verification_loop_start
     total_verification_elapsed = time.time() - verification_start
     avg_verify_time = verification_loop_elapsed / total_dually if total_dually > 0 else 0
     
+    # NO SLEEP HERE - Workers handle everything!
+    
+    verification_loop_elapsed = time.time() - verification_loop_start
+    total_verification_elapsed = time.time() - verification_start
+    avg_verify_time = verification_loop_elapsed / results_collected if results_collected > 0 else 0
+    
     # VERIFICATION: Check that costs were actually added to the DataFrame
     print("\n" + "="*80)
-    print("📊 VERIFICATION: Checking Cost_Cents Updates")
+    print("📊 COST VERIFICATION: Checking Cost_Cents Updates")
     print("="*80)
-    cost_sum_before = result_df['Cost_Cents'].sum() if 'Cost_Cents' in result_df.columns else 0
-    print(f"   Total Cost_Cents in DataFrame: {cost_sum_before:.4f}¢")
-    print(f"   Expected (with dually costs added): {cost_sum_before:.4f}¢")
+    cost_sum_in_df = result_df['Cost_Cents'].sum() if 'Cost_Cents' in result_df.columns else 0
+    print(f"   Total Cost_Cents in DataFrame: {cost_sum_in_df:.4f}¢")
     print(f"   Dually verification costs calculated: {total_cost:.4f}¢")
     print("="*80 + "\n")
     
     print("\n" + "="*80)
-    print("🔍 DUALLY VERIFICATION PHASE COMPLETE")
+    print("🔍 DUALLY VERIFICATION PHASE COMPLETE - MULTI-THREADED RESULTS")
     print("="*80)
-    print(f"   Total checked: {total_dually}")
-    print(f"   ✅ Confirmed: {verified_count} | ❌ Removed: {removed_count} | ⚠️ Errors: {error_count}")
-    print(f"   💰 Dually Verification Cost: {total_cost}¢")
-    print(f"   ⏱️ Total Time: {total_verification_elapsed:.2f}s ({total_verification_elapsed/60:.2f} minutes)")
-    print(f"   ⏱️ Average Time per Listing: {avg_verify_time:.2f}s")
-    print(f"   📊 Verification Rate: {total_dually/verification_loop_elapsed*60:.1f} listings/minute")
+    print(f"   🧵 Workers Used: {num_workers}")
+    print(f"   📋 Total Checked: {total_dually}")
+    print(f"   ✅ Confirmed: {verified_count}")
+    print(f"   ❌ Removed (False Positives): {removed_count}")
+    print(f"   ⚠️ Errors: {error_count}")
+    print(f"   💰 Dually Verification Cost: {total_cost:.4f}¢")
+    print(f"\n   ⏱️ PERFORMANCE METRICS:")
+    print(f"      Total Time: {total_verification_elapsed:.2f}s ({total_verification_elapsed/60:.2f} minutes)")
+    print(f"      Verification Loop Time: {verification_loop_elapsed:.2f}s")
+    print(f"      Average Time per Listing: {avg_verify_time:.2f}s")
+    print(f"      Verification Rate: {results_collected/verification_loop_elapsed*60:.1f} listings/minute")
+    print(f"      Speedup vs Sequential: ~{num_workers}x faster")
     print("="*80 + "\n")
     
     # Update job status back to processing for final save
     if job_id in jobs:
         jobs[job_id]['status'] = JobStatus.PROCESSING
-        jobs[job_id]['dually_verified'] = int(total_dually)  # Convert to native int
-        jobs[job_id]['dually_removed'] = int(removed_count)  # Convert to native int
-        jobs[job_id]['dually_verification_cost'] = float(total_cost)  # Convert to native float
+        jobs[job_id]['dually_verified'] = int(results_collected)
+        jobs[job_id]['dually_removed'] = int(removed_count)
+        jobs[job_id]['dually_verification_cost'] = float(total_cost)
     
     # FINAL STEP: Recalculate ALL statuses after verification with proper normalization
-    # This ensures status is correct even for listings not verified
-    print("\n   🔄 Recalculating all statuses after verification...")
+    print("   🔄 STEP 5: Recalculating all statuses after verification...")
     
     # Load normalization rules
     from ai_tool.data_processing import load_rules, normalize_text
@@ -896,7 +946,7 @@ def verify_dually_listings(result_df: pd.DataFrame, job_id: str, yoda_instance):
             result_df.at[idx, "Status"] = new_status
             status_updated_count += 1
     
-    print(f"   ✅ Status recalculation complete: {status_updated_count} status(es) corrected")
+    print(f"   ✅ Status recalculation complete: {status_updated_count} status(es) corrected\n")
     
     return result_df, total_cost  # Return both dataframe and verification cost
 
@@ -1231,10 +1281,10 @@ def run_db_fetch_pipeline_sync(
     listing_end: int
 ):
     """
-    Complete DB Fetch + AI Annotation pipeline
+    Complete DB Fetch + AI Annotation pipeline (PRODUCTION)
     
     This is the NEW feature that:
-    1. Fetches data from database API (replaces scraping)
+    1. Fetches data from database API (replaces scraping) - PRODUCTION ENV
     2. Runs AI annotation (same as before)
     3. Outputs annotated Excel (same format as before)
     """
@@ -1243,15 +1293,15 @@ def run_db_fetch_pipeline_sync(
     
     try:
         print(f"\n{'='*80}")
-        print(f"🗄️ DB FETCH + AI ANNOTATION JOB {job_id} STARTED")
+        print(f"🗄️ DB FETCH + AI ANNOTATION JOB {job_id} STARTED (PRODUCTION)")
         print(f"{'='*80}")
         print(f"   Date Range: {min_last_update} → {max_last_update}")
         print(f"   Listing Range: {listing_start} → {listing_end}")
         print(f"{'='*80}\n")
         
-        # ========== PHASE 1: FETCH DATA FROM DATABASE API ==========
+        # ========== PHASE 1: FETCH DATA FROM DATABASE API (PRODUCTION) ==========
         print("\n" + "="*80)
-        print("🗄️ PHASE 1: FETCHING DATA FROM DATABASE API")
+        print("🗄️ PHASE 1: FETCHING DATA FROM DATABASE API (PRODUCTION)")
         print("="*80)
         
         # Step 1: Get access token
@@ -2042,13 +2092,19 @@ class DBFetchRequest(BaseModel):
 
 def get_access_token(client_id: str, client_secret: str, grant_type: str) -> dict:
     """
-    Get access token from the authentication API
+    Get access token from the authentication API (PRODUCTION)
     """
     print("\n" + "="*80)
-    print("🔑 FETCHING ACCESS TOKEN FROM DB API")
+    print("🔑 FETCHING ACCESS TOKEN FROM DB API (PRODUCTION)")
     print("="*80)
     
-    token_url = "https://api-dev.traderonline.com/vLatest/token"
+    # PRODUCTION TOKEN URL
+    token_url = "https://nebulous-prod.traderonline.com/vLatest/token"
+    
+    # Strip whitespace from all parameters to avoid auth issues
+    client_id = client_id.strip()
+    client_secret = client_secret.strip()
+    grant_type = grant_type.strip()
     
     form_data = {
         'client_id': client_id,
@@ -2056,11 +2112,29 @@ def get_access_token(client_id: str, client_secret: str, grant_type: str) -> dic
         'grant_type': grant_type
     }
     
+    # Set explicit headers to match Postman
+    headers = {
+        'Content-Type': 'application/x-www-form-urlencoded'
+    }
+    
     try:
         print(f"   📤 POST {token_url}")
         print(f"   📝 Form Data: client_id={client_id}, grant_type={grant_type}")
+        print(f"   📝 Client Secret: {len(client_secret)} chars, starts with '{client_secret[:10]}...'")
+        print(f"   📋 Headers: {headers}")
         
-        response = requests.post(token_url, data=form_data)
+        response = requests.post(token_url, data=form_data, headers=headers)
+        
+        # Print detailed error information if request fails
+        if not response.ok:
+            print(f"   ❌ HTTP {response.status_code}: {response.reason}")
+            print(f"   📋 Response Headers: {dict(response.headers)}")
+            try:
+                error_detail = response.json()
+                print(f"   📋 Error JSON: {error_detail}")
+            except:
+                print(f"   📋 Response Text: {response.text}")
+            
         response.raise_for_status()
         
         token_data = response.json()
@@ -2069,6 +2143,10 @@ def get_access_token(client_id: str, client_secret: str, grant_type: str) -> dic
         print("="*80 + "\n")
         
         return token_data
+    except requests.exceptions.HTTPError as e:
+        print(f"   ❌ HTTP Error: {str(e)}")
+        print("="*80 + "\n")
+        raise
     except Exception as e:
         print(f"   ❌ Error fetching access token: {str(e)}")
         print("="*80 + "\n")
@@ -2077,9 +2155,10 @@ def get_access_token(client_id: str, client_secret: str, grant_type: str) -> dic
 
 def fetch_trucks_from_db(access_token: str, min_last_update: int, max_last_update: int, limit: int = 500, offset: int = 0) -> dict:
     """
-    Fetch truck data from the DB API with pagination
+    Fetch truck data from the DB API with pagination (PRODUCTION)
     """
-    trucks_url = "https://api-dev.traderonline.com/vLatest/trucks"
+    # PRODUCTION TRUCKS URL
+    trucks_url = "https://nebulous-prod.traderonline.com/v1/trucks"
     
     params = {
         'bypassCache': 'true',
@@ -2152,14 +2231,12 @@ def process_truck_data(truck: dict, debug: bool = False) -> dict:
     if photos:
         cdn_urls = []
         for photo in photos:
-            media_id = photo.get('mediaApiId', '')
-            if media_id:
-                # Use DEV media URL (media-dev.traderonline.com works for dev environment)
-                # For production, this would need to be: https://cdn-media.tilabs.io/v1/media/{media_id}.webp?...
-                cdn_url = f"https://media-dev.traderonline.com/vLatest/media/{media_id}.jpg"
-                cdn_urls.append(cdn_url)
+            # Extract URL directly from the photo object (API provides full CDN URL)
+            photo_url = photo.get('url', '')
+            if photo_url:
+                cdn_urls.append(photo_url)
             elif debug:
-                print(f"      ⚠️ Photo missing mediaApiId: {photo}")
+                print(f"      ⚠️ Photo missing url field: {photo}")
         
         processed['Image_URLs'] = ','.join(cdn_urls)
         
@@ -2169,6 +2246,199 @@ def process_truck_data(truck: dict, debug: bool = False) -> dict:
         print(f"      ⚠️ No photos array in truck data")
     
     return processed
+
+
+def fetch_single_truck_by_id(access_token: str, ad_id: str) -> dict:
+    """
+    Fetch a single truck by Ad ID from the DB API (PRODUCTION)
+    
+    Args:
+        access_token: Bearer token for authentication
+        ad_id: The truck Ad ID to fetch
+        
+    Returns:
+        dict: Truck data from API
+    """
+    # PRODUCTION TRUCKS URL (individual truck endpoint)
+    truck_url = f"https://nebulous-prod.traderonline.com/vLatest/trucks/{ad_id}"
+    
+    headers = {
+        'Authorization': f'Bearer {access_token}'
+    }
+    
+    try:
+        response = requests.get(truck_url, headers=headers)
+        response.raise_for_status()
+        
+        data = response.json()
+        # The API returns data in format: {"url": "...", "result": {...}}
+        # We need the "result" object which contains the truck data
+        return data.get('result', {})
+    except requests.exceptions.HTTPError as e:
+        if e.response.status_code == 404:
+            print(f"   ⚠️ Truck {ad_id} not found (404)")
+            return None
+        else:
+            print(f"   ❌ Error fetching truck {ad_id}: HTTP {e.response.status_code}")
+            raise
+    except Exception as e:
+        print(f"   ❌ Error fetching truck {ad_id}: {str(e)}")
+        raise
+
+
+def run_db_fetch_by_ids_sync(job_id: str, file_path: str, client_id: str, client_secret: str, grant_type: str):
+    """
+    Fetch trucks by Ad IDs from uploaded Excel file (PRODUCTION)
+    
+    This feature:
+    1. Reads Ad IDs from uploaded Excel file
+    2. Fetches each truck individually from the database API (no scraping)
+    3. Processes the data to extract photos and categories
+    4. Saves to Excel ready for annotation
+    """
+    job = jobs[job_id]
+    run_ts = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+    
+    try:
+        print(f"\n{'='*80}")
+        print(f"🗄️ DB FETCH BY AD IDs JOB {job_id} STARTED (PRODUCTION)")
+        print(f"{'='*80}")
+        print(f"   Source File: {os.path.basename(file_path)}")
+        print(f"{'='*80}\n")
+        
+        # ========== STEP 1: Load Ad IDs from Excel ==========
+        print("="*80)
+        print("📄 STEP 1: LOADING AD IDs FROM EXCEL")
+        print("="*80)
+        
+        df = pd.read_excel(file_path, dtype={"Ad ID": str})
+        
+        # Standardize Ad ID column
+        if "Ad ID" not in df.columns:
+            raise ValueError("Excel file must have an 'Ad ID' column")
+        
+        df["Ad ID"] = df["Ad ID"].astype(str).str.replace(r'\.0$', '', regex=True).str.strip()
+        ad_ids = df["Ad ID"].tolist()
+        
+        print(f"   ✅ Loaded {len(ad_ids)} Ad IDs from Excel")
+        print(f"   📊 First 5 Ad IDs: {ad_ids[:5]}")
+        print("="*80 + "\n")
+        
+        job['total_ads'] = int(len(ad_ids))
+        job['status'] = JobStatus.PROCESSING
+        
+        # ========== STEP 2: Get Access Token ==========
+        print("="*80)
+        print("🔑 STEP 2: AUTHENTICATING WITH DB API")
+        print("="*80)
+        
+        token_data = get_access_token(client_id, client_secret, grant_type)
+        access_token = token_data['access_token']
+        print("="*80 + "\n")
+        
+        # ========== STEP 3: Fetch Trucks by Ad ID ==========
+        print("="*80)
+        print(f"📦 STEP 3: FETCHING {len(ad_ids)} TRUCKS FROM DB API")
+        print("="*80)
+        print(f"   Using endpoint: https://nebulous-prod.traderonline.com/vLatest/trucks/{{ad_id}}")
+        print(f"   This is MUCH faster than scraping! (~1-2 seconds per truck)\n")
+        
+        fetched_trucks = []
+        not_found_ids = []
+        error_ids = []
+        
+        for i, ad_id in enumerate(ad_ids, 1):
+            try:
+                print(f"   [{i}/{len(ad_ids)}] Fetching truck {ad_id}...", end=" ")
+                truck_data = fetch_single_truck_by_id(access_token, ad_id)
+                
+                if truck_data:
+                    fetched_trucks.append(truck_data)
+                    print(f"✅")
+                else:
+                    not_found_ids.append(ad_id)
+                    print(f"❌ Not Found")
+                
+                # Small delay to avoid rate limiting
+                time.sleep(0.1)
+                
+            except Exception as e:
+                error_ids.append(ad_id)
+                print(f"❌ Error: {str(e)[:50]}")
+        
+        print("\n" + "="*80)
+        print(f"✅ FETCHING COMPLETE")
+        print("="*80)
+        print(f"   Successfully fetched: {len(fetched_trucks)}/{len(ad_ids)} trucks")
+        if not_found_ids:
+            print(f"   ⚠️ Not found: {len(not_found_ids)} trucks - {not_found_ids[:10]}")
+        if error_ids:
+            print(f"   ❌ Errors: {len(error_ids)} trucks - {error_ids[:10]}")
+        print("="*80 + "\n")
+        
+        if len(fetched_trucks) == 0:
+            raise ValueError("No trucks were successfully fetched from the database")
+        
+        # ========== STEP 4: Process Truck Data ==========
+        print("="*80)
+        print("🔄 STEP 4: PROCESSING TRUCK DATA")
+        print("="*80)
+        
+        processed_trucks = []
+        for i, truck in enumerate(fetched_trucks, 1):
+            debug = (i == 1)  # Debug first truck only
+            processed = process_truck_data(truck, debug=debug)
+            processed_trucks.append(processed)
+            
+            if i % 50 == 0:
+                print(f"   ✅ Processed {i}/{len(fetched_trucks)} trucks")
+        
+        print(f"   ✅ Processed all {len(processed_trucks)} trucks")
+        print("="*80 + "\n")
+        
+        # ========== STEP 5: Save to Excel ==========
+        print("="*80)
+        print("💾 STEP 5: SAVING TO EXCEL")
+        print("="*80)
+        
+        result_df = pd.DataFrame(processed_trucks)
+        result_df["Ad ID"] = result_df["Ad ID"].astype(str).str.replace(r'\.0$', '', regex=True).str.strip()
+        
+        # Save intermediate DB fetch output
+        db_fetch_filename = f"DB_Fetch_ByIDs_{run_ts}.xlsx"
+        db_fetch_dir = os.path.join(config.project_root, "Scrapper output")
+        os.makedirs(db_fetch_dir, exist_ok=True)
+        db_fetch_path = os.path.join(db_fetch_dir, db_fetch_filename)
+        result_df.to_excel(db_fetch_path, index=False)
+        
+        print(f"   ✅ Excel file saved: {db_fetch_filename}")
+        print(f"   📁 Path: {db_fetch_path}")
+        print("="*80 + "\n")
+        
+        # Update job status
+        job['status'] = 'fetched'
+        job['file_path'] = db_fetch_path
+        job['output_file'] = db_fetch_path
+        job['output_filename'] = db_fetch_filename
+        job['total_ads'] = int(len(result_df))
+        job['preview_data'] = processed_trucks[:10]
+        job['is_db_fetch_by_ids'] = True
+        
+        print("="*80)
+        print("🎉 DB FETCH BY AD IDs COMPLETE!")
+        print("="*80)
+        print(f"   📊 Successfully fetched: {len(fetched_trucks)} trucks")
+        print(f"   📄 Excel file: {db_fetch_filename}")
+        print(f"   ✅ Ready for annotation!")
+        print(f"   📊 Preview available: First {len(processed_trucks[:10])} trucks")
+        print("="*80 + "\n")
+        
+    except Exception as e:
+        job['status'] = JobStatus.FAILED
+        job['error'] = str(e)
+        print(f"\n❌ DB FETCH BY AD IDs FAILED: {str(e)}\n")
+        import traceback
+        traceback.print_exc()
 
 
 @app.post("/api/db-fetch")
@@ -2186,7 +2456,7 @@ async def fetch_from_db(request: DBFetchRequest):
     Credentials can be provided in the request or will be loaded from config.ini
     """
     print("\n" + "="*80)
-    print("🗄️ DB FETCH - FETCHING DATA FROM DATABASE API")
+    print("🗄️ DB FETCH - FETCHING DATA FROM DATABASE API (PRODUCTION)")
     print("="*80)
     
     # If min and max timestamps are the same, expand to full day (24 hours)
@@ -2207,9 +2477,10 @@ async def fetch_from_db(request: DBFetchRequest):
     
     try:
         # Use provided credentials or fallback to config.ini
-        client_id = request.client_id or config.db_api_client_id
-        client_secret = request.client_secret or config.db_api_client_secret
-        grant_type = request.grant_type or config.db_api_grant_type
+        # IMPORTANT: Strip whitespace to avoid authentication issues
+        client_id = (request.client_id or config.db_api_client_id).strip()
+        client_secret = (request.client_secret or config.db_api_client_secret).strip()
+        grant_type = (request.grant_type or config.db_api_grant_type).strip()
         
         # Validate credentials
         if not client_id or client_id == 'your_client_id_here':
@@ -2226,6 +2497,8 @@ async def fetch_from_db(request: DBFetchRequest):
         
         print(f"   🔑 Using credentials from: {'Request' if request.client_id else 'config.ini'}")
         print(f"   🔑 Client ID: {client_id[:10]}...")
+        print(f"   🔑 Client Secret length: {len(client_secret)} chars")
+        print(f"   🔑 Client Secret first 10 chars: {client_secret[:10]}...")
         print(f"   🔑 Grant Type: {grant_type}\n")
         
         # Step 1: Get access token
@@ -2469,6 +2742,28 @@ async def fetch_from_db(request: DBFetchRequest):
         raise HTTPException(status_code=500, detail=f"Failed to fetch data from database: {str(e)}")
 
 
+@app.get("/api/db-fetch-by-ids/{fetch_id}/status")
+async def get_fetch_by_ids_status(fetch_id: str):
+    """
+    Get the status of a DB fetch by IDs job
+    
+    Returns fetch status and preview data when ready
+    """
+    if fetch_id not in jobs:
+        raise HTTPException(status_code=404, detail="Fetch ID not found")
+    
+    fetch_job = jobs[fetch_id]
+    
+    return {
+        "fetch_id": fetch_id,
+        "status": fetch_job.get('status'),
+        "total_trucks": fetch_job.get('total_ads', 0),
+        "filename": fetch_job.get('output_filename', fetch_job.get('filename')),
+        "preview_data": fetch_job.get('preview_data', []),
+        "error": fetch_job.get('error')
+    }
+
+
 @app.post("/api/db-fetch/{fetch_id}/start-annotation")
 async def start_db_annotation(fetch_id: str, background_tasks: BackgroundTasks):
     """
@@ -2519,6 +2814,96 @@ async def start_db_annotation(fetch_id: str, background_tasks: BackgroundTasks):
         "job_id": job_id,
         "status": JobStatus.PROCESSING,
         "message": f"AI annotation started for {fetch_job.get('total_ads')} trucks"
+    }
+
+
+@app.post("/api/db-fetch-by-ids")
+async def fetch_by_ad_ids(
+    file: UploadFile = File(..., description="Excel file with Ad IDs"),
+    background_tasks: BackgroundTasks = None
+):
+    """
+    NEW FEATURE: Fetch trucks by Ad IDs from uploaded Excel file (PRODUCTION)
+    
+    This is a faster alternative to scraping:
+    1. User uploads Excel file with Ad IDs (just like scraping feature)
+    2. System fetches data directly from database API (1-2 seconds per truck)
+    3. Returns formatted data ready for annotation
+    
+    Much faster than scraping (~10-15 seconds per truck)!
+    """
+    if not file.filename.endswith(('.xlsx', '.xls')):
+        raise HTTPException(status_code=400, detail="Only Excel files (.xlsx, .xls) are supported")
+    
+    job_id = str(uuid.uuid4())[:8]
+    
+    # Save uploaded file
+    upload_dir = os.path.join(config.project_root, "uploads")
+    os.makedirs(upload_dir, exist_ok=True)
+    file_path = os.path.join(upload_dir, f"{job_id}_db_fetch_ids_{file.filename}")
+    
+    with open(file_path, "wb") as f:
+        content = await file.read()
+        f.write(content)
+    
+    # Validate file has Ad ID column
+    try:
+        df = pd.read_excel(file_path)
+        if "Ad ID" not in df.columns:
+            os.remove(file_path)
+            raise HTTPException(status_code=400, detail="Excel file must have an 'Ad ID' column")
+        ad_count = len(df)
+    except Exception as e:
+        if os.path.exists(file_path):
+            os.remove(file_path)
+        raise HTTPException(status_code=400, detail=f"Invalid Excel file: {str(e)}")
+    
+    # Use credentials from config.ini (strip whitespace)
+    client_id = config.db_api_client_id.strip()
+    client_secret = config.db_api_client_secret.strip()
+    grant_type = config.db_api_grant_type.strip()
+    
+    # Validate credentials
+    if not client_id or client_id == 'your_client_id_here':
+        raise HTTPException(
+            status_code=400,
+            detail="DB API credentials not configured. Please add credentials to config.ini"
+        )
+    
+    if not client_secret or client_secret == 'your_client_secret_here':
+        raise HTTPException(
+            status_code=400,
+            detail="DB API credentials not configured. Please add credentials to config.ini"
+        )
+    
+    # Create job
+    jobs[job_id] = {
+        "id": job_id,
+        "filename": file.filename,
+        "file_path": file_path,
+        "status": "fetching",  # New status for fetching phase
+        "total_ads": ad_count,
+        "created_at": datetime.now().isoformat(),
+        "is_db_fetch_by_ids": True
+    }
+    
+    # Start fetching in background (will update job to 'fetched' when done)
+    background_tasks.add_task(
+        run_db_fetch_by_ids_sync,
+        job_id,
+        file_path,
+        client_id,
+        client_secret,
+        grant_type
+    )
+    
+    return {
+        "fetch_id": job_id,  # Return as fetch_id (not job_id) for preview modal
+        "job_id": job_id,
+        "filename": file.filename,
+        "total_trucks": ad_count,
+        "status": "fetching",
+        "message": f"Fetching {ad_count} trucks from database API. This is much faster than scraping!"
     }
 
 
