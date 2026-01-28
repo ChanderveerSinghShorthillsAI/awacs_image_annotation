@@ -671,8 +671,8 @@ def verify_dually_listings(result_df: pd.DataFrame, job_id: str, yoda_instance):
         if image_urls_str:
             image_urls = [url.strip() for url in image_urls_str.split(",") if url.strip()]
             if image_urls:
-                # Get ALL images instead of just the first one
-                img_bytes_list = web_utils.get_images_with_caching(image_urls)
+                # Get only first 3 images (same as scrapping feature for consistency)
+                img_bytes_list = web_utils.get_images_with_caching(image_urls[:3])
                 # Filter out None/empty images
                 valid_images = [img for img in img_bytes_list if img]
                 if valid_images:

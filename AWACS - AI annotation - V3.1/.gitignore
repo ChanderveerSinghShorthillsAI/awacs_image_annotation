@@ -167,3 +167,5 @@ coverage.xml
 startup_log.txt
 
 check_keys.py
+
+mosaic_images/

@@ -23,6 +23,7 @@ def load_config():
         config.output_dir = os.path.join(project_root, config_parser.get('Paths', 'OutputDir'))
         config.image_cache_dir = os.path.join(project_root, config_parser.get('Paths', 'ImageCacheDir'))
         config.key_report_dir = os.path.join(project_root, config_parser.get('Paths', 'KeyReportDir'))
+        config.mosaic_images_dir = os.path.join(project_root, config_parser.get('Paths', 'MosaicImagesDir'))
         config.category_json = os.path.join(project_root, config_parser.get('Paths', 'CategoryJson'))
         config.rules_json = os.path.join(project_root, config_parser.get('Paths', 'RulesJson'))
         config.project_root = project_root
@@ -42,6 +43,9 @@ def load_config():
         config.enable_darth_cv2_dually = config_parser.getboolean('Settings', 'EnableDarthCV2Dually', fallback=True)
         config.enable_dually_llm_verification = config_parser.getboolean('Settings', 'EnableDuallyLLMVerification', fallback=True)
         config.darth_cv2_dually_threshold = config_parser.getint('Settings', 'DarthCV2DuallyThreshold', fallback=2)
+        
+        # Mosaic Image Saving
+        config.save_mosaic_images = config_parser.getboolean('Settings', 'SaveMosaicImages', fallback=False)
 
         # DB API Credentials
         config.db_api_client_id = config_parser.get('DB_API', 'ClientId', fallback='')

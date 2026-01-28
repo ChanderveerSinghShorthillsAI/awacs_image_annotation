@@ -192,6 +192,38 @@ def create_image_mosaic_multi(img_bytes_list: list) -> bytes:
         # Safe fallback - return first image
         log_msg(f"⚠️ Mosaic creation failed: {e}", -1)
         return valid_images[0] if valid_images else b''
+
+def save_mosaic_image(mosaic_bytes: bytes, ad_id: str, image_type: str):
+    """
+    Saves a mosaic image to the configured directory if SaveMosaicImages is enabled.
+    
+    Args:
+        mosaic_bytes: The mosaic image bytes
+        ad_id: The Ad ID for filename
+        image_type: Type of mosaic ("classification" or "dually_verify")
+    """
+    if not config.save_mosaic_images:
+        return
+    
+    try:
+        # Create directory if it doesn't exist
+        os.makedirs(config.mosaic_images_dir, exist_ok=True)
+        
+        # Create filename with timestamp for uniqueness
+        timestamp = time.strftime("%Y%m%d_%H%M%S")
+        filename = f"{ad_id}_{image_type}_{timestamp}.jpg"
+        filepath = os.path.join(config.mosaic_images_dir, filename)
+        
+        # Save the image
+        with open(filepath, 'wb') as f:
+            f.write(mosaic_bytes)
+        
+        # Optional: Log the save action (comment out if too verbose)
+        # print(f"   💾 Saved mosaic: {filename}")
+        
+    except Exception as e:
+        # Silently fail - we don't want to break the main flow if saving fails
+        pass
 # ------------------------------
 
 def parse_gemini_response(raw_text: str) -> list:
@@ -399,7 +431,37 @@ CRITICAL RULES:
    - Look for **Cabinets/Compartments** -> Utility Truck.
    - Look for **Removable Stakes/Slats** -> Contractor Truck.
 
-2. **DUALLY DETECTION (CRITICAL - ALWAYS CHECK):**
+2. **BUCKET TRUCK - BOOM TRUCK DETECTION (HIGHEST PRIORITY - CHECK FIRST):**
+   - **What is a Bucket Truck?** A truck with an aerial boom/lift that has a BUCKET/BASKET at the end where a person can stand.
+   - **KEY IDENTIFIER: Look at the END of the boom - is there a BUCKET/BASKET?**
+     * If YES (bucket/basket present) → 'Bucket Truck - Boom Truck'
+     * If NO (hook present instead) → Crane Truck or Mechanics Truck
+   - **IMPORTANT:** The presence of a bucket OVERRIDES the base truck type. Classify as 'Bucket Truck - Boom Truck' regardless of whether the base is:
+     * A pickup truck with a bucket boom
+     * A utility truck with service body + bucket boom
+     * Any other truck type with a bucket boom
+   - **Visual Cues for Bucket:**
+     * A platform/basket at the end of the boom (usually rectangular or rounded)
+     * Designed for a person to stand in safely
+     * May have safety rails around it
+     * Common on utility/electric company trucks
+   - **DO NOT confuse with Crane Truck or Mechanics Truck** - those have a HOOK at the end, not a bucket.
+
+3. **MECHANICS TRUCK DETECTION (CHECK FOR CRANE WITH HOOK + UTILITY BODY):**
+   - **What is a Mechanics Truck?** A Mechanics Truck is a COMBINATION of a Utility/Service Truck body WITH a mounted crane that has a HOOK.
+   - **Formula: Utility Truck + Crane WITH HOOK = Mechanics Truck**
+   - **Key Visual Cues:**
+     * A service body with tool compartments/cabinets on the sides (like a Utility Truck)
+     * PLUS a crane/boom mounted on the body (typically at the rear or behind the cab)
+     * The boom ends with a HOOK (for lifting), NOT a bucket/basket
+   - **IMPORTANT:** If you see BOTH a utility/service body with compartments AND a crane with HOOK, classify as 'Mechanics Truck' - NOT as 'Utility Truck - Service Truck' or 'Crane Truck' separately.
+   - **CRITICAL:** If the boom has a BUCKET/BASKET at the end (even with a utility body), classify as 'Bucket Truck - Boom Truck' instead.
+   - **DO NOT confuse with:**
+     * Bucket Truck (has a bucket/basket at the end, NOT a hook)
+     * Pure Crane Truck (has crane but NO service body compartments)
+     * Pure Utility Truck (has service body compartments but NO crane)
+
+4. **DUALLY DETECTION (CRITICAL - ALWAYS CHECK):**
    - **CRITICAL: ALWAYS check for Dually indicators - false negatives are a major issue!**
    - **What is a Dually?** A vehicle with DUAL REAR WHEELS - TWO separate wheels/tires mounted on EACH SIDE of the rear axle (4 rear tires total instead of 2)
    - **Dually is an ATTRIBUTE, not a body type. If you detect Dually, include it as a SECONDARY category alongside the primary body type.**
@@ -562,7 +624,7 @@ CRITICAL RULES:
    - The primary body type should ALWAYS be listed first, Dually should be second
    - Dually is an attribute that modifies the vehicle, not a standalone category
 
-3. **"Image Not Clear" Rule (EXTREMELY STRICT - Use Only When Truly Impossible to Classify):**
+4. **\"Image Not Clear\" Rule (EXTREMELY STRICT - Use Only When Truly Impossible to Classify):**
    
    ⚠️ **CRITICAL: This image has already passed a pre-check filter. Do NOT return "Image Not Clear" unless ABSOLUTELY NECESSARY!**
    
@@ -883,6 +945,9 @@ def classify_with_gemini_multi(breadcrumb: str, category_data: dict, img_bytes_l
             # Use Index 0 and 1 (Usually sorted by Vision V2 as best)
             mosaic_bytes = create_image_mosaic(img_bytes_list[0], img_bytes_list[1])
             
+            # Save mosaic if enabled in config
+            save_mosaic_image(mosaic_bytes, ad_id, "classification")
+            
             res, t_in, t_out = classify_with_gemini(breadcrumb, category_data, mosaic_bytes, yoda_instance, key_queue, worker_id, status_queue, ad_id, skip_promo_check=True)
             total_in += t_in
             total_out += t_out
@@ -1196,6 +1261,9 @@ def verify_dually_with_llm(ad_img_bytes_list: list[bytes], yoda_instance, key_qu
     # Create mosaic from all available images for efficiency (reduces tokens significantly)
     mosaic_image = create_image_mosaic_multi(valid_images)
     image_count_text = f"{len(valid_images)} image{'s' if len(valid_images) > 1 else ''}"
+    
+    # Save mosaic if enabled in config
+    save_mosaic_image(mosaic_image, ad_id, "dually_verify")
     
     # Detailed prompt for accurate Dually verification (ENHANCED - More Aggressive)
     if len(valid_images) > 1:
