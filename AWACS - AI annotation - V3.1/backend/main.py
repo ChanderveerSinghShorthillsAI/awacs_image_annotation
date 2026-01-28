@@ -12,7 +12,7 @@ from pathlib import Path
 from multiprocessing import Process, Manager, Queue, freeze_support
 import queue
 # import random
-# from concurrent.futures import ThreadPoolExecutor, as_completed
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from fastapi import FastAPI, UploadFile, File, HTTPException, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
@@ -2286,6 +2286,39 @@ def fetch_single_truck_by_id(access_token: str, ad_id: str) -> dict:
         raise
 
 
+def _fetch_single_truck_worker(ad_id: str, access_token: str, index: int, total: int):
+    """
+    Worker function to fetch a single truck by Ad ID (for multithreading)
+    
+    Args:
+        ad_id: The truck Ad ID to fetch
+        access_token: Bearer token for authentication
+        index: Current index (for progress display)
+        total: Total number of trucks to fetch
+        
+    Returns:
+        tuple: (status, ad_id, truck_data_or_error)
+            status: 'success', 'not_found', or 'error'
+            ad_id: The Ad ID that was fetched
+            truck_data_or_error: Truck data dict if success, None if not found, error message if error
+    """
+    try:
+        print(f"   🔄 [{index}/{total}] Fetching truck {ad_id}...", end=" ", flush=True)
+        truck_data = fetch_single_truck_by_id(access_token, ad_id)
+        
+        if truck_data:
+            print(f"✅")
+            return ('success', ad_id, truck_data)
+        else:
+            print(f"❌ Not Found")
+            return ('not_found', ad_id, None)
+            
+    except Exception as e:
+        error_msg = str(e)[:50]
+        print(f"❌ Error: {error_msg}")
+        return ('error', ad_id, str(e))
+
+
 def run_db_fetch_by_ids_sync(job_id: str, file_path: str, client_id: str, client_secret: str, grant_type: str):
     """
     Fetch trucks by Ad IDs from uploaded Excel file (PRODUCTION)
@@ -2336,35 +2369,39 @@ def run_db_fetch_by_ids_sync(job_id: str, file_path: str, client_id: str, client
         access_token = token_data['access_token']
         print("="*80 + "\n")
         
-        # ========== STEP 3: Fetch Trucks by Ad ID ==========
+        # ========== STEP 3: Fetch Trucks by Ad ID (MULTITHREADED) ==========
         print("="*80)
-        print(f"📦 STEP 3: FETCHING {len(ad_ids)} TRUCKS FROM DB API")
+        print(f"📦 STEP 3: FETCHING {len(ad_ids)} TRUCKS FROM DB API (MULTITHREADED)")
         print("="*80)
         print(f"   Using endpoint: https://nebulous-prod.traderonline.com/vLatest/trucks/{{ad_id}}")
+        print(f"   🚀 Using 5 concurrent workers for SUPER FAST fetching!")
         print(f"   This is MUCH faster than scraping! (~1-2 seconds per truck)\n")
         
         fetched_trucks = []
         not_found_ids = []
         error_ids = []
         
-        for i, ad_id in enumerate(ad_ids, 1):
-            try:
-                print(f"   [{i}/{len(ad_ids)}] Fetching truck {ad_id}...", end=" ")
-                truck_data = fetch_single_truck_by_id(access_token, ad_id)
+        # Use ThreadPoolExecutor with 5 workers for concurrent fetching
+        max_workers = 5
+        print(f"⚡ Starting {max_workers} concurrent fetch workers...\n")
+        
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            # Submit all fetch tasks
+            future_to_ad_id = {
+                executor.submit(_fetch_single_truck_worker, ad_id, access_token, i, len(ad_ids)): ad_id
+                for i, ad_id in enumerate(ad_ids, 1)
+            }
+            
+            # Process results as they complete
+            for future in as_completed(future_to_ad_id):
+                status, ad_id, result = future.result()
                 
-                if truck_data:
-                    fetched_trucks.append(truck_data)
-                    print(f"✅")
-                else:
+                if status == 'success':
+                    fetched_trucks.append(result)
+                elif status == 'not_found':
                     not_found_ids.append(ad_id)
-                    print(f"❌ Not Found")
-                
-                # Small delay to avoid rate limiting
-                time.sleep(0.1)
-                
-            except Exception as e:
-                error_ids.append(ad_id)
-                print(f"❌ Error: {str(e)[:50]}")
+                elif status == 'error':
+                    error_ids.append(ad_id)
         
         print("\n" + "="*80)
         print(f"✅ FETCHING COMPLETE")
