@@ -59,7 +59,8 @@ def save_checkpoint(run_ts: str, results_so_far: list, input_df: pd.DataFrame):
         clean_input_df = input_df[["Ad ID"]].copy()
         clean_input_df["Ad ID"] = clean_input_df["Ad ID"].astype(str).str.replace(r'\.0$', '', regex=True).str.strip()
 
-        merged = pd.merge(clean_input_df, result_df, on="Ad ID", how="inner")
+        # ✅ FIX: Use "left" join to preserve input order and include all input Ad IDs
+        merged = pd.merge(clean_input_df, result_df, on="Ad ID", how="left")
 
         final_columns = [
             "Ad ID", "Breadcrumb_Top1", "Breadcrumb_Top2", "Breadcrumb_Top3",

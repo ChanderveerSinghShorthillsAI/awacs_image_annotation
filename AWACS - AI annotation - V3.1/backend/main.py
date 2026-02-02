@@ -604,10 +604,10 @@ def run_parallel_ai(df: pd.DataFrame, run_ts: str, job_id: str, num_workers: int
         if col not in result_df.columns:
             result_df[col] = ""
     
-    # Preserve original input order by merging from input DataFrame
+    # ✅ FIX: Preserve original input order by merging from input DataFrame (use "left" to maintain order)
     clean_input_df = df[["Ad ID"]].copy()
     clean_input_df["Ad ID"] = clean_input_df["Ad ID"].astype(str).str.replace(r'\.0$', '', regex=True).str.strip()
-    result_df = pd.merge(clean_input_df, result_df, on="Ad ID", how="inner") 
+    result_df = pd.merge(clean_input_df, result_df, on="Ad ID", how="left") 
     
     return result_df[final_columns]
 
@@ -2205,6 +2205,12 @@ def process_truck_data(truck: dict, debug: bool = False) -> dict:
         'Image_URLs': ''
     }
     
+    # ✅ Check if truck has status field indicating inactive
+    status = truck.get('status', '').lower()
+    if status and 'inactive' in status:
+        processed['Breadcrumb_Top1'] = 'Inactive ad'
+        return processed
+    
     # Extract categories for breadcrumbs
     categories = truck.get('categories', [])
     if categories:
@@ -2430,7 +2436,31 @@ def run_db_fetch_by_ids_sync(job_id: str, file_path: str, client_id: str, client
             if i % 50 == 0:
                 print(f"   ✅ Processed {i}/{len(fetched_trucks)} trucks")
         
-        print(f"   ✅ Processed all {len(processed_trucks)} trucks")
+        # ✅ FIX: Add not_found and error trucks with "Inactive ad" status
+        for ad_id in not_found_ids:
+            processed_trucks.append({
+                'Ad ID': ad_id,
+                'Breadcrumb_Top1': 'Inactive ad',
+                'Breadcrumb_Top2': '',
+                'Breadcrumb_Top3': '',
+                'Image_URLs': ''
+            })
+        
+        for ad_id in error_ids:
+            processed_trucks.append({
+                'Ad ID': ad_id,
+                'Breadcrumb_Top1': 'Inactive ad',
+                'Breadcrumb_Top2': '',
+                'Breadcrumb_Top3': '',
+                'Image_URLs': ''
+            })
+        
+        print(f"   ✅ Processed {len(fetched_trucks)} successful trucks")
+        if not_found_ids:
+            print(f"   ⚠️ Added {len(not_found_ids)} inactive (not found) trucks")
+        if error_ids:
+            print(f"   ⚠️ Added {len(error_ids)} inactive (error) trucks")
+        print(f"   ✅ Total processed: {len(processed_trucks)} trucks")
         print("="*80 + "\n")
         
         # ========== STEP 5: Save to Excel ==========
@@ -2440,6 +2470,14 @@ def run_db_fetch_by_ids_sync(job_id: str, file_path: str, client_id: str, client
         
         result_df = pd.DataFrame(processed_trucks)
         result_df["Ad ID"] = result_df["Ad ID"].astype(str).str.replace(r'\.0$', '', regex=True).str.strip()
+        
+        # ✅ FIX: Preserve input order by merging with original df
+        # Create a copy of the input df with just Ad ID to preserve the original order
+        ordered_df = df[["Ad ID"]].copy()
+        ordered_df["Ad ID"] = ordered_df["Ad ID"].astype(str).str.replace(r'\.0$', '', regex=True).str.strip()
+        
+        # Merge to preserve the input order (left join keeps the order of ordered_df)
+        result_df = pd.merge(ordered_df, result_df, on="Ad ID", how="left")
         
         # Save intermediate DB fetch output
         db_fetch_filename = f"DB_Fetch_ByIDs_{run_ts}.xlsx"
