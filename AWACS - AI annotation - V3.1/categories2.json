@@ -98,5 +98,9 @@
     "Dually": {
         "definition": "A vehicle with DUAL REAR WHEELS - characterized by 4 REAR TIRES instead of 2 (2 tires on each side of rear axle). This allows the vehicle to carry more weight. Rear fenders BULGE OUT significantly wider than front fenders.",
         "image_base64": ""
+    },
+    "Dry Van": {
+        "definition": "Almost identical to a Box Truck, but should only be assigned to larger models where the box is 20\u2019+",
+        "image_base64": ""
     }
 }

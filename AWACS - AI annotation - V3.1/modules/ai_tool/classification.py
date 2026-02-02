@@ -460,8 +460,20 @@ CRITICAL RULES:
      * Bucket Truck (has a bucket/basket at the end, NOT a hook)
      * Pure Crane Truck (has crane but NO service body compartments)
      * Pure Utility Truck (has service body compartments but NO crane)
+4. **BOX TRUCK vs DRY VAN DETECTION (SIZE-BASED DISTINCTION):**
+   - **The ONLY difference between Box Truck and Dry Van is the SIZE of the cargo box:**
+     * **Box Truck - Straight Truck**: Cargo box is SMALLER than 20 feet (under 6 meters)
+     * **Dry Van**: Cargo box is LARGER than 20 feet (over 6 meters)
+   - **Visual Size Estimation Guide (compare box length to cab):**
+     * **Box Truck (under 20ft):** Box length is typically 1.5 to 2.5 times the cab length. Appears compact and proportional.
+     * **Dry Van (over 20ft):** Box length is typically 3 to 4+ times the cab length. Appears much longer and dominates the vehicle profile.
+   - **Additional Visual Cues:**
+     * **Box Truck:** Often built on medium-duty chassis (like Ford F-650, Chevrolet 4500/5500). Box appears "integrated" with the truck.
+     * **Dry Van:** Longer wheelbase, may have tandem rear axles, box extends significantly beyond the cab. Often seen on larger commercial chassis.
+   - **Quick Visual Test:** If the box looks like it could fit in a residential driveway or be used for local deliveries → likely Box Truck. If it looks like a long-haul commercial vehicle → likely Dry Van.
+   - **WHEN IN DOUBT:** Use the cab-to-box ratio. If box is noticeably more than 2.5x cab length, classify as Dry Van.
 
-4. **DUALLY DETECTION (CRITICAL - ALWAYS CHECK):**
+5. **DUALLY DETECTION (CRITICAL - ALWAYS CHECK):**
    - **CRITICAL: ALWAYS check for Dually indicators - false negatives are a major issue!**
    - **What is a Dually?** A vehicle with DUAL REAR WHEELS - TWO separate wheels/tires mounted on EACH SIDE of the rear axle (4 rear tires total instead of 2)
    - **Dually is an ATTRIBUTE, not a body type. If you detect Dually, include it as a SECONDARY category alongside the primary body type.**
@@ -624,7 +636,7 @@ CRITICAL RULES:
    - The primary body type should ALWAYS be listed first, Dually should be second
    - Dually is an attribute that modifies the vehicle, not a standalone category
 
-4. **\"Image Not Clear\" Rule (EXTREMELY STRICT - Use Only When Truly Impossible to Classify):**
+6. **\"Image Not Clear\" Rule (EXTREMELY STRICT - Use Only When Truly Impossible to Classify):**
    
    ⚠️ **CRITICAL: This image has already passed a pre-check filter. Do NOT return "Image Not Clear" unless ABSOLUTELY NECESSARY!**
    
