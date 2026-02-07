@@ -381,6 +381,27 @@
     },
     {
       "pair": [
+        "Flatbed Truck",
+        "Utility Truck - Service Truck"
+      ],
+      "decision_rule": "FOCUS ON BED SIDES. 1. If you see built-in metal tool CABINETS/COMPARTMENTS with doors/handles running along the bed, it is a 'Utility Truck - Service Truck'. 2. If the bed is a FLAT OPEN PLATFORM with NO side compartments (you can see the deck surface), it is a 'Flatbed Truck'."
+    },
+    {
+      "pair": [
+        "Flatbed Truck",
+        "Contractor Truck"
+      ],
+      "decision_rule": "CHECK FOR STAKE SIDES. 1. If the bed has thin removable STAKES/SLATS/RAILS forming low sides, it is a 'Contractor Truck'. 2. If the bed is a FLAT OPEN PLATFORM with NO side rails or only a simple headache rack, it is a 'Flatbed Truck'."
+    },
+    {
+      "pair": [
+        "Flatbed Truck",
+        "Cab-Chassis"
+      ],
+      "decision_rule": "LOOK BEHIND THE CAB. 1. If you see BARE FRAME RAILS with NO bed/body installed (open chassis, exposed rails), it is a 'Cab-Chassis'. 2. If there is ANY installed FLAT OPEN PLATFORM/DECK (even minimal), it is a 'Flatbed Truck'."
+    },
+    {
+      "pair": [
         "Utility Truck - Service Truck",
         "Mechanics Truck"
       ],
@@ -416,10 +437,25 @@
     },
     {
       "pair": [
+        "Flatbed Truck",
+        "Pickup Truck"
+      ],
+      "decision_rule": "CHECK THE BED STRUCTURE. 1. **Pickup Truck**: Factory integrated bed with solid side walls and tailgate, wheel well bulges inside the bed, typical pickup proportions. 2. **Flatbed Truck**: Flat OPEN PLATFORM with NO solid side walls (you can see the bed surface from the side), often wider than the cab, may have a simple headache rack."
+    },
+    {
+      "pair": [
         "Dually",
         "Flatbed Truck"
       ],
       "decision_rule": "IMPORTANT: Flatbed Truck and Dually are NOT mutually exclusive - a Flatbed Truck CAN be a Dually! Your task is to determine if this Flatbed Truck ALSO has dual rear wheels. Look at the rear axle: Do you see TWO separate wheels/tires on EACH side (4 rear tires total)? Look for deep dish rims, dual wheel assembly, or wider rear fender flare. Answer 'Dually' if you see dual rear wheels, answer 'Flatbed Truck' ONLY if you are certain it has single rear wheels.",
+      "keep_both_if_dually": true
+    },
+    {
+      "pair": [
+        "Dually",
+        "Flatbed Dump"
+      ],
+      "decision_rule": "IMPORTANT: Flatbed Dump and Dually are NOT mutually exclusive - a Flatbed Dump CAN be a Dually! If you see a FLAT OPEN bed (NO side walls) with a CURVED BULKHEAD behind the cab AND dual rear wheels, output BOTH 'Flatbed Dump' AND 'Dually'. Do NOT convert to 'Dump Truck' just because it has dually wheels - Dump Truck requires SIDE WALLS. Flatbed Dump has NO side walls!",
       "keep_both_if_dually": true
     },
     {
@@ -434,7 +470,29 @@
         "Dump Truck",
         "Flatbed Dump"
       ],
-      "decision_rule": "Analyze the construction of the bed sides. 1. **Dump Truck**: Look for a heavy-duty 'Tub'. The sides are solid metal, welded in place, and usually have structural REINFORCEMENT RIBS (horizontal or vertical bars). It looks built for rocks/dirt. 2. **Flatbed Dump**: Look for a 'Platform'. The key feature is a flat floor with a Rub Rail and STAKE POCKETS (holes) along the edge. If it has sides, they are usually thin removable wood or metal slats. If it looks like a flat deck that tilts, it is a 'Flatbed Dump'."
+      "decision_rule": "CHECK FOR SIDE WALLS: 1. **Dump Truck**: Has FULL-HEIGHT side walls (solid metal walls equal to or taller than cab height). The bed forms a deep enclosed 'tub' with tall rigid sides. 2. **Flatbed Dump**: Has NO side walls at all. The bed is completely FLAT and OPEN on the sides like a flatbed, but has a distinctive curved/arched front bulkhead behind the cab. If you see ANY side walls, it is NOT a Flatbed Dump."
+    },
+    {
+      "pair": [
+        "Flatbed Truck",
+        "Flatbed Dump"
+      ],
+      "decision_rule": "CHECK FOR CURVED FRONT BULKHEAD: Look behind the driver's cab at the front of the bed. 1. **Flatbed Truck**: NO curved/arched bulkhead. May have a simple headache rack (vertical bars) but NO curved steel structure bending forward over the cab. 2. **Flatbed Dump**: HAS a distinctive curved/arched front bulkhead behind the cab that often bends/arcs forward over the cab like a shed-like structure. This curved bulkhead is the KEY differentiator. BOTH have NO side walls - the bulkhead is the only difference."
+    },
+    {
+      "pair": [
+        "Dump Truck",
+        "Landscape Truck"
+      ],
+      "decision_rule": "COMPARE SIDE WALL HEIGHT TO CAB HEIGHT: Both have side walls and curved front bulkhead. The ONLY difference is wall height. 1. **Dump Truck**: Side walls are TALL - height is EQUAL to or GREATER than the cab/driver compartment height. The cargo box looks deep and fully enclosed. 2. **Landscape Truck**: Side walls are SHORT - height is clearly LESS than the cab height. The walls look low/shallow compared to the cab. RULE: If carrier box height >= cab height = Dump Truck. If carrier box height < cab height = Landscape Truck. Output BOTH 'Dump Truck' and 'Landscape Truck' categories for landscape trucks."
+    },
+    {
+      "pair": [
+        "Box Truck - Straight Truck",
+        "Cutaway Cube Van"
+      ],
+      "decision_rule": "HIERARCHY RULE: 'Box Truck - Straight Truck' is ALWAYS the PRIMARY category for any truck with a rectangular cargo box. 'Cutaway Cube Van' is a SECONDARY modifier describing chassis type ONLY. 1. Output 'Box Truck - Straight Truck' FIRST as primary. 2. ONLY add 'Cutaway Cube Van' as second category IF you can clearly see a pass-through door/opening from cab to cargo box. 3. NEVER output 'Cutaway Cube Van' alone or as the primary category. 4. If pass-through is not visible, output ONLY 'Box Truck - Straight Truck'.",
+      "keep_both_if_cutaway": true
     }
   ],
   "feature_checklist": {

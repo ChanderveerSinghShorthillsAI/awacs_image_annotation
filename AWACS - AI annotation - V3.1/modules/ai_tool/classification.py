@@ -431,7 +431,15 @@ CRITICAL RULES:
    - Look for **Cabinets/Compartments** -> Utility Truck.
    - Look for **Removable Stakes/Slats** -> Contractor Truck.
 
-2. **BUCKET TRUCK - BOOM TRUCK DETECTION (HIGHEST PRIORITY - CHECK FIRST):**
+2. **FLATBED PRIORITY CHECK (HIGH PRIORITY):**
+   - If the cargo area is a FLAT, OPEN PLATFORM with NO side walls (you can see the bed surface from the side), the primary category MUST be **Flatbed Truck** unless a LARGE curved bulkhead is present (then **Flatbed Dump**).
+   - Do NOTlabel it as **Utility Truck**, **Contractor Truck**, **Cab-Chassis**, or **Pickup Truck** if a flat open bed is clearly present.
+   - **Utility Truck** requires side tool cabinets/compartments.
+   - **Contractor Truck** requires a service body with toolboxes PLUS a rear stakebed/dropside section.
+   - **Cab-Chassis** has NO bed/body at all (exposed frame rails).
+   - **Pickup Truck** has a factory box with closed sides and a tailgate.
+
+3. **BUCKET TRUCK - BOOM TRUCK DETECTION (HIGHEST PRIORITY - CHECK FIRST):**
    - **What is a Bucket Truck?** A truck with an aerial boom/lift that has a BUCKET/BASKET at the end where a person can stand.
    - **KEY IDENTIFIER: Look at the END of the boom - is there a BUCKET/BASKET?**
      * If YES (bucket/basket present) → 'Bucket Truck - Boom Truck'
@@ -447,7 +455,7 @@ CRITICAL RULES:
      * Common on utility/electric company trucks
    - **DO NOT confuse with Crane Truck or Mechanics Truck** - those have a HOOK at the end, not a bucket.
 
-3. **MECHANICS TRUCK DETECTION (CHECK FOR CRANE WITH HOOK + UTILITY BODY):**
+4. **MECHANICS TRUCK DETECTION (CHECK FOR CRANE WITH HOOK + UTILITY BODY):**
    - **What is a Mechanics Truck?** A Mechanics Truck is a COMBINATION of a Utility/Service Truck body WITH a mounted crane that has a HOOK.
    - **Formula: Utility Truck + Crane WITH HOOK = Mechanics Truck**
    - **Key Visual Cues:**
@@ -460,7 +468,7 @@ CRITICAL RULES:
      * Bucket Truck (has a bucket/basket at the end, NOT a hook)
      * Pure Crane Truck (has crane but NO service body compartments)
      * Pure Utility Truck (has service body compartments but NO crane)
-4. **BOX TRUCK vs DRY VAN DETECTION (SIZE-BASED DISTINCTION):**
+5. **BOX TRUCK vs DRY VAN DETECTION (SIZE-BASED DISTINCTION):**
    - **The ONLY difference between Box Truck and Dry Van is the SIZE of the cargo box:**
      * **Box Truck - Straight Truck**: Cargo box is SMALLER than 20 feet (under 6 meters)
      * **Dry Van**: Cargo box is LARGER than 20 feet (over 6 meters)
@@ -473,7 +481,49 @@ CRITICAL RULES:
    - **Quick Visual Test:** If the box looks like it could fit in a residential driveway or be used for local deliveries → likely Box Truck. If it looks like a long-haul commercial vehicle → likely Dry Van.
    - **WHEN IN DOUBT:** Use the cab-to-box ratio. If box is noticeably more than 2.5x cab length, classify as Dry Van.
 
-5. **DUALLY DETECTION (CRITICAL - ALWAYS CHECK):**
+5a. **🚨 BOX TRUCK vs CUTAWAY CUBE VAN (CRITICAL - HIERARCHY RULE):**
+   - **⚠️ THIS IS A CRITICAL CLASSIFICATION PRIORITY RULE!**
+   - **"Box Truck - Straight Truck" is the PRIMARY body type category**
+   - **"Cutaway Cube Van" is a SECONDARY/MODIFIER category that describes the CHASSIS TYPE only**
+   
+   **🚨 HIERARCHY RULE (MUST FOLLOW):**
+   - If you see a truck with a rectangular cargo box attached to a cab → The PRIMARY category is **ALWAYS "Box Truck - Straight Truck"**
+   - "Cutaway Cube Van" should ONLY be added as a SECONDARY category IF you can clearly see a pass-through door/opening from the cab to the cargo box
+   
+   **What is a Cutaway Cube Van?**
+   - It is a Box Truck built on a VAN CHASSIS (like Ford E-Series, Chevrolet Express, etc.)
+   - The KEY FEATURE is a visible PASS-THROUGH DOOR/OPENING from the cab to the cargo area
+   - The driver can walk from the cab into the cargo box without exiting the vehicle
+   
+   **🚨 CRITICAL CLASSIFICATION RULES:**
+   1. **NEVER output "Cutaway Cube Van" as the ONLY category** - it is NOT a standalone primary category
+   2. **ALWAYS output "Box Truck - Straight Truck" FIRST as the primary category**
+   3. **ONLY add "Cutaway Cube Van" as a SECOND category IF you can see the pass-through feature**
+   4. **If you cannot see the pass-through door clearly → Default to "Box Truck - Straight Truck" ONLY**
+   
+   **CORRECT OUTPUT FORMAT:**
+   - If pass-through IS visible: 
+     1. Box Truck - Straight Truck (95%)
+     2. Cutaway Cube Van (90%)
+   - If pass-through is NOT visible or unclear:
+     1. Box Truck - Straight Truck (95%)
+   
+   **INCORRECT OUTPUT (NEVER DO THIS):**
+   ❌ 1. Cutaway Cube Van (95%)  ← WRONG! Must always have Box Truck first!
+   ❌ 1. Cutaway Cube Van (95%)
+      2. Box Truck - Straight Truck (85%)  ← WRONG ORDER! Box Truck must be PRIMARY!
+   
+   **Visual Cues for Pass-Through (Cutaway feature):**
+   - A door or opening visible between the cab and cargo box
+   - The cab and box appear more "integrated" rather than separate
+   - The driver can access the cargo area from inside the cab
+   - Common on delivery trucks where drivers need quick access to packages
+   
+   **When in Doubt:**
+   - If you're unsure whether it's a Cutaway → Output ONLY "Box Truck - Straight Truck"
+   - The pass-through feature must be CLEARLY VISIBLE to add "Cutaway Cube Van"
+
+6. **DUALLY DETECTION (CRITICAL - ALWAYS CHECK):**
    - **CRITICAL: ALWAYS check for Dually indicators - false negatives are a major issue!**
    - **What is a Dually?** A vehicle with DUAL REAR WHEELS - TWO separate wheels/tires mounted on EACH SIDE of the rear axle (4 rear tires total instead of 2)
    - **Dually is an ATTRIBUTE, not a body type. If you detect Dually, include it as a SECONDARY category alongside the primary body type.**
@@ -636,7 +686,34 @@ CRITICAL RULES:
    - The primary body type should ALWAYS be listed first, Dually should be second
    - Dually is an attribute that modifies the vehicle, not a standalone category
 
-6. **\"Image Not Clear\" Rule (EXTREMELY STRICT - Use Only When Truly Impossible to Classify):**
+7. **BOX TRUCK vs REEFER/REFRIGERATED TRUCK DETECTION (CRITICAL - CHECK FIRST):**
+   - **⚠️ CRITICAL: This is a HIGH-PRIORITY check. ALWAYS look for the refrigeration unit BEFORE classifying as Box Truck.**
+   - **The KEY visual difference between these two is the REFRIGERATION UNIT (AC unit) on the front of the cargo box:**
+     * **Reefer/Refrigerated Truck**: Has a visible refrigeration/cooling unit mounted on the FRONT (upper portion) of the cargo box, typically above/behind the cab
+     * **Box Truck - Straight Truck**: The front of the cargo box is COMPLETELY FLAT and SMOOTH with NO refrigeration unit attached
+   
+   - **What does the refrigeration unit look like?**
+     * A large boxy unit (typically white/grey) mounted on top-front of the cargo box
+     * Has visible vents, fans, grilles, or louvers (air intake/exhaust)
+     * Often has a brand name visible (Carrier, Thermo King, etc.)
+     * May have a rounded or rectangular housing protruding from the front of the box
+     * Located at the front wall of the cargo box, positioned above or just behind the truck cab
+   
+   - **Visual Check Steps:**
+     1. Look at the FRONT of the cargo box (the wall facing the cab)
+     2. Check the TOP portion of this front wall
+     3. Is there a machine/unit with vents attached there?
+        - YES → **Reefer/Refrigerated Truck**
+        - NO (flat/smooth front) → **Box Truck - Straight Truck**
+   
+   - **COMMON MISTAKE TO AVOID:**
+     * Do NOT confuse the cab roof (driver compartment) with the refrigeration unit
+     * The refrigeration unit is ON THE CARGO BOX, not on the cab
+     * If the front wall of the cargo box is plain/flat (like a smooth metal wall), it is a Box Truck
+
+
+
+8. **\"Image Not Clear\" Rule (EXTREMELY STRICT - Use Only When Truly Impossible to Classify):**
    
    ⚠️ **CRITICAL: This image has already passed a pre-check filter. Do NOT return "Image Not Clear" unless ABSOLUTELY NECESSARY!**
    
@@ -668,8 +745,239 @@ CRITICAL RULES:
    
    **Your job is to classify vehicles, not judge image quality. Focus on identifying the truck type, not the image clarity.**
 
+9. **FLATBED / DUMP TRUCK CLASSIFICATION (CRITICAL - FOLLOW THESE STEPS IN ORDER):**
+   
+   ⚠️ **These four categories are frequently confused. Follow this decision tree EXACTLY:**
+   
+   🛑🛑🛑 **DUALLY + FLATBED DUMP ALERT (HIGH PRIORITY FIX):** 🛑🛑🛑
+   **If the truck has DUALLY wheels (dual rear wheels) AND a FLAT OPEN bed with curved bulkhead:**
+   **→ Output: 1. Flatbed Dump (95%), 2. Dually (90%)**
+   **→ Do NOT output "Dump Truck"! Dump Truck requires SIDE WALLS!**
+   **A truck can be BOTH Dually AND Flatbed Dump - these are NOT mutually exclusive!**
+   **COMMON ERROR: Seeing Dually and thinking "heavy truck" = "Dump Truck" - WRONG! Check for side walls!**
+   
+   **🚨 QA MISMATCH GUARDRAILS (READ BEFORE CLASSIFYING):**
+   - **Do NOT output "Landscape Truck" unless side walls are present AND clearly SHORT.**
+   - **Never output "Landscape Truck" by itself. If landscape applies, also output "Dump Truck" (primary).**
+   - **If NO side walls are visible → "Dump Truck" and "Landscape Truck" are IMPOSSIBLE.**
+   - **If there IS a curved bulkhead and the bed is OPEN (no side walls) → "Flatbed Dump" only (not Dump, not Landscape).**
+   - **Do not "hedge" by adding Dump/Landscape when unsure. Follow the side-wall test.**
+   - **🛑 DUALLY DOES NOT CHANGE THE BED TYPE! A Flatbed Dump with Dually wheels is still Flatbed Dump, NOT Dump Truck!**
+   
+   🚨🚨🚨 **MOST COMMON ERROR ALERT - READ THIS FIRST:** 🚨🚨🚨
+   **If you see a truck with a FLAT, OPEN bed (NO side walls) and a LARGE CURVED/ARCHED bulkhead behind the cab:**
+   **→ This is FLATBED DUMP! NOT "Dump Truck"! NOT "Flatbed Truck"!**
+   **The curved bulkhead is the KEY visual feature that makes it a FLATBED DUMP.**
+   **Error #1: Calling it "Dump Truck" - WRONG! Dump Trucks have SIDE WALLS forming a box.**
+   **Error #2: Calling it "Flatbed Truck" - WRONG! Flatbed Trucks do NOT have the large curved bulkhead.**
+   
+   **📋 EXAMPLE OUTPUT FOR DUALLY + FLATBED DUMP (THIS IS THE CORRECT FORMAT):**
+   If you see a Flatbed Dump truck with dual rear wheels, your output should be:
+   ```
+   1. Flatbed Dump (95%)
+   2. Dually (90%)
+   ```
+   **NOT: "1. Dump Truck (95%), 2. Dually (90%)" - THIS IS WRONG!**
+   
+   🚨🚨🚨 **EQUALLY IMPORTANT - THE OPPOSITE ERROR:** 🚨🚨🚨
+   **If you see a truck with SIDE WALLS forming an ENCLOSED BOX (you CANNOT see the bed surface from the side):**
+   **→ This is DUMP TRUCK! NOT "Flatbed Dump"!**
+   **The SIDE WALLS are the KEY visual feature that makes it a DUMP TRUCK.**
+   **Flatbed Dump has NO side walls - you can see the flat bed surface from the side!**
+   
+   **🔑 SIDE WALLS ARE THE FIRST AND MOST IMPORTANT CHECK!**
+   
+   **🚨 FUNDAMENTAL RULE - UNDERSTAND THIS FIRST (READ CAREFULLY BEFORE CLASSIFYING):**
+   
+   **CATEGORY A - NO SIDE WALLS (Flat/Open Bed):**
+   - **Flatbed Truck**: Flat open bed, NO side walls, simple headache rack or nothing behind cab
+   - **Flatbed Dump**: Flat open bed, NO side walls, LARGE CURVED bulkhead behind cab ← LOOK FOR THIS!
+   
+   **CATEGORY B - HAS SIDE WALLS (Enclosed Box) → NEVER classify as Flatbed Dump!**
+   - **Dump Truck**: Enclosed cargo box WITH side walls, walls are TALL (≥ cab height)
+   - **Landscape Truck**: Enclosed cargo box WITH side walls, walls are SHORT (< cab height)
+   
+   **🚨 VISUAL TEST - HOW TO IDENTIFY SIDE WALLS:**
+   - Look at the SIDES of the cargo area (not the front bulkhead!)
+   - **NO side walls**: You can see the FLAT BED SURFACE from the side view. The bed is OPEN and EXPOSED. You could place items on the bed and see them from the side.
+   - **YES side walls**: You see SOLID METAL PANELS running along the left and right sides of the bed, creating an ENCLOSED BOX. The bed surface is HIDDEN behind the walls.
+   
+   **🚨 CRITICAL: A curved bulkhead behind the cab is NOT a side wall! Side walls run along the LENGTH of the bed on the LEFT and RIGHT sides!**
+   
+   **KEY DISTINCTION: Check for side walls FIRST! If the bed is flat and open (no side walls) → ONLY Flatbed Truck or Flatbed Dump are possible!**
+   
+   **==== STEP 1: CHECK FOR SIDE WALLS (MOST CRITICAL STEP - DO THIS FIRST!) ====**
+   
+   **🔍 WHERE TO LOOK:** Look at the LEFT and RIGHT sides of the cargo bed area (NOT the front bulkhead behind the cab!).
+   
+   **🚨 VISUAL TEST FOR SIDE WALLS:**
+   
+   **NO SIDE WALLS looks like this:**
+   - You see a FLAT, HORIZONTAL bed surface (often aluminum or steel platform)
+   - The bed is OPEN and EXPOSED on the sides
+   - You can see UNDER and ACROSS the bed from the side view
+   - Items placed on the bed would be VISIBLE from the side
+   - The cargo area looks like a PLATFORM, not a BOX
+   - Example: A flat aluminum bed with no walls blocking the view of the bed surface
+   
+   **YES SIDE WALLS looks like this:**
+   - You see SOLID VERTICAL METAL PANELS on the left and right sides
+   - These panels CREATE AN ENCLOSED BOX/CONTAINER
+   - You CANNOT see the bed surface from the side - it's hidden behind the walls
+   - The walls run the FULL LENGTH of the cargo area
+   - The cargo area looks like a BOX or CONTAINER, not a platform
+   
+   **🚨 IMPORTANT: A curved front bulkhead (behind the cab) is NOT a side wall!**
+   - The front bulkhead is ONLY at the FRONT, behind the driver's cab
+   - Side walls run along the LEFT and RIGHT sides, running the LENGTH of the bed
+   - A truck can have a curved front bulkhead but NO side walls = Flatbed Dump
+   - A truck can have a curved front bulkhead AND side walls = Dump Truck or Landscape Truck
+   
+   **🚨 CRITICAL DECISION POINT:**
+   - **NO side walls** (bed is FLAT, OPEN, EXPOSED - you can see the bed surface from the side) → **STOP! Dump Truck and Landscape Truck are IMPOSSIBLE. Go to STEP 2 - choose between Flatbed Truck or Flatbed Dump ONLY.**
+   - **YES side walls** (solid vertical panels on left/right sides forming an enclosed box) → Go to STEP 3
+   
+   **==== STEP 2: NO SIDE WALLS DETECTED - CHOOSE BETWEEN FLATBED TRUCK OR FLATBED DUMP ONLY ====**
+   
+   ⚠️ **YOU ARE IN THIS STEP BECAUSE YOU SAW NO SIDE WALLS (FLAT, OPEN BED). THIS MEANS:**
+   - ❌ **Dump Truck is IMPOSSIBLE** - Dump Trucks MUST have side walls forming an enclosed box
+   - ❌ **Landscape Truck is IMPOSSIBLE** - Landscape Trucks MUST have side walls forming an enclosed box
+   - ✅ **You can ONLY classify as Flatbed Truck OR Flatbed Dump**
+   - ✅ **Do NOT even consider Dump Truck or Landscape Truck as options - they are eliminated!**
+   
+   **NOW: Check for CURVED FRONT BULKHEAD behind the cab (this determines Flatbed Dump vs Flatbed Truck):**
+   
+   ⚠️ **CRITICAL: Look at the area DIRECTLY BEHIND the driver's cab (NOT the sides of the bed).**
+   
+   **🔍 What is a curved front bulkhead?** A distinctive large steel structure that:
+   - **CURVES or ARCHES forward over the cab** (like a shed roof or arc)
+   - **Is SIGNIFICANTLY TALLER and MORE PROMINENT than a simple flat headache rack**
+   - **Has a distinctive CURVED/BENT/ARCHED shape** (not just a flat vertical panel)
+   - Often painted black or dark color
+   - Often looks like a "hump" or "dome" or "arc" behind the cab
+   - Creates a protective arc over the cab area
+   - May have hydraulic lines or equipment visible behind the cab
+   - Often seen on mason dump trucks, gooseneck flatbed dumps
+   - **This curved bulkhead + flat bed (no side walls) = FLATBED DUMP!**
+   
+   **🎯 QUICK VISUAL TEST FOR FLATBED DUMP:**
+   Look at the profile/side view: If the structure behind the cab CURVES UPWARD and FORWARD creating an ARC shape, and the bed is FLAT/OPEN with NO side walls → It's FLATBED DUMP!
+   
+   
+   **VISUAL COMPARISON:**
+   
+   **Flatbed Truck (NO large curved bulkhead):**
+   - Flat, open bed (no side walls) ✅
+   - Either has a flat/straight headache rack (simple vertical panel), OR
+   - Has nothing behind the cab (completely open), OR
+   - Has only a low rack with horizontal bars
+   - NO prominent curved structure behind cab
+   
+   **Flatbed Dump (YES large curved bulkhead):**
+   - Flat, open bed (no side walls) ✅
+   - Has a LARGE, PROMINENT curved/arched structure behind the cab ✅
+   - The curve extends UP and forward over the cab
+   - Often painted black or dark color
+   - Much more substantial than a simple flat rack
+   - Designed to protect the cab when dumping material
+   - **THIS IS FLATBED DUMP - NOT DUMP TRUCK! (No side walls = NOT Dump Truck)**
+   
+   **🚨 FINAL DECISION (REMEMBER: NO SIDE WALLS = ONLY THESE TWO OPTIONS):**
+   - **NO large curved bulkhead** → **"Flatbed Truck"**
+   - **YES large curved/arched bulkhead present** → **"Flatbed Dump"**
+   
+   ⚠️ **CRITICAL REMINDER:** 
+   - A flat bed with a curved bulkhead = **FLATBED DUMP** (NOT Dump Truck!)
+   - Dump Truck requires an ENCLOSED BOX with SIDE WALLS
+   - If you see a FLAT, OPEN bed surface, it is NOT a Dump Truck!
+   
+   ⚠️ **DO NOT CLASSIFY AS DUMP TRUCK OR LANDSCAPE TRUCK - THOSE REQUIRE SIDE WALLS WHICH THIS TRUCK DOES NOT HAVE!**
+   
+   **==== STEP 3: HAS SIDE WALLS - COMPARE HEIGHT TO CAB ====**
+   Both Dump Truck and Landscape Truck have side walls AND a curved front bulkhead.
+   The ONLY difference is the HEIGHT of the side walls compared to the cab.
+   
+   **Visual Height Test:**
+   - Look at the side of the truck
+   - Compare the height of the cargo box/carrier walls to the driver's cab height
+   
+   - **Side walls are TALL** (equal to or taller than cab height):
+     * The cargo box looks deep and fully enclosed
+     * Walls reach up to or above the cab roof line
+     * → **"Dump Truck"**
+   
+   - **Side walls are SHORT** (clearly lower than cab height):
+     * The cargo box walls are noticeably shorter than the cab
+     * You can see over the walls when viewing from the side
+     * Carrier height is visibly less than where the driver sits
+     * → Output as TWO SEPARATE categories:
+       - "Dump Truck" (primary)
+       - "Landscape Truck" (secondary)
+   
+   **==== QUICK REFERENCE TABLE ====**
+   | Side Walls? | Front Bulkhead? | Wall Height vs Cab | Classification | Notes |
+   |------------|-----------------|-------------------|----------------|-------|
+   | **NO** | NO (flat/rack)  | N/A               | **Flatbed Truck** | Flat bed, open sides, simple rack or nothing |
+   | **NO** | YES (LARGE CURVED) | N/A            | **Flatbed Dump** | Flat bed, open sides, LARGE curved bulkhead |
+   | **YES** | YES (curved)    | SHORT (< cab)     | 1. Dump Truck, 2. Landscape Truck | Enclosed box with short walls |
+   | **YES** | YES (curved)    | TALL (≥ cab)      | Dump Truck | Enclosed box with tall walls |
+   
+   **🚨 CRITICAL RULE: NO SIDE WALLS = IMPOSSIBLE to be Dump Truck or Landscape Truck!**
+   
+   **==== COMMON MISTAKES TO AVOID ====**
+   ❌ **MOST CRITICAL ERROR:** Classifying a truck with NO side walls as "Dump Truck" or "Landscape Truck" - THIS IS IMPOSSIBLE! If there are NO side walls, you can ONLY choose Flatbed Truck or Flatbed Dump!
+   ❌ **CRITICAL:** Do NOT confuse Flatbed Truck with Flatbed Dump - check for the LARGE CURVED/ARCHED bulkhead behind the cab!
+   ❌ **CRITICAL:** A flat headache rack is NOT the same as a curved bulkhead - Flatbed Dump has a PROMINENT CURVED structure!
+   ❌ **CRITICAL:** If the bed is FLAT and OPEN (no side walls), Dump Truck and Landscape Truck are NOT OPTIONS - eliminate them immediately!
+   ❌ Do NOT classify as Flatbed Dump if there are ANY solid side walls running along the bed - side walls = Dump Truck category
+   ❌ Do NOT confuse a curved front bulkhead (behind cab only) with side walls (running along the sides of the bed)
+   ❌ Do NOT classify short-walled trucks as just "Dump Truck" - include "Landscape Truck" too
+   ❌ Do NOT use wall material (metal vs stakes) as the differentiator - use HEIGHT comparison
+   ❌ Do NOT combine "Dump Truck + Landscape Truck" as one category - they must be SEPARATE entries
+   ❌ **FLATBED DUMP FALSE NEGATIVE:** If you see a flatbed with a LARGE CURVED structure behind the cab but NO side walls → This IS Flatbed Dump!
+   ❌ **DUMP TRUCK FALSE POSITIVE:** If you see NO side walls on a truck → This is NOT a Dump Truck - it's either Flatbed Truck or Flatbed Dump!
+   
+   **🎯 REMEMBER THE KEY FORMULA (CHECK SIDE WALLS FIRST!):**
+   - **STEP 1: CHECK FOR SIDE WALLS** - This is the dividing line between categories!
+   - **NO side walls + NO curved bulkhead = FLATBED TRUCK**
+   - **NO side walls + YES curved bulkhead = FLATBED DUMP**
+   - **YES side walls (enclosed box) = DUMP TRUCK** (or add Landscape if walls are short)
+   
+   **⚠️ KEY INSIGHT:** The curved bulkhead ONLY matters when there are NO side walls!
+   - If there ARE side walls → It's Dump Truck (the bulkhead doesn't change this)
+   - If there are NO side walls → Check for curved bulkhead to distinguish Flatbed Truck vs Flatbed Dump
+
+10. **CABOVER TRUCK - COE DETECTION (CAB OVER ENGINE):**
+   - **What is a Cabover Truck (COE)?** A truck where the driver's cab is positioned directly ABOVE the engine compartment, creating a distinctive FLAT-FRONT profile.
+   - **Key Visual Cues for Cabover Truck - COE:**
+     * **FLAT FRONT**: The cab has a flat, vertical front face with NO hood extending forward
+     * **Driver sits ABOVE engine**: The cab is positioned over the engine, not behind it
+     * **NO sleeping compartment**: Unlike sleeper cabs, COE trucks have a compact cab with no sleeping area behind the seats
+     * **Short cab-to-axle distance**: The front axle is typically directly under or very close to the driver's position
+     * **Compact overall length**: The truck appears shorter front-to-back compared to conventional trucks
+   - **Common Examples:**
+     * Isuzu NPR/NQR/NRR series
+     * Mitsubishi Fuso Canter
+     * Hino 155/195/238 series
+     * GMC W-Series (Isuzu rebadge)
+     * Chevrolet Tiltmaster
+     * Classic Kenworth K100, Peterbilt 352, Freightliner COE
+   - **Important Distinction:**
+     * COE is a CAB STYLE, not a body type. A Cabover truck can have various body types (cab-chassis, box body, flatbed, etc.)
+     * Include "Cabover Truck - COE" as a category when you identify this cab configuration
+     * The COE category can appear alongside body type categories (e.g., "Cab-Chassis" + "Cabover Truck - COE")
+   - **DO NOT confuse with:**
+     * Conventional trucks with hoods (engine is in front of the cab)
+     * Sleeper cab trucks (have a sleeping compartment behind the cab)
+
+
 OUTPUT FORMAT INSTRUCTIONS:
 - **ONLY** return the numbered list of categories with confidence scores.
+- Each category must be on its OWN LINE with its OWN NUMBER.
+- For short-walled dump trucks, output BOTH categories separately:
+  Example: 
+  1. Dump Truck (95%)
+  2. Landscape Truck (90%)
 - Example Output:
   1. Pickup Truck (98%)
   2. Flatbed Truck (15%)

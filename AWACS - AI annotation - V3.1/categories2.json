@@ -1,6 +1,6 @@
 {
     "Flatbed Truck": {
-        "definition": "A flat, open platform truck with no fixed sides (other than a headache rack), NO dump capability. Used for hauling large items, building materials, and equipment.",
+        "definition": "A truck with a completely FLAT, OPEN rear bed. KEY FEATURES: 1) NO side walls at all (the bed is fully open on the sides), 2) NO large curved/arched front bulkhead behind the cab - may only have a simple FLAT headache rack (small vertical panel) or nothing at all, 3) NO dump capability. CRITICAL: If you see a LARGE, PROMINENT curved/arched structure behind the cab that bends forward over it, it is NOT a Flatbed Truck - it is a Flatbed Dump. Simple flat headache rack = Flatbed Truck. Large curved bulkhead = Flatbed Dump.",
         "image_base64": ""
     },
     "Pickup Truck": {
@@ -16,15 +16,15 @@
         "image_base64": ""
     },
     "Dump Truck": {
-        "definition": "A heavy-duty truck where ONLY the back gate opens for unloading. All FOUR sides are EQUAL in height and FIXED/RIGID (cannot fold down). Left side, right side, and front wall are WELDED/PERMANENTLY ATTACHED with NO HINGES visible on left or right side panels. Deep, tall cargo box with walls typically at or above cab height. Rear tires are usually LARGER than front tires.",
+        "definition": "A heavy-duty truck with an ENCLOSED CARGO BOX formed by SOLID SIDE WALLS. VISUAL IDENTIFICATION: 1) You CANNOT see the bed surface from the side - it is HIDDEN behind solid metal walls, 2) SOLID VERTICAL METAL PANELS run along the LEFT and RIGHT sides of the cargo area, creating a BOX/CONTAINER, 3) Side walls are TALL - equal to or TALLER than the cab height, 4) The cargo area looks like an enclosed BOX, NOT a flat open platform. CRITICAL DISTINCTION FROM FLATBED DUMP: If you can see the flat bed surface from the side (no side walls blocking the view) = NOT a Dump Truck, it's a Flatbed Dump!",
         "image_base64": ""
     },
     "Flatbed Dump": {
-        "definition": "A truck where THREE liftgates/sides can OPEN or FOLD DOWN: left side + right side + back. The LEFT and RIGHT side gates are clearly SHORTER/SMALLER than the FIXED FRONT WALL of the bed. Side gates height is approximately HALF or less compared to cab height. Has hydraulic dump capability. Equal-sized front and rear tires.",
+        "definition": "A truck with a FLAT, OPEN bed (NO side walls) and a LARGE CURVED bulkhead behind the cab. VISUAL IDENTIFICATION: 1) The bed is FLAT and OPEN - you can see the bed surface from the side (often aluminum or steel platform), NO solid walls on the sides, 2) Behind the cab is a LARGE, PROMINENT curved/arched structure (often black/dark) that bends forward over the cab like a shed-like arc, 3) This is NOT a Dump Truck because there are NO SIDE WALLS - the bed is exposed and open. CRITICAL: If you see a flat bed surface visible from the side + curved bulkhead behind cab = FLATBED DUMP, not Dump Truck!",
         "image_base64": ""
     },
     "Landscape Truck": {
-        "definition": "A truck designed for landscaping tasks with features such as: a TALL MESH CAGE structure surrounding the entire bed; OR THREE fold-down gates where ALL THREE gates are EQUAL in height (sides same height as back); OR a DOVETAIL RAMP BED (rear section angles down for loading equipment); OR a shallow dump body with overall design suited for landscaping tasks.",
+        "definition": "A dump truck with SHORT/LOW side walls designed for landscaping materials. KEY FEATURES: 1) Side walls ARE present but are SHORT - clearly LOWER than the cab/driver compartment height, 2) Curved/arched front bulkhead present behind cab (like Dump Truck), 3) Used for soil, mulch, debris. CRITICAL HEIGHT TEST: If carrier/box height is LESS than cab height = Landscape Truck. If carrier/box height is EQUAL or GREATER than cab height = Dump Truck.",
         "image_base64": ""
     },
     "Contractor Truck": {
@@ -72,7 +72,7 @@
         "image_base64": ""
     },
     "Cutaway Cube Van": {
-        "definition": "A box truck or van built on a van chassis where there is a clear pass-through door/opening from the cab to the cargo box.",
+        "definition": "SECONDARY CATEGORY ONLY - describes a Box Truck built on a van chassis (Ford E-Series, Chevrolet Express, etc.) with a visible pass-through door/opening from the cab to the cargo box. MUST ALWAYS be paired with 'Box Truck - Straight Truck' as the PRIMARY category. Never output alone. The pass-through door allowing driver access to cargo area is the KEY identifier.",
         "image_base64": ""
     },
     "Van": {
