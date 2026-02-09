@@ -104,9 +104,20 @@ def merge_worker_logs(run_ts):
     except Exception as e:
         print(f"❌ Error merging logs: {e}")
 
-def calculate_cost_cents(input_tokens, output_tokens, model_name):
+def calculate_cost_cents(input_tokens, output_tokens, model_name, cached_input_tokens=0):
     """
     Calculates the cost of an API call in Cents based on the specific Gemini model.
+    
+    Args:
+        input_tokens: Total input tokens (including cached)
+        output_tokens: Output tokens
+        model_name: Gemini model name
+        cached_input_tokens: Number of input tokens that were served from cache (default: 0)
+    
+    Note: Cached tokens pricing from official Gemini docs:
+    - Context caching: $0.03 per 1M tokens (text/image/video)
+    - Regular input: $0.30 per 1M tokens (Gemini 2.5 Flash)
+    - This means cached tokens are 90% cheaper than regular input tokens!
     """
     model = model_name.lower()
     
@@ -114,11 +125,13 @@ def calculate_cost_cents(input_tokens, output_tokens, model_name):
     
     # Default: Gemini 2.5 Flash (Standard)
     # Input: $0.30 | Output: $2.50
+    # Cached Input: $0.03 (official Gemini pricing - 90% cheaper!)
     price_input_per_m = 0.30
     price_output_per_m = 2.50
+    price_cached_input_per_m = 0.03  # Official Gemini context caching price
+    
     # price_input_per_m = 0.10# gemini-2.0-flash
     # price_output_per_m = 0.40# gemini-2.0-flash
-    print(f"Calculating cost for {model_name} - Input: {price_input_per_m} | Output: {price_output_per_m}")
 
     # Logic: Gemini 2.5 Flash-8B (Lite)
     # Input: $0.10 | Output: $0.40
@@ -127,10 +140,24 @@ def calculate_cost_cents(input_tokens, output_tokens, model_name):
         # price_output_per_m = 0.40 #gemini-2.5-flash-lite
         price_input_per_m = 0.075 #gemini-2.0-flash-lite
         price_output_per_m = 0.30 #gemini-2.0-flash-lite
-        print(f"Calculating cost for {model_name} - Input: {price_input_per_m} | Output: {price_output_per_m}")
+        price_cached_input_per_m = 0.03  # Same cached price applies to all models
+    
     # --- CALCULATION ---
-    cost_usd = (input_tokens / 1_000_000 * price_input_per_m) + \
+    # Separate cached and non-cached input tokens
+    non_cached_input_tokens = input_tokens - cached_input_tokens
+    
+    # Calculate cost: (non-cached input * regular price) + (cached input * cached price) + (output * output price)
+    cost_usd = (non_cached_input_tokens / 1_000_000 * price_input_per_m) + \
+               (cached_input_tokens / 1_000_000 * price_cached_input_per_m) + \
                (output_tokens / 1_000_000 * price_output_per_m)
+    
+    if cached_input_tokens > 0:
+        savings_usd = (cached_input_tokens / 1_000_000 * (price_input_per_m - price_cached_input_per_m))
+        savings_percent = ((price_input_per_m - price_cached_input_per_m) / price_input_per_m) * 100
+        print(f"Calculating cost for {model_name} - Input: ${price_input_per_m} | Cached: ${price_cached_input_per_m} | Output: ${price_output_per_m}")
+        print(f"   💰 Cache savings: {cached_input_tokens:,} cached tokens saved ${savings_usd*100:.4f}¢ ({savings_percent:.1f}% discount)")
+    else:
+        print(f"Calculating cost for {model_name} - Input: ${price_input_per_m} | Output: ${price_output_per_m}")
                
     # Convert to Cents
     return round(cost_usd * 100, 4)

@@ -95,6 +95,7 @@ def _process_single_ad(ad_row: dict, category_data: dict, rules: dict,
     # --- COST TRACKING ---
     total_in_tokens = 0
     total_out_tokens = 0
+    total_cached_tokens = 0
     # ---------------------
 
     breadcrumb_raw = [ad_row.get(f"Breadcrumb_Top{i}", "") for i in range(1, 4)]
@@ -141,13 +142,14 @@ def _process_single_ad(ad_row: dict, category_data: dict, rules: dict,
         from ai_tool.smart_image_selector import select_best_images
         try:
             # Pass Yoda
-            quick_guess, t_in, t_out = classification.classify_with_gemini_multi(
+            quick_guess, t_in, t_out, t_cached = classification.classify_with_gemini_multi(
                 ", ".join(breadcrumb), category_data, [img_bytes_list[0]],
                 fast_mode=True, key_queue=key_queue, worker_id=worker_id,
                 status_queue=status_queue, ad_id=ad_id, yoda_instance=yoda_instance
             )
             total_in_tokens += t_in
             total_out_tokens += t_out
+            total_cached_tokens += t_cached
             
             if quick_guess and quick_guess[0][1] >= 98.0:
                 utils.log_msg(f" [W-{worker_id}] ⚡ Vision V2 confident. Skipping 2nd call.", worker_id)
@@ -165,21 +167,23 @@ def _process_single_ad(ad_row: dict, category_data: dict, rules: dict,
         result = vision_result
     elif high_accuracy:
         utils.log_msg(f" [W-{worker_id}] HIGH ACCURACY → using 2 images", worker_id)
-        result, t_in, t_out = classification.classify_with_gemini_multi(
+        result, t_in, t_out, t_cached = classification.classify_with_gemini_multi(
             ", ".join(breadcrumb), category_data, img_bytes_list or [b''],
             fast_mode=False, key_queue=key_queue, worker_id=worker_id,
             status_queue=status_queue, ad_id=ad_id, yoda_instance=yoda_instance
         )
         total_in_tokens += t_in
         total_out_tokens += t_out
+        total_cached_tokens += t_cached
     else:
-        result, t_in, t_out = classification.classify_with_gemini_multi(
+        result, t_in, t_out, t_cached = classification.classify_with_gemini_multi(
             ", ".join(breadcrumb), category_data, [img_bytes_list[0]] if img_bytes_list else [b''],
             fast_mode=True, key_queue=key_queue, worker_id=worker_id,
             status_queue=status_queue, ad_id=ad_id, yoda_instance=yoda_instance
         )
         total_in_tokens += t_in
         total_out_tokens += t_out
+        total_cached_tokens += t_cached
 
     if not result:
         final_row = {"Ad ID": ad_id, "Status": "AI Error", "Cost_Cents": 0}
@@ -199,8 +203,8 @@ def _process_single_ad(ad_row: dict, category_data: dict, rules: dict,
         filtered = annotated  # Keep as-is, no filtering needed
         status = data_processing.determine_status(breadcrumb, filtered, annotated, has_images=has_valid_images)
         
-        # Calculate cost before returning
-        cost_cents = utils.calculate_cost_cents(total_in_tokens, total_out_tokens, config.gemini_model)
+        # Calculate cost before returning (with cached token discount)
+        cost_cents = utils.calculate_cost_cents(total_in_tokens, total_out_tokens, config.gemini_model, total_cached_tokens)
         
         final_row = {
             "Ad ID": ad_id,
@@ -363,8 +367,8 @@ def _process_single_ad(ad_row: dict, category_data: dict, rules: dict,
     print(f"[W-{worker_id}] Ad {ad_id}: Final filtered results: {[(c, round(s, 1)) for c, s in filtered[:3]]}")
     print(f"[W-{worker_id}] Ad {ad_id}: Status: {status}")
 
-    # --- CALCULATE COST ---
-    cost_cents = utils.calculate_cost_cents(total_in_tokens, total_out_tokens, config.gemini_model)
+    # --- CALCULATE COST --- (with cached token discount)
+    cost_cents = utils.calculate_cost_cents(total_in_tokens, total_out_tokens, config.gemini_model, total_cached_tokens)
 
     final_row = {
         "Ad ID": ad_id,
