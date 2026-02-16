@@ -56,6 +56,7 @@ app.add_middleware(
 
 # Global state for job management
 jobs: Dict[str, dict] = {}
+jobs_lock = threading.RLock()  # Thread-safe lock for concurrent job dict access
 job_progress: Dict[str, dict] = {}  # Track real-time progress per job
 audit_jobs: Dict[str, dict] = {}  # Track audit jobs
 
@@ -1177,22 +1178,26 @@ async def run_reannotation_pipeline(job_id: str, file_path: str):
 
 def run_db_annotation_pipeline_sync(job_id: str, file_path: str):
     """
-    AI Annotation pipeline for already-fetched database data
+    AI Annotation pipeline for already-fetched database data — BATCH MODE (500 per batch)
     
-    This runs ONLY the annotation phase (no fetching):
-    1. Load already-fetched data from Excel
-    2. Run AI annotation (same as scraping feature)
-    3. Run Dually verification (if enabled)
-    4. Output annotated Excel
+    Processes in batches of 500 listings. Each batch runs the COMPLETE pipeline:
+    1. AI annotation (promo check, refinement, classification)
+    2. Dually verification (if enabled)
+    3. Save batch Excel (downloadable immediately)
+    
+    After all batches: combines into one final complete file.
+    Handles any size: 700→[500,200], 300→[300], 1500→[500,500,500]
     """
+    BATCH_SIZE = 10
     job = jobs[job_id]
     run_ts = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
     
     try:
         print(f"\n{'='*80}")
-        print(f"🤖 AI ANNOTATION JOB {job_id} STARTED (DB Fetched Data)")
+        print(f"🤖 AI ANNOTATION JOB {job_id} STARTED — BATCH MODE (DB Fetched Data)")
         print(f"{'='*80}")
         print(f"   Source File: {os.path.basename(file_path)}")
+        print(f"   Batch Size: {BATCH_SIZE}")
         print(f"{'='*80}\n")
         
         # Load already-fetched data
@@ -1210,81 +1215,173 @@ def run_db_annotation_pipeline_sync(job_id: str, file_path: str):
             if col not in df.columns:
                 df[col] = ""
         
-        job['total_ads'] = int(len(df))
+        total_listings = len(df)
+        job['total_ads'] = int(total_listings)
         
-        print(f"   ✅ Loaded {len(df)} ads from fetched data")
+        # Calculate batch plan
+        num_batches = (total_listings + BATCH_SIZE - 1) // BATCH_SIZE  # ceil division
+        job['batches'] = []
+        job['total_batches'] = num_batches
+        job['current_batch'] = 0
         
-        # ========== PHASE 1: AI ANNOTATION ==========
-        print("\n" + "="*80)
-        print("🤖 PHASE 1: AI ANNOTATION")
-        print("="*80)
-        print(f"   Total Ads to Annotate: {len(df)}")
-        print("="*80 + "\n")
+        print(f"   ✅ Loaded {total_listings} ads from fetched data")
+        print(f"   📦 Will process in {num_batches} batch(es): ", end="")
+        for b in range(num_batches):
+            start = b * BATCH_SIZE
+            end = min(start + BATCH_SIZE, total_listings)
+            print(f"[{start+1}-{end}]", end=" ")
+        print("\n")
         
-        # Run parallel AI annotation
+        # Track totals across all batches
+        total_annotation_cost = 0
+        total_dually_cost = 0
         num_workers = 5
-        print(f"\n🤖 Using {num_workers} parallel workers for AI annotation")
-        result_df = run_parallel_ai(df, run_ts, job_id, num_workers)
         
-        # ========== PHASE 2: DUALLY VERIFICATION ==========
-        dually_verification_cost = 0
-        if not result_df.empty:
-            if config.enable_dually_llm_verification:
-                print("\n" + "="*60)
-                print("🔍 DUALLY LLM VERIFICATION: ✅ ENABLED")
-                print("   Starting post-processing verification for Dually annotations...")
-                print("="*60)
+        os.makedirs(config.output_dir, exist_ok=True)
+        
+        # ========== PROCESS EACH BATCH ==========
+        for batch_idx in range(num_batches):
+            batch_start = batch_idx * BATCH_SIZE
+            batch_end = min(batch_start + BATCH_SIZE, total_listings)
+            batch_df = df.iloc[batch_start:batch_end].copy().reset_index(drop=True)
+            batch_num = batch_idx + 1
+            batch_count = len(batch_df)
+            
+            job['current_batch'] = batch_num
+            
+            print(f"\n{'#'*80}")
+            print(f"📦 BATCH {batch_num}/{num_batches} — Listings {batch_start+1} to {batch_end} ({batch_count} ads)")
+            print(f"{'#'*80}\n")
+            
+            # Use a unique run_ts per batch so session reports don't collide
+            batch_run_ts = f"{run_ts}_batch{batch_num}"
+            
+            # --- PHASE A: AI ANNOTATION for this batch ---
+            print("="*80)
+            print(f"🤖 BATCH {batch_num} — PHASE A: AI ANNOTATION")
+            print("="*80)
+            print(f"   Ads in this batch: {batch_count}")
+            print(f"   Using {num_workers} parallel workers")
+            print("="*80 + "\n")
+            
+            batch_result_df = run_parallel_ai(batch_df, batch_run_ts, job_id, num_workers)
+            
+            # --- PHASE B: DUALLY VERIFICATION for this batch ---
+            batch_dually_cost = 0
+            if not batch_result_df.empty and config.enable_dually_llm_verification:
+                print(f"\n{'='*60}")
+                print(f"🔍 BATCH {batch_num} — PHASE B: DUALLY LLM VERIFICATION")
+                print(f"{'='*60}")
                 m_verify = Manager()
                 yoda_verify = Yoda(config.gemini_api_keys_info, config.rate_limit_rpm, m_verify)
-                result_df, dually_verification_cost = verify_dually_listings(result_df, job_id, yoda_verify)
-            else:
-                print("\n" + "="*60)
-                print("🔍 DUALLY LLM VERIFICATION: ❌ DISABLED (Skipping)")
-                print("="*60)
+                batch_result_df, batch_dually_cost = verify_dually_listings(batch_result_df, job_id, yoda_verify)
+            elif not batch_result_df.empty:
+                print(f"\n   🔍 BATCH {batch_num} — Dually verification: ❌ DISABLED (Skipping)")
+            
+            # --- PHASE C: SAVE BATCH OUTPUT (atomic write) ---
+            print(f"\n{'='*80}")
+            print(f"💾 BATCH {batch_num} — PHASE C: SAVING BATCH OUTPUT")
+            print(f"{'='*80}")
+            
+            batch_filename = f"batch_{batch_num}_{batch_start+1}-{batch_end}_annotated_{run_ts}.xlsx"
+            batch_path = os.path.join(config.output_dir, batch_filename)
+            
+            # Write to temp file first, then move atomically to prevent corruption
+            temp_path = batch_path + '.writing.xlsx'
+            batch_result_df.to_excel(temp_path, index=False)
+            os.replace(temp_path, batch_path)  # Atomic on most filesystems
+            
+            # Calculate batch costs (with empty check)
+            if len(batch_result_df) == 0:
+                print(f"   ⚠️ Batch {batch_num} returned no results!")
+            batch_total_cost = batch_result_df['Cost_Cents'].sum() if 'Cost_Cents' in batch_result_df.columns else 0
+            batch_annotation_cost = batch_total_cost - batch_dually_cost
+            
+            total_annotation_cost += batch_annotation_cost
+            total_dually_cost += batch_dually_cost
+            
+            # Store batch metadata (thread-safe)
+            batch_info = {
+                'batch_index': batch_idx,
+                'batch_num': batch_num,
+                'start': batch_start + 1,
+                'end': batch_end,
+                'row_count': int(len(batch_result_df)),
+                'filename': batch_filename,
+                'file_path': batch_path,
+                'status': 'completed',
+                'annotation_cost': float(batch_annotation_cost),
+                'dually_cost': float(batch_dually_cost),
+                'total_cost': float(batch_total_cost)
+            }
+            with jobs_lock:
+                job['batches'].append(batch_info)
+            
+            # No need to keep batch DataFrame in memory — read from disk when combining
+            del batch_result_df
+            
+            print(f"   ✅ Batch {batch_num} saved: {batch_filename}")
+            print(f"   📊 Rows: {batch_info['row_count']} | Cost: {batch_total_cost:.2f}¢")
+            print(f"   📥 Available for download immediately!")
+            print(f"{'='*80}\n")
+            
+            # Merge session reports for this batch
+            merge_all_session_reports(batch_run_ts)
         
-        # ========== PHASE 3: SAVE FINAL OUTPUT ==========
-        print("\n" + "="*80)
-        print("💾 PHASE 3: SAVING FINAL ANNOTATED OUTPUT")
-        print("="*80)
+        # ========== COMBINE ALL BATCHES INTO FINAL FILE ==========
+        print(f"\n{'='*80}")
+        print(f"💾 COMBINING ALL {num_batches} BATCHES INTO FINAL OUTPUT")
+        print(f"{'='*80}")
+        
+        # Read from saved batch files instead of keeping in memory (memory-efficient)
+        with jobs_lock:
+            batch_files = [b['file_path'] for b in job.get('batches', [])]
+        
+        if batch_files:
+            batch_dfs = [pd.read_excel(f, dtype={"Ad ID": str}) for f in batch_files]
+            final_result_df = pd.concat(batch_dfs, ignore_index=True)
+            del batch_dfs  # Free memory
+        else:
+            final_result_df = pd.DataFrame()
         
         output_filename = f"output_db_annotated_{run_ts}.xlsx"
         output_path = os.path.join(config.output_dir, output_filename)
-        os.makedirs(config.output_dir, exist_ok=True)
-        result_df.to_excel(output_path, index=False)
+        final_result_df.to_excel(output_path, index=False)
         
-        print(f"   ✅ Final annotated file saved: {output_filename}")
-        print(f"   📁 Path: {output_path}")
-        print("="*80 + "\n")
+        total_cost = total_annotation_cost + total_dually_cost
         
         job['status'] = JobStatus.COMPLETED
         job['output_file'] = output_path
         job['output_filename'] = output_filename
+        job['total_cost'] = float(total_cost)
+        job['annotation_cost'] = float(total_annotation_cost)
+        job['dually_verification_cost'] = float(total_dually_cost)
         
-        # Calculate summary costs - Cost_Cents already includes dually verification costs (added in line 737)
-        total_cost_in_df = result_df['Cost_Cents'].sum() if 'Cost_Cents' in result_df.columns else 0
-        annotation_cost_only = total_cost_in_df - dually_verification_cost  # Back-calculate annotation-only cost
-        
-        job['total_cost'] = float(total_cost_in_df)  # Total cost (includes dually costs already)
-        job['annotation_cost'] = float(annotation_cost_only)  # Annotation cost without dually
-        job['dually_verification_cost'] = float(dually_verification_cost)  # Separate dually cost for reporting
-        
-        # Merge session reports
-        merge_all_session_reports(run_ts)
+        print(f"   ✅ Final combined file saved: {output_filename}")
+        print(f"   📊 Total rows: {len(final_result_df)}")
+        print(f"   📁 Path: {output_path}")
+        print(f"{'='*80}\n")
         
         print(f"\n{'='*80}")
-        print(f"🎉 AI ANNOTATION JOB {job_id} COMPLETE!")
+        print(f"🎉 AI ANNOTATION JOB {job_id} COMPLETE! ({num_batches} batches)")
         print(f"{'='*80}")
-        print(f"   🤖 Total Ads Annotated: {len(result_df)}")
-        print(f"   📄 Output File: {output_filename}")
-        print(f"   💰 Annotation Cost: {annotation_cost_only}¢")
-        print(f"   💰 Dually Verification Cost: {dually_verification_cost}¢")
-        print(f"   💰 TOTAL COST: {total_cost_in_df}¢")
+        print(f"   🤖 Total Ads Annotated: {len(final_result_df)}")
+        print(f"   📦 Batches Completed: {num_batches}")
+        print(f"   📄 Final Output File: {output_filename}")
+        print(f"   💰 Annotation Cost: {total_annotation_cost:.2f}¢")
+        print(f"   💰 Dually Verification Cost: {total_dually_cost:.2f}¢")
+        print(f"   💰 TOTAL COST: {total_cost:.2f}¢")
         print(f"{'='*80}\n")
         
     except Exception as e:
         job['status'] = JobStatus.FAILED
         job['error'] = str(e)
-        print(f"\n❌ AI ANNOTATION JOB {job_id} FAILED: {str(e)}\n")
+        job['partial_completion'] = True
+        job['completed_batches'] = len(job.get('batches', []))
+        # Already-completed batches remain in job['batches'] and are still downloadable
+        print(f"\n❌ AI ANNOTATION JOB {job_id} FAILED: {str(e)}")
+        if job.get('batches'):
+            print(f"   📦 {len(job['batches'])} batch(es) completed before failure and are still downloadable.")
         import traceback
         traceback.print_exc()
 
@@ -1686,7 +1783,11 @@ async def get_job(job_id: str):
         "total_cost": job.get('total_cost', 0),
         "annotation_cost": job.get('annotation_cost', 0),
         "dually_verification_cost": job.get('dually_verification_cost', 0),
-        "elapsed": progress.get('elapsed', 0)
+        "elapsed": progress.get('elapsed', 0),
+        # Batch info
+        "batch_count": len(job.get('batches', [])),
+        "current_batch": job.get('current_batch', 0),
+        "total_batches": job.get('total_batches', 0)
     }
     
     # Add dually verification progress if in that phase
@@ -1761,6 +1862,66 @@ async def download_result(job_id: str):
     return FileResponse(
         path=output_path,
         filename=job.get('output_filename', 'output.xlsx'),
+        media_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+    )
+
+
+@app.get("/api/jobs/{job_id}/batches")
+async def get_job_batches(job_id: str):
+    """Get list of completed annotation batches for a job"""
+    if job_id not in jobs:
+        raise HTTPException(status_code=404, detail="Job not found")
+    
+    job = jobs[job_id]
+    batches = job.get('batches', [])
+    
+    return {
+        "job_id": job_id,
+        "total_batches": job.get('total_batches', 0),
+        "current_batch": job.get('current_batch', 0),
+        "completed_batches": len(batches),
+        "batches": [
+            {
+                "batch_index": b['batch_index'],
+                "batch_num": b['batch_num'],
+                "start": b['start'],
+                "end": b['end'],
+                "row_count": b['row_count'],
+                "filename": b['filename'],
+                "status": b['status'],
+                "total_cost": b['total_cost']
+            }
+            for b in batches
+        ]
+    }
+
+
+@app.get("/api/jobs/{job_id}/batches/{batch_index}/download")
+async def download_batch(job_id: str, batch_index: int):
+    """Download a specific batch Excel file"""
+    if job_id not in jobs:
+        raise HTTPException(status_code=404, detail="Job not found")
+    
+    job = jobs[job_id]
+    batches = job.get('batches', [])
+    
+    # Find the batch by index
+    batch = None
+    for b in batches:
+        if b['batch_index'] == batch_index:
+            batch = b
+            break
+    
+    if not batch:
+        raise HTTPException(status_code=404, detail=f"Batch {batch_index} not found")
+    
+    file_path = batch.get('file_path')
+    if not file_path or not os.path.exists(file_path):
+        raise HTTPException(status_code=404, detail="Batch file not found")
+    
+    return FileResponse(
+        path=file_path,
+        filename=batch['filename'],
         media_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
     )
 

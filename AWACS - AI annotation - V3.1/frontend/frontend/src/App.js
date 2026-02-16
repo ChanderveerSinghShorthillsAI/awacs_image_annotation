@@ -1480,7 +1480,9 @@ function App() {
   const [job, setJob] = useState(null);
   const [isUploading, setIsUploading] = useState(false);
   const [config, setConfig] = useState(null);
+  const [batches, setBatches] = useState([]);
   const pollIntervalRef = useRef(null);
+  const lastBatchCountRef = useRef(0);
 
   // Fetch config on mount
   useEffect(() => {
@@ -1490,7 +1492,9 @@ function App() {
       .catch(err => console.error('Failed to fetch config:', err));
   }, []);
 
-  // Poll for job updates
+  const prevStatusRef = useRef(null);
+
+  // Poll for job updates (including batch progress)
   useEffect(() => {
     // Poll during scraping, processing, AND dually verification phases
     if (job?.status === 'scraping' || job?.status === 'processing' || job?.status === 'verifying_dually') {
@@ -1500,9 +1504,33 @@ function App() {
           const data = await res.json();
           setJob(prev => ({ ...prev, ...data }));
 
-          // Stop polling if completed or failed
+          // Fetch batch list when new batches complete OR on status change
+          const newBatchCount = data.batch_count || 0;
+          const statusChanged = data.status !== prevStatusRef.current;
+          prevStatusRef.current = data.status;
+
+          if (newBatchCount > lastBatchCountRef.current || statusChanged) {
+            lastBatchCountRef.current = newBatchCount;
+            try {
+              const batchRes = await fetch(`${API_BASE}/api/jobs/${job.id}/batches`);
+              const batchData = await batchRes.json();
+              setBatches(batchData.batches || []);
+            } catch (batchErr) {
+              console.error('Failed to fetch batches:', batchErr);
+            }
+          }
+
+          // On completion/failure, do a final batch fetch and stop polling
           if (data.status === 'completed' || data.status === 'failed') {
             clearInterval(pollIntervalRef.current);
+            // Final batch list fetch
+            try {
+              const batchRes = await fetch(`${API_BASE}/api/jobs/${job.id}/batches`);
+              const batchData = await batchRes.json();
+              setBatches(batchData.batches || []);
+            } catch (batchErr) {
+              console.error('Failed to fetch final batches:', batchErr);
+            }
           }
         } catch (err) {
           console.error('Failed to poll job status:', err);
@@ -1615,6 +1643,8 @@ function App() {
   // Reset to upload new file
   const handleReset = () => {
     setJob(null);
+    setBatches([]);
+    lastBatchCountRef.current = 0;
   };
 
   // Handle DB Fetch job creation
@@ -1773,8 +1803,89 @@ function App() {
                       <span className="processing-hint">
                         {job.status === 'verifying_dually'
                           ? 'Reducing false positives. Almost done!'
-                          : 'This may take a few minutes. Please wait...'}
+                          : job.total_batches > 0
+                            ? `Processing in batches of 500. Batch ${job.current_batch || 1} of ${job.total_batches}. Completed batches will appear below for download.`
+                            : 'This may take a few minutes. Please wait...'}
                       </span>
+                    </div>
+                  )}
+
+                  {/* Batch Downloads List — shown during processing and after completion */}
+                  {batches.length > 0 && (
+                    <div style={{
+                      marginTop: '1.5rem',
+                      padding: '1rem',
+                      background: 'rgba(0, 0, 0, 0.3)',
+                      borderRadius: 'var(--border-radius)',
+                      border: '1px solid rgba(76, 175, 80, 0.3)'
+                    }}>
+                      <h4 style={{ margin: '0 0 0.75rem 0', color: '#4caf50', fontSize: '1rem' }}>
+                        📦 Completed Batches ({batches.length}/{job.total_batches || '?'})
+                      </h4>
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
+                        {batches.map((batch) => (
+                          <div
+                            key={batch.batch_index}
+                            style={{
+                              display: 'flex',
+                              alignItems: 'center',
+                              justifyContent: 'space-between',
+                              padding: '0.6rem 1rem',
+                              background: 'rgba(76, 175, 80, 0.12)',
+                              border: '1px solid rgba(76, 175, 80, 0.25)',
+                              borderRadius: '8px',
+                              fontSize: '0.9rem'
+                            }}
+                          >
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', flexWrap: 'wrap' }}>
+                              <span style={{ color: '#4caf50', fontWeight: '700' }}>✅ Batch {batch.batch_num}</span>
+                              <span style={{ color: '#a8a8a8' }}>Listings {batch.start}–{batch.end}</span>
+                              <span style={{ color: '#b388ff', fontSize: '0.85rem' }}>{batch.row_count} rows</span>
+                              {batch.total_cost > 0 && (
+                                <span style={{ color: '#ffb74d', fontSize: '0.8rem' }}>💰 {batch.total_cost.toFixed(1)}¢</span>
+                              )}
+                            </div>
+                            <button
+                              onClick={() => window.open(`${API_BASE}/api/jobs/${job.id}/batches/${batch.batch_index}/download`, '_blank')}
+                              style={{
+                                background: 'linear-gradient(135deg, #4caf50, #388e3c)',
+                                color: '#fff',
+                                border: 'none',
+                                padding: '0.4rem 1rem',
+                                borderRadius: '6px',
+                                cursor: 'pointer',
+                                fontWeight: '600',
+                                fontSize: '0.85rem',
+                                display: 'flex',
+                                alignItems: 'center',
+                                gap: '0.4rem',
+                                transition: 'all 0.2s ease',
+                                boxShadow: '0 2px 6px rgba(76, 175, 80, 0.3)',
+                                whiteSpace: 'nowrap'
+                              }}
+                            >
+                              📥 Download
+                            </button>
+                          </div>
+                        ))}
+                      </div>
+                      {job.current_batch > batches.length && job.total_batches > batches.length && (
+                        <div style={{
+                          marginTop: '0.5rem',
+                          padding: '0.5rem 1rem',
+                          background: 'rgba(255, 152, 0, 0.12)',
+                          border: '1px solid rgba(255, 152, 0, 0.25)',
+                          borderRadius: '8px',
+                          fontSize: '0.85rem',
+                          color: '#ffb74d',
+                          display: 'flex',
+                          alignItems: 'center',
+                          gap: '0.5rem'
+                        }}>
+                          <div className="btn-spinner" style={{ width: '14px', height: '14px', borderWidth: '2px' }}></div>
+                          Batch {job.current_batch} of {job.total_batches} processing...
+                        </div>
+                      )}
                     </div>
                   )}
 
