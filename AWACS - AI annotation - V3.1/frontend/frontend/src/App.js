@@ -397,13 +397,39 @@ const PreviewModal = ({ fetchResult, onClose, onStartAnnotation, isStarting }) =
           {/* Message */}
           <div className="preview-message">
             <p>✅ Data has been fetched and saved to: <strong>{fetchResult.filename}</strong></p>
-            <p>Click "Start Annotation" to begin AI classification of these trucks.</p>
+            <p>Click "Download Data" to save the fetched data, or "Start Annotation" to begin AI classification.</p>
           </div>
         </div>
 
         <div className="modal-footer">
           <button className="btn btn-secondary" onClick={onClose} disabled={isStarting}>
             <span>❌</span> Cancel
+          </button>
+          <button
+            className="btn btn-download"
+            onClick={() => {
+              const fetchId = fetchResult.fetch_id;
+              if (fetchId) {
+                window.open(`${API_BASE}/api/db-fetch/${fetchId}/download`, '_blank');
+              }
+            }}
+            style={{
+              background: 'linear-gradient(135deg, #2196F3, #1976D2)',
+              color: '#fff',
+              border: 'none',
+              padding: '0.75rem 1.5rem',
+              borderRadius: '8px',
+              cursor: 'pointer',
+              fontWeight: '600',
+              fontSize: '0.95rem',
+              display: 'flex',
+              alignItems: 'center',
+              gap: '0.5rem',
+              transition: 'all 0.2s ease',
+              boxShadow: '0 2px 8px rgba(33, 150, 243, 0.3)'
+            }}
+          >
+            <span>📥</span> Download Data
           </button>
           <button
             className="btn btn-primary"
@@ -444,7 +470,7 @@ const DBFetchSection = ({ onJobCreated }) => {
   const [error, setError] = useState(null);
   const [credentialsFromConfig, setCredentialsFromConfig] = useState(false);
   const [selectedCategories, setSelectedCategories] = useState([]);
-  
+
   // State for Ad IDs mode
   const [uploadedFile, setUploadedFile] = useState(null);
   const [isUploadingIds, setIsUploadingIds] = useState(false);
@@ -692,10 +718,10 @@ const DBFetchSection = ({ onJobCreated }) => {
 
       const data = await res.json();
       const fetchId = data.fetch_id;
-      
+
       // Poll for fetch status
       console.log(`🔄 Polling for fetch status (ID: ${fetchId})...`);
-      
+
       const pollInterval = setInterval(async () => {
         try {
           const statusRes = await fetch(`${API_BASE}/api/db-fetch-by-ids/${fetchId}/status`);
@@ -703,10 +729,10 @@ const DBFetchSection = ({ onJobCreated }) => {
             clearInterval(pollInterval);
             throw new Error('Failed to check fetch status');
           }
-          
+
           const statusData = await statusRes.json();
           console.log(`📊 Fetch status: ${statusData.status}`);
-          
+
           if (statusData.status === 'fetched') {
             // Fetch complete! Show preview modal
             clearInterval(pollInterval);
@@ -719,7 +745,7 @@ const DBFetchSection = ({ onJobCreated }) => {
             throw new Error(statusData.error || 'Fetch failed');
           }
           // If still 'fetching', keep polling
-          
+
         } catch (err) {
           clearInterval(pollInterval);
           setError(err.message);
@@ -840,24 +866,24 @@ const DBFetchSection = ({ onJobCreated }) => {
               cursor: uploadedFile ? 'default' : 'pointer',
               transition: 'all 0.2s ease'
             }}
-            onClick={() => !uploadedFile && !isUploadingIds && document.getElementById('adids-file-input').click()}
-            onDragOver={(e) => {
-              e.preventDefault();
-              e.currentTarget.style.borderColor = 'var(--accent-green)';
-              e.currentTarget.style.background = 'rgba(76, 175, 80, 0.1)';
-            }}
-            onDragLeave={(e) => {
-              e.currentTarget.style.borderColor = 'rgba(76, 175, 80, 0.4)';
-              e.currentTarget.style.background = 'rgba(0, 0, 0, 0.2)';
-            }}
-            onDrop={(e) => {
-              e.preventDefault();
-              e.currentTarget.style.borderColor = 'rgba(76, 175, 80, 0.4)';
-              e.currentTarget.style.background = 'rgba(0, 0, 0, 0.2)';
-              if (!uploadedFile && !isUploadingIds && e.dataTransfer.files[0]) {
-                handleUploadAdIds(e.dataTransfer.files[0]);
-              }
-            }}
+              onClick={() => !uploadedFile && !isUploadingIds && document.getElementById('adids-file-input').click()}
+              onDragOver={(e) => {
+                e.preventDefault();
+                e.currentTarget.style.borderColor = 'var(--accent-green)';
+                e.currentTarget.style.background = 'rgba(76, 175, 80, 0.1)';
+              }}
+              onDragLeave={(e) => {
+                e.currentTarget.style.borderColor = 'rgba(76, 175, 80, 0.4)';
+                e.currentTarget.style.background = 'rgba(0, 0, 0, 0.2)';
+              }}
+              onDrop={(e) => {
+                e.preventDefault();
+                e.currentTarget.style.borderColor = 'rgba(76, 175, 80, 0.4)';
+                e.currentTarget.style.background = 'rgba(0, 0, 0, 0.2)';
+                if (!uploadedFile && !isUploadingIds && e.dataTransfer.files[0]) {
+                  handleUploadAdIds(e.dataTransfer.files[0]);
+                }
+              }}
             >
               <input
                 id="adids-file-input"
@@ -867,7 +893,7 @@ const DBFetchSection = ({ onJobCreated }) => {
                 style={{ display: 'none' }}
                 disabled={isUploadingIds || uploadedFile}
               />
-              
+
               {isUploadingIds ? (
                 <>
                   <div className="btn-spinner" style={{ margin: '0 auto 1rem' }}></div>
@@ -908,351 +934,351 @@ const DBFetchSection = ({ onJobCreated }) => {
       {/* Fetch by Date Range Mode (existing) */}
       {fetchMode === 'daterange' && (
         <>
-      {/* Credentials Section */}
-      <div className="dbfetch-card">
-        <h3>🔑 API Credentials</h3>
-        {credentialsFromConfig && (
-          <div className="config-loaded-badge">
-            ✅ Credentials loaded from config.ini (you can override them below)
-          </div>
-        )}
-        <div className="form-grid">
-          <div className="form-group">
-            <label>Client ID {credentialsFromConfig && <span className="config-indicator">📋 from config</span>}</label>
-            <input
-              type="text"
-              value={clientId}
-              onChange={(e) => {
-                setClientId(e.target.value);
-                setCredentialsFromConfig(false);
-              }}
-              placeholder="Enter client ID or load from config.ini"
-              className="form-input"
-            />
-          </div>
-          <div className="form-group">
-            <label>Client Secret {credentialsFromConfig && <span className="config-indicator">🔒 using config</span>}</label>
-            <input
-              type="password"
-              value={clientSecret}
-              onChange={(e) => {
-                setClientSecret(e.target.value);
-                setCredentialsFromConfig(false);
-              }}
-              placeholder={credentialsFromConfig ? "••••••••••••••••  (stored in config)" : "Enter client secret or add to config.ini"}
-              className="form-input"
-              disabled={credentialsFromConfig}
-            />
+          {/* Credentials Section */}
+          <div className="dbfetch-card">
+            <h3>🔑 API Credentials</h3>
             {credentialsFromConfig && (
-              <small className="form-hint" style={{ color: 'var(--accent-green)' }}>
-                ✅ Using secure credentials from config.ini
-              </small>
+              <div className="config-loaded-badge">
+                ✅ Credentials loaded from config.ini (you can override them below)
+              </div>
+            )}
+            <div className="form-grid">
+              <div className="form-group">
+                <label>Client ID {credentialsFromConfig && <span className="config-indicator">📋 from config</span>}</label>
+                <input
+                  type="text"
+                  value={clientId}
+                  onChange={(e) => {
+                    setClientId(e.target.value);
+                    setCredentialsFromConfig(false);
+                  }}
+                  placeholder="Enter client ID or load from config.ini"
+                  className="form-input"
+                />
+              </div>
+              <div className="form-group">
+                <label>Client Secret {credentialsFromConfig && <span className="config-indicator">🔒 using config</span>}</label>
+                <input
+                  type="password"
+                  value={clientSecret}
+                  onChange={(e) => {
+                    setClientSecret(e.target.value);
+                    setCredentialsFromConfig(false);
+                  }}
+                  placeholder={credentialsFromConfig ? "••••••••••••••••  (stored in config)" : "Enter client secret or add to config.ini"}
+                  className="form-input"
+                  disabled={credentialsFromConfig}
+                />
+                {credentialsFromConfig && (
+                  <small className="form-hint" style={{ color: 'var(--accent-green)' }}>
+                    ✅ Using secure credentials from config.ini
+                  </small>
+                )}
+              </div>
+              <div className="form-group">
+                <label>Grant Type {credentialsFromConfig && <span className="config-indicator">📋 from config</span>}</label>
+                <input
+                  type="text"
+                  value={grantType}
+                  onChange={(e) => setGrantType(e.target.value)}
+                  placeholder="client_credentials"
+                  className="form-input"
+                />
+              </div>
+            </div>
+          </div>
+
+          {/* Date Range Section */}
+          <div className="dbfetch-card">
+            <h3>📅 Date Range</h3>
+            {fromTimestamp && toTimestamp && fromTimestamp === toTimestamp && (
+              <div style={{
+                padding: '0.75rem',
+                background: 'rgba(50, 205, 50, 0.15)',
+                border: '1px solid rgba(50, 205, 50, 0.4)',
+                borderRadius: 'var(--border-radius)',
+                marginBottom: '1rem',
+                fontSize: '0.85rem',
+                color: 'var(--accent-green)'
+              }}>
+                ℹ️ Same date selected - will automatically fetch all trucks for the full 24-hour period.
+              </div>
+            )}
+            <div className="form-grid">
+              <div className="form-group">
+                <label>From Date</label>
+                <input
+                  type="date"
+                  value={timestampToDate(fromTimestamp)}
+                  onChange={(e) => setFromTimestamp(dateToTimestamp(e.target.value))}
+                  className="form-input"
+                />
+                <small className="form-hint">Unix: {fromTimestamp || 'Not set'}</small>
+              </div>
+              <div className="form-group">
+                <label>To Date</label>
+                <input
+                  type="date"
+                  value={timestampToDate(toTimestamp)}
+                  onChange={(e) => setToTimestamp(dateToTimestamp(e.target.value))}
+                  className="form-input"
+                />
+                <small className="form-hint">Unix: {toTimestamp || 'Not set'}</small>
+              </div>
+            </div>
+            <div className="form-row">
+              <div className="form-group full-width">
+                <label>Or Enter Timestamps Manually</label>
+                <div className="timestamp-inputs">
+                  <input
+                    type="number"
+                    value={fromTimestamp}
+                    onChange={(e) => setFromTimestamp(e.target.value)}
+                    placeholder="From timestamp (e.g., 1768262400)"
+                    className="form-input"
+                  />
+                  <span className="separator">→</span>
+                  <input
+                    type="number"
+                    value={toTimestamp}
+                    onChange={(e) => setToTimestamp(e.target.value)}
+                    placeholder="To timestamp (e.g., 1768348799)"
+                    className="form-input"
+                  />
+                </div>
+                <small className="form-hint" style={{ marginTop: '0.5rem', display: 'block' }}>
+                  💡 Tip: Use <a href="https://www.unixtimestamp.com/" target="_blank" rel="noopener noreferrer" style={{ color: 'var(--accent-orange)' }}>unixtimestamp.com</a> to convert dates. Use the same timestamp for both to get a full day, or different timestamps for a range.
+                </small>
+                {fromTimestamp && toTimestamp && (() => {
+                  // Calculate the ACTUAL timestamps that backend will use
+                  // If same timestamp, backend expands max to include full 24 hours (+86399 seconds)
+                  const actualFromTs = parseInt(fromTimestamp);
+                  const actualToTs = fromTimestamp === toTimestamp
+                    ? parseInt(toTimestamp) + 86399  // Add 23:59:59 for full day coverage
+                    : parseInt(toTimestamp);
+
+                  return (
+                    <div style={{
+                      marginTop: '0.75rem',
+                      padding: '0.75rem',
+                      background: 'rgba(100, 150, 255, 0.1)',
+                      border: '1px solid rgba(100, 150, 255, 0.3)',
+                      borderRadius: '4px',
+                      fontSize: '0.85rem'
+                    }}>
+                      <div style={{ marginBottom: '0.5rem', fontWeight: '600', color: 'var(--accent-blue)' }}>
+                        🕐 <strong>Exact Fetch Time Range:</strong>
+                      </div>
+                      <div style={{
+                        display: 'flex',
+                        flexDirection: 'column',
+                        gap: '0.4rem',
+                        padding: '0.5rem',
+                        background: 'rgba(0, 0, 0, 0.2)',
+                        borderRadius: '4px',
+                        fontFamily: 'monospace'
+                      }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                          <span style={{ color: 'var(--accent-green)', fontWeight: '600' }}>FROM:</span>
+                          <span>{timestampToDetailedDateTime(actualFromTs.toString())}</span>
+                        </div>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                          <span style={{ color: 'var(--accent-orange)', fontWeight: '600' }}>TO:</span>
+                          <span style={{ marginLeft: '1.1rem' }}>{timestampToDetailedDateTime(actualToTs.toString())}</span>
+                        </div>
+                      </div>
+                      <div style={{ marginTop: '0.5rem', fontSize: '0.75rem', color: 'var(--text-muted)' }}>
+                        {fromTimestamp === toTimestamp
+                          ? '✅ Same date selected - automatically expanded to full 24-hour period (00:00:00 to 23:59:59 UTC)'
+                          : 'Data will be fetched for ads updated within this exact time window.'
+                        }
+                      </div>
+                    </div>
+                  );
+                })()}
+              </div>
+            </div>
+          </div>
+          {/* Category Filter Section */}
+          <div className="dbfetch-card">
+            <h3>🏷️ Category Filter (Optional)</h3>
+            <p style={{ fontSize: '0.85rem', color: 'var(--text-muted)', marginBottom: '0.75rem' }}>
+              Select specific categories to fetch. Leave empty to fetch all categories.
+            </p>
+
+            {/* Quick actions */}
+            <div style={{ marginBottom: '0.75rem', display: 'flex', gap: '0.5rem' }}>
+              <button
+                className="range-btn"
+                style={{ padding: '0.4rem 0.75rem', fontSize: '0.8rem' }}
+                onClick={() => setSelectedCategories([...AVAILABLE_CATEGORIES])}
+              >
+                Select All
+              </button>
+              <button
+                className="range-btn"
+                style={{ padding: '0.4rem 0.75rem', fontSize: '0.8rem' }}
+                onClick={() => setSelectedCategories([])}
+              >
+                Clear All
+              </button>
+              {selectedCategories.length > 0 && (
+                <span style={{
+                  marginLeft: 'auto',
+                  color: 'var(--accent-orange)',
+                  fontSize: '0.85rem',
+                  fontWeight: '600'
+                }}>
+                  {selectedCategories.length} selected
+                </span>
+              )}
+            </div>
+
+            {/* Category checkboxes */}
+            <div style={{
+              display: 'grid',
+              gridTemplateColumns: 'repeat(auto-fill, minmax(200px, 1fr))',
+              gap: '0.5rem',
+              maxHeight: '250px',
+              overflowY: 'auto',
+              padding: '0.5rem',
+              background: 'rgba(0, 0, 0, 0.2)',
+              borderRadius: '4px'
+            }}>
+              {AVAILABLE_CATEGORIES.map(category => (
+                <label
+                  key={category}
+                  style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '0.5rem',
+                    padding: '0.4rem 0.5rem',
+                    background: selectedCategories.includes(category)
+                      ? 'rgba(255, 165, 0, 0.2)'
+                      : 'transparent',
+                    borderRadius: '4px',
+                    cursor: 'pointer',
+                    fontSize: '0.85rem',
+                    border: selectedCategories.includes(category)
+                      ? '1px solid rgba(255, 165, 0, 0.4)'
+                      : '1px solid transparent',
+                    transition: 'all 0.2s ease'
+                  }}
+                >
+                  <input
+                    type="checkbox"
+                    checked={selectedCategories.includes(category)}
+                    onChange={(e) => {
+                      if (e.target.checked) {
+                        setSelectedCategories([...selectedCategories, category]);
+                      } else {
+                        setSelectedCategories(selectedCategories.filter(c => c !== category));
+                      }
+                    }}
+                    style={{ accentColor: 'var(--accent-orange)' }}
+                  />
+                  {category}
+                </label>
+              ))}
+            </div>
+
+            {selectedCategories.length > 0 && (
+              <div style={{
+                marginTop: '0.75rem',
+                padding: '0.5rem',
+                background: 'rgba(255, 165, 0, 0.15)',
+                border: '1px solid rgba(255, 165, 0, 0.3)',
+                borderRadius: '4px',
+                fontSize: '0.85rem'
+              }}>
+                <strong style={{ color: 'var(--accent-orange)' }}>🔍 Filtering by:</strong>
+                <span style={{ marginLeft: '0.5rem' }}>
+                  {selectedCategories.slice(0, 3).join(', ')}
+                  {selectedCategories.length > 3 && ` +${selectedCategories.length - 3} more`}
+                </span>
+              </div>
             )}
           </div>
-          <div className="form-group">
-            <label>Grant Type {credentialsFromConfig && <span className="config-indicator">📋 from config</span>}</label>
-            <input
-              type="text"
-              value={grantType}
-              onChange={(e) => setGrantType(e.target.value)}
-              placeholder="client_credentials"
-              className="form-input"
-            />
-          </div>
-        </div>
-      </div>
 
-      {/* Date Range Section */}
-      <div className="dbfetch-card">
-        <h3>📅 Date Range</h3>
-        {fromTimestamp && toTimestamp && fromTimestamp === toTimestamp && (
-          <div style={{
-            padding: '0.75rem',
-            background: 'rgba(50, 205, 50, 0.15)',
-            border: '1px solid rgba(50, 205, 50, 0.4)',
-            borderRadius: 'var(--border-radius)',
-            marginBottom: '1rem',
-            fontSize: '0.85rem',
-            color: 'var(--accent-green)'
-          }}>
-            ℹ️ Same date selected - will automatically fetch all trucks for the full 24-hour period.
-          </div>
-        )}
-        <div className="form-grid">
-          <div className="form-group">
-            <label>From Date</label>
-            <input
-              type="date"
-              value={timestampToDate(fromTimestamp)}
-              onChange={(e) => setFromTimestamp(dateToTimestamp(e.target.value))}
-              className="form-input"
-            />
-            <small className="form-hint">Unix: {fromTimestamp || 'Not set'}</small>
-          </div>
-          <div className="form-group">
-            <label>To Date</label>
-            <input
-              type="date"
-              value={timestampToDate(toTimestamp)}
-              onChange={(e) => setToTimestamp(dateToTimestamp(e.target.value))}
-              className="form-input"
-            />
-            <small className="form-hint">Unix: {toTimestamp || 'Not set'}</small>
-          </div>
-        </div>
-        <div className="form-row">
-          <div className="form-group full-width">
-            <label>Or Enter Timestamps Manually</label>
-            <div className="timestamp-inputs">
-              <input
-                type="number"
-                value={fromTimestamp}
-                onChange={(e) => setFromTimestamp(e.target.value)}
-                placeholder="From timestamp (e.g., 1768262400)"
-                className="form-input"
-              />
-              <span className="separator">→</span>
-              <input
-                type="number"
-                value={toTimestamp}
-                onChange={(e) => setToTimestamp(e.target.value)}
-                placeholder="To timestamp (e.g., 1768348799)"
-                className="form-input"
-              />
+          {/* Listing Range Section */}
+          <div className="dbfetch-card">
+            <h3>📊 Listing Range</h3>
+            <div className="listing-range-options">
+              <button
+                className={`range-btn ${listingStart === '0' && listingEnd === '1000' ? 'active' : ''}`}
+                onClick={() => { setListingStart('0'); setListingEnd('1000'); }}
+              >
+                First 1000 (0-1000)
+              </button>
+              <button
+                className={`range-btn ${listingStart === '1000' && listingEnd === '2000' ? 'active' : ''}`}
+                onClick={() => { setListingStart('1000'); setListingEnd('2000'); }}
+              >
+                1000-2000
+              </button>
+              <button
+                className={`range-btn ${listingStart === '2000' && listingEnd === '3000' ? 'active' : ''}`}
+                onClick={() => { setListingStart('2000'); setListingEnd('3000'); }}
+              >
+                2000-3000
+              </button>
             </div>
-            <small className="form-hint" style={{ marginTop: '0.5rem', display: 'block' }}>
-              💡 Tip: Use <a href="https://www.unixtimestamp.com/" target="_blank" rel="noopener noreferrer" style={{ color: 'var(--accent-orange)' }}>unixtimestamp.com</a> to convert dates. Use the same timestamp for both to get a full day, or different timestamps for a range.
-            </small>
-            {fromTimestamp && toTimestamp && (() => {
-              // Calculate the ACTUAL timestamps that backend will use
-              // If same timestamp, backend expands max to include full 24 hours (+86399 seconds)
-              const actualFromTs = parseInt(fromTimestamp);
-              const actualToTs = fromTimestamp === toTimestamp
-                ? parseInt(toTimestamp) + 86399  // Add 23:59:59 for full day coverage
-                : parseInt(toTimestamp);
-
-              return (
-                <div style={{
-                  marginTop: '0.75rem',
-                  padding: '0.75rem',
-                  background: 'rgba(100, 150, 255, 0.1)',
-                  border: '1px solid rgba(100, 150, 255, 0.3)',
-                  borderRadius: '4px',
-                  fontSize: '0.85rem'
-                }}>
-                  <div style={{ marginBottom: '0.5rem', fontWeight: '600', color: 'var(--accent-blue)' }}>
-                    🕐 <strong>Exact Fetch Time Range:</strong>
-                  </div>
-                  <div style={{
-                    display: 'flex',
-                    flexDirection: 'column',
-                    gap: '0.4rem',
-                    padding: '0.5rem',
-                    background: 'rgba(0, 0, 0, 0.2)',
-                    borderRadius: '4px',
-                    fontFamily: 'monospace'
-                  }}>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-                      <span style={{ color: 'var(--accent-green)', fontWeight: '600' }}>FROM:</span>
-                      <span>{timestampToDetailedDateTime(actualFromTs.toString())}</span>
-                    </div>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-                      <span style={{ color: 'var(--accent-orange)', fontWeight: '600' }}>TO:</span>
-                      <span style={{ marginLeft: '1.1rem' }}>{timestampToDetailedDateTime(actualToTs.toString())}</span>
-                    </div>
-                  </div>
-                  <div style={{ marginTop: '0.5rem', fontSize: '0.75rem', color: 'var(--text-muted)' }}>
-                    {fromTimestamp === toTimestamp
-                      ? '✅ Same date selected - automatically expanded to full 24-hour period (00:00:00 to 23:59:59 UTC)'
-                      : 'Data will be fetched for ads updated within this exact time window.'
-                    }
-                  </div>
-                </div>
-              );
-            })()}
+            <div className="form-row">
+              <div className="form-group">
+                <label>Custom Start</label>
+                <input
+                  type="number"
+                  value={listingStart}
+                  onChange={(e) => setListingStart(e.target.value)}
+                  placeholder="0"
+                  className="form-input"
+                  min="0"
+                />
+              </div>
+              <div className="form-group">
+                <label>Custom End</label>
+                <input
+                  type="number"
+                  value={listingEnd}
+                  onChange={(e) => setListingEnd(e.target.value)}
+                  placeholder="1000"
+                  className="form-input"
+                  min="0"
+                />
+              </div>
+            </div>
+            <div className="listing-count">
+              Total Listings: {parseInt(listingEnd || 0) - parseInt(listingStart || 0)}
+            </div>
           </div>
-        </div>
-      </div>
-      {/* Category Filter Section */}
-      <div className="dbfetch-card">
-        <h3>🏷️ Category Filter (Optional)</h3>
-        <p style={{ fontSize: '0.85rem', color: 'var(--text-muted)', marginBottom: '0.75rem' }}>
-          Select specific categories to fetch. Leave empty to fetch all categories.
-        </p>
 
-        {/* Quick actions */}
-        <div style={{ marginBottom: '0.75rem', display: 'flex', gap: '0.5rem' }}>
-          <button
-            className="range-btn"
-            style={{ padding: '0.4rem 0.75rem', fontSize: '0.8rem' }}
-            onClick={() => setSelectedCategories([...AVAILABLE_CATEGORIES])}
-          >
-            Select All
-          </button>
-          <button
-            className="range-btn"
-            style={{ padding: '0.4rem 0.75rem', fontSize: '0.8rem' }}
-            onClick={() => setSelectedCategories([])}
-          >
-            Clear All
-          </button>
-          {selectedCategories.length > 0 && (
-            <span style={{
-              marginLeft: 'auto',
-              color: 'var(--accent-orange)',
-              fontSize: '0.85rem',
-              fontWeight: '600'
-            }}>
-              {selectedCategories.length} selected
-            </span>
-          )}
-        </div>
-
-        {/* Category checkboxes */}
-        <div style={{
-          display: 'grid',
-          gridTemplateColumns: 'repeat(auto-fill, minmax(200px, 1fr))',
-          gap: '0.5rem',
-          maxHeight: '250px',
-          overflowY: 'auto',
-          padding: '0.5rem',
-          background: 'rgba(0, 0, 0, 0.2)',
-          borderRadius: '4px'
-        }}>
-          {AVAILABLE_CATEGORIES.map(category => (
-            <label
-              key={category}
-              style={{
-                display: 'flex',
-                alignItems: 'center',
-                gap: '0.5rem',
-                padding: '0.4rem 0.5rem',
-                background: selectedCategories.includes(category)
-                  ? 'rgba(255, 165, 0, 0.2)'
-                  : 'transparent',
-                borderRadius: '4px',
-                cursor: 'pointer',
-                fontSize: '0.85rem',
-                border: selectedCategories.includes(category)
-                  ? '1px solid rgba(255, 165, 0, 0.4)'
-                  : '1px solid transparent',
-                transition: 'all 0.2s ease'
-              }}
+          {/* Fetch Button */}
+          <div className="dbfetch-actions">
+            <button
+              className={`btn btn-primary ${canFetch ? '' : 'disabled'}`}
+              onClick={handleFetch}
+              disabled={!canFetch}
             >
-              <input
-                type="checkbox"
-                checked={selectedCategories.includes(category)}
-                onChange={(e) => {
-                  if (e.target.checked) {
-                    setSelectedCategories([...selectedCategories, category]);
-                  } else {
-                    setSelectedCategories(selectedCategories.filter(c => c !== category));
-                  }
-                }}
-                style={{ accentColor: 'var(--accent-orange)' }}
-              />
-              {category}
-            </label>
-          ))}
-        </div>
-
-        {selectedCategories.length > 0 && (
-          <div style={{
-            marginTop: '0.75rem',
-            padding: '0.5rem',
-            background: 'rgba(255, 165, 0, 0.15)',
-            border: '1px solid rgba(255, 165, 0, 0.3)',
-            borderRadius: '4px',
-            fontSize: '0.85rem'
-          }}>
-            <strong style={{ color: 'var(--accent-orange)' }}>🔍 Filtering by:</strong>
-            <span style={{ marginLeft: '0.5rem' }}>
-              {selectedCategories.slice(0, 3).join(', ')}
-              {selectedCategories.length > 3 && ` +${selectedCategories.length - 3} more`}
-            </span>
+              {isFetching ? (
+                <>
+                  <div className="btn-spinner"></div>
+                  Fetching Data...
+                </>
+              ) : (
+                <>
+                  <span>🗄️</span> Fetch from Database
+                </>
+              )}
+            </button>
           </div>
-        )}
-      </div>
 
-      {/* Listing Range Section */}
-      <div className="dbfetch-card">
-        <h3>📊 Listing Range</h3>
-        <div className="listing-range-options">
-          <button
-            className={`range-btn ${listingStart === '0' && listingEnd === '1000' ? 'active' : ''}`}
-            onClick={() => { setListingStart('0'); setListingEnd('1000'); }}
-          >
-            First 1000 (0-1000)
-          </button>
-          <button
-            className={`range-btn ${listingStart === '1000' && listingEnd === '2000' ? 'active' : ''}`}
-            onClick={() => { setListingStart('1000'); setListingEnd('2000'); }}
-          >
-            1000-2000
-          </button>
-          <button
-            className={`range-btn ${listingStart === '2000' && listingEnd === '3000' ? 'active' : ''}`}
-            onClick={() => { setListingStart('2000'); setListingEnd('3000'); }}
-          >
-            2000-3000
-          </button>
-        </div>
-        <div className="form-row">
-          <div className="form-group">
-            <label>Custom Start</label>
-            <input
-              type="number"
-              value={listingStart}
-              onChange={(e) => setListingStart(e.target.value)}
-              placeholder="0"
-              className="form-input"
-              min="0"
-            />
-          </div>
-          <div className="form-group">
-            <label>Custom End</label>
-            <input
-              type="number"
-              value={listingEnd}
-              onChange={(e) => setListingEnd(e.target.value)}
-              placeholder="1000"
-              className="form-input"
-              min="0"
-            />
-          </div>
-        </div>
-        <div className="listing-count">
-          Total Listings: {parseInt(listingEnd || 0) - parseInt(listingStart || 0)}
-        </div>
-      </div>
-
-      {/* Fetch Button */}
-      <div className="dbfetch-actions">
-        <button
-          className={`btn btn-primary ${canFetch ? '' : 'disabled'}`}
-          onClick={handleFetch}
-          disabled={!canFetch}
-        >
-          {isFetching ? (
-            <>
-              <div className="btn-spinner"></div>
-              Fetching Data...
-            </>
-          ) : (
-            <>
-              <span>🗄️</span> Fetch from Database
-            </>
+          {/* Error message */}
+          {error && fetchMode === 'daterange' && (
+            <div className="audit-error">
+              <span className="error-icon">❌</span>
+              <span>{error}</span>
+            </div>
           )}
-        </button>
-      </div>
-
-      {/* Error message */}
-      {error && fetchMode === 'daterange' && (
-        <div className="audit-error">
-          <span className="error-icon">❌</span>
-          <span>{error}</span>
-        </div>
-      )}
         </>
       )}
     </div>
@@ -1435,7 +1461,7 @@ const AuditSection = () => {
 
           {/* Action buttons */}
           <div className="audit-result-actions">
-            <button className="btn btn-success" onClick={handleDownload}>
+            <button className="btn btn-danger" onClick={handleDownload}>
               <span>📥</span> Download Audit Report
             </button>
             <button className="btn btn-secondary" onClick={handleReset}>
@@ -1608,10 +1634,9 @@ function App() {
           muted
           playsInline
         >
-          <source src="/videos/Truck_Video_From_Front_POV.mp4" type="video/mp4" />
+          <source src="/videos/American_Truck_Background_Video_Creation.mp4" type="video/mp4" />
         </video>
         <div className="bg-gradient"></div>
-        <div className="bg-grid"></div>
       </div>
 
       {/* Header */}
@@ -1682,7 +1707,7 @@ function App() {
                       )}
                       {job.status === 'completed' && (
                         <>
-                          <button className="btn btn-success" onClick={handleDownload}>
+                          <button className="btn btn-danger" onClick={handleDownload}>
                             <span>📥</span> Download Result
                           </button>
                           <button className="btn btn-secondary" onClick={handleReset}>

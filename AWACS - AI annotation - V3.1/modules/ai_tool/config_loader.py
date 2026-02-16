@@ -21,7 +21,8 @@ def load_config():
         config.scrapper_output_dir = os.path.join(project_root, config_parser.get('Paths', 'ScrapperOutputDir'))
         config.log_dir = os.path.join(project_root, config_parser.get('Paths', 'LogDir'))
         config.output_dir = os.path.join(project_root, config_parser.get('Paths', 'OutputDir'))
-        config.image_cache_dir = os.path.join(project_root, config_parser.get('Paths', 'ImageCacheDir'))
+        # ImageCacheDir is deprecated - images are now fetched directly from URLs without disk caching
+        config.image_cache_dir = os.path.join(project_root, config_parser.get('Paths', 'ImageCacheDir', fallback='image_cache'))
         config.key_report_dir = os.path.join(project_root, config_parser.get('Paths', 'KeyReportDir'))
         config.mosaic_images_dir = os.path.join(project_root, config_parser.get('Paths', 'MosaicImagesDir'))
         config.category_json = os.path.join(project_root, config_parser.get('Paths', 'CategoryJson'))
@@ -30,6 +31,10 @@ def load_config():
 
         # Settings
         config.gemini_model = config_parser.get('Settings', 'GeminiModel')
+        # Per-prompt model configuration (falls back to GeminiModel if not set)
+        config.gemini_model_promo_check = config_parser.get('Settings', 'GeminiModelPromoCheck', fallback=config.gemini_model)
+        config.gemini_model_classification = config_parser.get('Settings', 'GeminiModelClassification', fallback=config.gemini_model)
+        config.gemini_model_dually_verification = config_parser.get('Settings', 'GeminiModelDuallyVerification', fallback=config.gemini_model)
         config.max_images = config_parser.getint('Settings', 'MaxImagesPerAd')
         config.ai_checkpoint_interval = config_parser.getint('Settings', 'AiCheckpointInterval', fallback=5)
         config.scraper_checkpoint_interval = config_parser.getint('Settings', 'ScraperCheckpointInterval', fallback=50)

@@ -10,6 +10,7 @@ import queue
 from .config_loader import config
 # ADDED darth_vision TO IMPORTS
 from . import classification, web_utils, data_processing, utils, darth_vision
+from .cache_manager import get_cache_manager
 from ai_tool.rate_limiter import Yoda 
 
 
@@ -92,10 +93,13 @@ def _process_single_ad(ad_row: dict, category_data: dict, rules: dict,
     ad_id = str(ad_row.get("Ad ID", "")).strip()
     if not ad_id: return None
 
-    # --- COST TRACKING ---
-    total_in_tokens = 0
-    total_out_tokens = 0
-    total_cached_tokens = 0
+    # --- COST TRACKING (separate per model for accurate costing) ---
+    classify_in_tokens = 0
+    classify_out_tokens = 0
+    classify_cached_tokens = 0
+    promo_in_tokens = 0
+    promo_out_tokens = 0
+    promo_cached_tokens = 0
     # ---------------------
 
     breadcrumb_raw = [ad_row.get(f"Breadcrumb_Top{i}", "") for i in range(1, 4)]
@@ -108,11 +112,36 @@ def _process_single_ad(ad_row: dict, category_data: dict, rules: dict,
                   for x in breadcrumb_raw if pd.notna(x) and str(x).strip()]
 
     raw_urls = str(ad_row.get("Image_URLs", "")).strip()
-    image_urls = raw_urls.split(",") if raw_urls else []
-    img_bytes_list = web_utils.get_images_with_caching(image_urls)
+    image_urls = [url.strip() for url in raw_urls.split(",") if url.strip()]  # Strip whitespace and filter empty URLs
+    
+    # Initial image fetch attempt
+    print(f"[W-{worker_id}] 🔄 Ad {ad_id}: Initial image fetch attempt ({len(image_urls)} URLs)...")
+    img_bytes_list = web_utils.get_images_with_caching(image_urls, retry_count=0, timeout=5)
     
     # Check if we have any valid images
     has_valid_images = bool(img_bytes_list and any(img_bytes_list))
+    
+    if has_valid_images:
+        print(f"[W-{worker_id}] ✅ Ad {ad_id}: Initial fetch successful - {len(img_bytes_list)} image(s) loaded")
+    else:
+        print(f"[W-{worker_id}] ⚠️ Ad {ad_id}: Initial fetch failed - {len(img_bytes_list)} image(s) loaded from {len(image_urls)} URLs")
+    
+    # RETRY MECHANISM: If images failed to load but URLs exist, retry with enhanced settings
+    if not has_valid_images and image_urls:
+        print(f"[W-{worker_id}] 🔁 RETRY MECHANISM TRIGGERED for Ad {ad_id}: {len(image_urls)} URLs exist but images failed to load")
+        print(f"[W-{worker_id}] 🔁 Retrying with enhanced settings (timeout: 8s, retry_count: 1)...")
+        utils.log_msg(f" [W-{worker_id}] ⚠️ Initial image fetch failed for Ad {ad_id} ({len(image_urls)} URLs). Retrying with enhanced settings...", worker_id)
+        time.sleep(0.5)  # Brief delay before retry
+        # Retry with longer timeout and retry logic
+        img_bytes_list = web_utils.get_images_with_caching(image_urls, retry_count=1, timeout=8)
+        has_valid_images = bool(img_bytes_list and any(img_bytes_list))
+        
+        if has_valid_images:
+            print(f"[W-{worker_id}] ✅ RETRY SUCCESSFUL for Ad {ad_id}: {len(img_bytes_list)} image(s) loaded after retry")
+            utils.log_msg(f" [W-{worker_id}] ✅ Retry successful - {len(img_bytes_list)} image(s) loaded for Ad {ad_id}", worker_id)
+        else:
+            print(f"[W-{worker_id}] ❌ RETRY FAILED for Ad {ad_id}: No images loaded after 2 attempts (initial + retry)")
+            utils.log_msg(f" [W-{worker_id}] ❌ Retry failed - no images loaded for Ad {ad_id} after 2 attempts", worker_id)
     
     # Early return if no images available - set appropriate status
     if not has_valid_images:
@@ -142,14 +171,17 @@ def _process_single_ad(ad_row: dict, category_data: dict, rules: dict,
         from ai_tool.smart_image_selector import select_best_images
         try:
             # Pass Yoda
-            quick_guess, t_in, t_out, t_cached = classification.classify_with_gemini_multi(
+            quick_guess, cls_in, cls_out, cls_cached, p_in, p_out, p_cached = classification.classify_with_gemini_multi(
                 ", ".join(breadcrumb), category_data, [img_bytes_list[0]],
                 fast_mode=True, key_queue=key_queue, worker_id=worker_id,
                 status_queue=status_queue, ad_id=ad_id, yoda_instance=yoda_instance
             )
-            total_in_tokens += t_in
-            total_out_tokens += t_out
-            total_cached_tokens += t_cached
+            classify_in_tokens += cls_in
+            classify_out_tokens += cls_out
+            classify_cached_tokens += cls_cached
+            promo_in_tokens += p_in
+            promo_out_tokens += p_out
+            promo_cached_tokens += p_cached
             
             if quick_guess and quick_guess[0][1] >= 98.0:
                 utils.log_msg(f" [W-{worker_id}] ⚡ Vision V2 confident. Skipping 2nd call.", worker_id)
@@ -167,23 +199,29 @@ def _process_single_ad(ad_row: dict, category_data: dict, rules: dict,
         result = vision_result
     elif high_accuracy:
         utils.log_msg(f" [W-{worker_id}] HIGH ACCURACY → using 2 images", worker_id)
-        result, t_in, t_out, t_cached = classification.classify_with_gemini_multi(
+        result, cls_in, cls_out, cls_cached, p_in, p_out, p_cached = classification.classify_with_gemini_multi(
             ", ".join(breadcrumb), category_data, img_bytes_list or [b''],
             fast_mode=False, key_queue=key_queue, worker_id=worker_id,
             status_queue=status_queue, ad_id=ad_id, yoda_instance=yoda_instance
         )
-        total_in_tokens += t_in
-        total_out_tokens += t_out
-        total_cached_tokens += t_cached
+        classify_in_tokens += cls_in
+        classify_out_tokens += cls_out
+        classify_cached_tokens += cls_cached
+        promo_in_tokens += p_in
+        promo_out_tokens += p_out
+        promo_cached_tokens += p_cached
     else:
-        result, t_in, t_out, t_cached = classification.classify_with_gemini_multi(
+        result, cls_in, cls_out, cls_cached, p_in, p_out, p_cached = classification.classify_with_gemini_multi(
             ", ".join(breadcrumb), category_data, [img_bytes_list[0]] if img_bytes_list else [b''],
             fast_mode=True, key_queue=key_queue, worker_id=worker_id,
             status_queue=status_queue, ad_id=ad_id, yoda_instance=yoda_instance
         )
-        total_in_tokens += t_in
-        total_out_tokens += t_out
-        total_cached_tokens += t_cached
+        classify_in_tokens += cls_in
+        classify_out_tokens += cls_out
+        classify_cached_tokens += cls_cached
+        promo_in_tokens += p_in
+        promo_out_tokens += p_out
+        promo_cached_tokens += p_cached
 
     if not result:
         final_row = {"Ad ID": ad_id, "Status": "AI Error", "Cost_Cents": 0}
@@ -203,8 +241,10 @@ def _process_single_ad(ad_row: dict, category_data: dict, rules: dict,
         filtered = annotated  # Keep as-is, no filtering needed
         status = data_processing.determine_status(breadcrumb, filtered, annotated, has_images=has_valid_images)
         
-        # Calculate cost before returning (with cached token discount)
-        cost_cents = utils.calculate_cost_cents(total_in_tokens, total_out_tokens, config.gemini_model, total_cached_tokens)
+        # Calculate cost - separate pricing for each model
+        promo_cost = utils.calculate_cost_cents(promo_in_tokens, promo_out_tokens, config.gemini_model_promo_check, promo_cached_tokens)
+        classify_cost = utils.calculate_cost_cents(classify_in_tokens, classify_out_tokens, config.gemini_model_classification, classify_cached_tokens)
+        cost_cents = promo_cost + classify_cost
         
         final_row = {
             "Ad ID": ad_id,
@@ -281,12 +321,13 @@ def _process_single_ad(ad_row: dict, category_data: dict, rules: dict,
             rule_dict, pair = overlap_result
             print(f"[W-{worker_id}] Ad {ad_id}: Overlap rule triggered for {pair}")
             
-            refined, t_in, t_out = classification.classify_with_refinement(
+            refined, t_in, t_out, t_cached = classification.classify_with_refinement(
                 pair, rule_dict, img_bytes_list[0],
                 yoda_instance, key_queue, worker_id, ad_id, status_queue
             )
-            total_in_tokens += t_in
-            total_out_tokens += t_out
+            classify_in_tokens += t_in
+            classify_out_tokens += t_out
+            classify_cached_tokens += t_cached
             
             if refined:
                 refined_norm = data_processing.normalize_text(refined, rules['normalize_map'], worker_id)
@@ -367,8 +408,10 @@ def _process_single_ad(ad_row: dict, category_data: dict, rules: dict,
     print(f"[W-{worker_id}] Ad {ad_id}: Final filtered results: {[(c, round(s, 1)) for c, s in filtered[:3]]}")
     print(f"[W-{worker_id}] Ad {ad_id}: Status: {status}")
 
-    # --- CALCULATE COST --- (with cached token discount)
-    cost_cents = utils.calculate_cost_cents(total_in_tokens, total_out_tokens, config.gemini_model, total_cached_tokens)
+    # --- CALCULATE COST --- (separate pricing for each model)
+    promo_cost = utils.calculate_cost_cents(promo_in_tokens, promo_out_tokens, config.gemini_model_promo_check, promo_cached_tokens)
+    classify_cost = utils.calculate_cost_cents(classify_in_tokens, classify_out_tokens, config.gemini_model_classification, classify_cached_tokens)
+    cost_cents = promo_cost + classify_cost
 
     final_row = {
         "Ad ID": ad_id,
@@ -455,6 +498,13 @@ def run_worker_process(worker_id, run_ts, job_queue: Queue, results_queue: Queue
                 status_queue.put({"worker_id": worker_id, "state": "ERROR", "progress": processed})
 
     finally:
+        # Print explicit caching session savings report
+        try:
+            cache_mgr = get_cache_manager()
+            cache_mgr.print_total_savings()
+        except Exception as e:
+            print(f"⚠️  Could not print cache savings report: {e}")
+        
         utils.generate_session_reports(
             classification.get_key_usage_stats(),
             classification.get_token_usage_stats(),
@@ -514,4 +564,12 @@ def run_single_process(input_file, fast_mode=False):
             print(f"Error on {ad_id}: {e}")
             
     save_checkpoint(run_ts, results, df)
+    
+    # Print explicit caching session savings report
+    try:
+        cache_mgr = get_cache_manager()
+        cache_mgr.print_total_savings()
+    except Exception as e:
+        print(f"⚠️  Could not print cache savings report: {e}")
+    
     print("\nSingle Process Run Completed.")

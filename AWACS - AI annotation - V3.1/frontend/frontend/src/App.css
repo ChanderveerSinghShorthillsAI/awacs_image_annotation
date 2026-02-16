@@ -532,6 +532,20 @@ body {
   filter: brightness(1.1);
 }
 
+.btn-danger {
+  background: linear-gradient(135deg, #DC143C 0%, #E53935 50%, #FF4444 100%);
+  color: #1a1a1f;
+  font-weight: 700;
+  box-shadow: 0 4px 15px rgba(220, 20, 60, 0.45);
+  border: 1px solid rgba(255, 68, 68, 0.6);
+}
+
+.btn-danger:hover {
+  transform: translateY(-3px);
+  box-shadow: 0 6px 25px rgba(220, 20, 60, 0.55);
+  filter: brightness(1.08);
+}
+
 .btn-secondary {
   background: var(--bg-card);
   color: var(--text-primary);
@@ -1469,8 +1483,13 @@ body {
 }
 
 @keyframes fadeIn {
-  from { opacity: 0; }
-  to { opacity: 1; }
+  from {
+    opacity: 0;
+  }
+
+  to {
+    opacity: 1;
+  }
 }
 
 .modal-content {
@@ -1491,6 +1510,7 @@ body {
     opacity: 0;
     transform: translateY(30px);
   }
+
   to {
     opacity: 1;
     transform: translateY(0);

@@ -87,11 +87,13 @@ def get_new_key(key_queue: Queue):
             _current_key_info = None
             return False
 
-def setup_genai_client():
+def setup_genai_client(model_name: str = None):
     if not _current_key_info:
         raise NoKeysAvailableError("Worker has no API key to use.")
     genai.configure(api_key=_current_key_info['key'])
-    return genai.GenerativeModel(config.gemini_model)
+    # Use provided model_name, or fall back to default config.gemini_model
+    effective_model = model_name or config.gemini_model
+    return genai.GenerativeModel(effective_model)
 
 # --- MOSAIC HELPER FUNCTIONS ---
 def create_image_mosaic(img_bytes1: bytes, img_bytes2: bytes) -> bytes:
@@ -221,7 +223,7 @@ def check_promotional_image(ad_img_bytes: bytes, yoda_instance=None, key_queue: 
     global _key_usage_stats, _token_usage_stats, _current_key_info
     
     if not ad_img_bytes:
-        return False, 0, 0
+        return False, 0, 0, 0
     
     # Ensure we have at least one key to start
     if not _current_key_info:
@@ -278,8 +280,8 @@ Format: "YES" or "NO"
                     "key_idx": _current_key_info['original_index'], "key_total": len(config.gemini_api_keys)
                 })
 
-            log_msg(f"🔍 Pre-checking for promotional/coming soon image (Ad {ad_id})...", worker_id)
-            model = setup_genai_client()
+            log_msg(f"🔍 Pre-checking for promotional/coming soon image (Ad {ad_id}) [Model: {config.gemini_model_promo_check}]...", worker_id)
+            model = setup_genai_client(config.gemini_model_promo_check)
             
             t_start = time.time()
             with open(os.devnull, 'w') as f, contextlib.redirect_stdout(f), contextlib.redirect_stderr(f):
@@ -291,6 +293,7 @@ Format: "YES" or "NO"
             
             in_tok = getattr(response.usage_metadata, 'prompt_token_count', 0)
             out_tok = getattr(response.usage_metadata, 'candidates_token_count', 0)
+            cached_tok = getattr(response.usage_metadata, 'cached_content_token_count', 0) or 0
             _token_usage_stats['total_tokens'] += (in_tok + out_tok)
             _token_usage_stats['api_calls'] += 1
             
@@ -305,9 +308,9 @@ Format: "YES" or "NO"
             response_text = response.text.strip().upper()
             is_promotional = response_text.startswith("YES")
             
-            log_msg(f"📥 Promotional check: {'🚫 PROMOTIONAL/PLACEHOLDER' if is_promotional else '✅ REAL LISTING'} ({duration:.1f}s)", worker_id)
+            log_msg(f"📥 Promotional check: {'🚫 PROMOTIONAL/PLACEHOLDER' if is_promotional else '✅ REAL LISTING'} ({duration:.1f}s, Cached:{cached_tok})", worker_id)
             
-            return is_promotional, in_tok, out_tok
+            return is_promotional, in_tok, out_tok, cached_tok
 
         except Exception as e:
             error_msg = str(e).lower()
@@ -351,7 +354,7 @@ Format: "YES" or "NO"
                 raise e
     
     # If all retries failed, assume it's not promotional to avoid false positives
-    return False, 0, 0
+    return False, 0, 0, 0
 
 
 def classify_with_gemini(breadcrumb: str, category_data: dict, ad_img_bytes: bytes | None = None, 
@@ -370,20 +373,23 @@ def classify_with_gemini(breadcrumb: str, category_data: dict, ad_img_bytes: byt
     # Initialize promotional check token counters (always track, even if check is skipped)
     promo_check_tokens_in = 0
     promo_check_tokens_out = 0
+    promo_check_tokens_cached = 0
     
     # 🛡️ PRE-CHECK: Detect promotional/coming soon images BEFORE classification 🛡️
     # Skip if already checked by caller (e.g., classify_with_gemini_multi)
     if ad_img_bytes and not skip_promo_check:
         try:
-            is_promotional, promo_in, promo_out = check_promotional_image(
+            is_promotional, promo_in, promo_out, promo_cached = check_promotional_image(
                 ad_img_bytes, yoda_instance, key_queue, worker_id, status_queue, ad_id
             )
             promo_check_tokens_in += promo_in
             promo_check_tokens_out += promo_out
+            promo_check_tokens_cached += promo_cached
             
             if is_promotional:
                 log_msg(f"🚫 Promotional/Coming Soon image detected - returning 'Image Not Clear'", worker_id)
-                return ([("Image Not Clear", 100.0)], promo_check_tokens_in, promo_check_tokens_out)
+                # Return: (results, classify_in, classify_out, classify_cached, promo_in, promo_out, promo_cached)
+                return ([("Image Not Clear", 100.0)], 0, 0, 0, promo_check_tokens_in, promo_check_tokens_out, promo_check_tokens_cached)
         except Exception as e:
             log_msg(f"⚠️ Promotional check failed, proceeding with classification: {e}", worker_id)
             # Continue with classification if check fails
@@ -411,7 +417,8 @@ OUTPUT: Numbered list with scores only. Ex: 1.Pickup Truck(98%) 2.Flatbed Truck(
     if ad_img_bytes:
         parts.append({"inline_data": {"mime_type": "image/jpeg", "data": base64.b64encode(ad_img_bytes).decode("utf-8")}})
     else:
-        return ([("Image Not Clear", 100.0)], 0, 0)
+        # Return: (results, classify_in, classify_out, classify_cached, promo_in, promo_out, promo_cached)
+        return ([("Image Not Clear", 100.0)], 0, 0, 0, promo_check_tokens_in, promo_check_tokens_out, promo_check_tokens_cached)
     
     parts.append("\n---\n**Category Reference:**\n")
     for name, data in category_data.items():
@@ -453,8 +460,8 @@ OUTPUT: Numbered list with scores only. Ex: 1.Pickup Truck(98%) 2.Flatbed Truck(
                     "key_idx": _current_key_info['original_index'], "key_total": len(config.gemini_api_keys)
                 })
 
-            log_msg(f"📤 Sending Request (Key #{_current_key_info['original_index']})...", worker_id)
-            model = setup_genai_client()
+            log_msg(f"📤 Sending Request (Key #{_current_key_info['original_index']}) [Model: {config.gemini_model_classification}]...", worker_id)
+            model = setup_genai_client(config.gemini_model_classification)
             
             t_start = time.time()
             with open(os.devnull, 'w') as f, contextlib.redirect_stdout(f), contextlib.redirect_stderr(f):
@@ -476,13 +483,12 @@ OUTPUT: Numbered list with scores only. Ex: 1.Pickup Truck(98%) 2.Flatbed Truck(
             print(response.text)
             print(f"{'='*80}\n")
             
-            log_msg(f"📥 Response ({duration:.1f}s): Tokens In:{in_tok}/Out:{out_tok}", worker_id)
+            cached_tok = getattr(response.usage_metadata, 'cached_content_token_count', 0) or 0
+            log_msg(f"📥 Response ({duration:.1f}s): Tokens In:{in_tok}/Out:{out_tok} (Cached:{cached_tok})", worker_id)
             
             # Note: No time.sleep() needed here because Yoda handles the pacing!
-            # Add promotional check tokens to total
-            total_in_tok = in_tok + promo_check_tokens_in
-            total_out_tok = out_tok + promo_check_tokens_out
-            return parse_gemini_response(response.text), total_in_tok, total_out_tok
+            # Return: (results, classify_in, classify_out, classify_cached, promo_in, promo_out, promo_cached)
+            return parse_gemini_response(response.text), in_tok, out_tok, cached_tok, promo_check_tokens_in, promo_check_tokens_out, promo_check_tokens_cached
 
         except Exception as e:
             error_msg = str(e).lower()
@@ -548,7 +554,7 @@ def classify_with_refinement(categories: list, rule: dict, ad_img_bytes: bytes,
         pair = categories[:2]
         prompt = f"An AI identified a vehicle as possibly a '{pair[0]}' or a '{pair[1]}'.\nYour task is to use this visual test: \"{rule['decision_rule']}\"\nLook for visual cues like Rim Depth (Deep Dish = Dually) and Hub Shape. Analyze the image strictly and output ONLY the final category name."
     else:
-        return None, 0, 0
+        return None, 0, 0, 0
 
     max_retries = 3
     attempt = 0
@@ -580,8 +586,8 @@ def classify_with_refinement(categories: list, rule: dict, ad_img_bytes: bytes,
                     "key_idx": _current_key_info['original_index'], "key_total": len(config.gemini_api_keys)
                 })
 
-            log_msg(f"📤 Sending Refinement Request...", worker_id)
-            model = setup_genai_client()
+            log_msg(f"📤 Sending Refinement Request [Model: {config.gemini_model_classification}]...", worker_id)
+            model = setup_genai_client(config.gemini_model_classification)
             with open(os.devnull, 'w') as f, contextlib.redirect_stdout(f), contextlib.redirect_stderr(f):
                  response = model.generate_content([prompt, {"inline_data": {"mime_type": "image/jpeg", "data": base64.b64encode(ad_img_bytes).decode("utf-8")}}], request_options={'timeout': 45})  # OPTIMIZED: 90s -> 45s
             
@@ -590,6 +596,7 @@ def classify_with_refinement(categories: list, rule: dict, ad_img_bytes: bytes,
             
             in_tok = getattr(response.usage_metadata, 'prompt_token_count', 0)
             out_tok = getattr(response.usage_metadata, 'candidates_token_count', 0)
+            cached_tok = getattr(response.usage_metadata, 'cached_content_token_count', 0) or 0
             _token_usage_stats['total_tokens'] += (in_tok + out_tok)
             _token_usage_stats['api_calls'] += 1
             
@@ -600,7 +607,7 @@ def classify_with_refinement(categories: list, rule: dict, ad_img_bytes: bytes,
             print(response.text)
             print(f"{'='*80}\n")
             
-            log_msg(f"📥 Refinement Response: {repr(response.text)} (In:{in_tok}/Out:{out_tok})", worker_id)
+            log_msg(f"📥 Refinement Response: {repr(response.text)} (In:{in_tok}/Out:{out_tok}, Cached:{cached_tok})", worker_id)
             
             result_str = None
             if is_feature_checklist:
@@ -625,7 +632,7 @@ def classify_with_refinement(categories: list, rule: dict, ad_img_bytes: bytes,
                         result_str = c
                         break
             
-            return result_str, in_tok, out_tok
+            return result_str, in_tok, out_tok, cached_tok
                 
         except Exception as e:
             error_msg = str(e).lower()
@@ -658,26 +665,32 @@ def classify_with_gemini_multi(breadcrumb: str, category_data: dict, img_bytes_l
     Uses MOSAIC Strategy + YODA.
     """
     if not img_bytes_list:
-        res, t_in, t_out = classify_with_gemini(breadcrumb, category_data, None, yoda_instance, key_queue, worker_id, status_queue, ad_id, skip_promo_check=True)
-        return res, t_in, t_out
+        res, cls_in, cls_out, cls_cached, p_in, p_out, p_cached = classify_with_gemini(breadcrumb, category_data, None, yoda_instance, key_queue, worker_id, status_queue, ad_id, skip_promo_check=True)
+        return res, cls_in, cls_out, cls_cached, p_in, p_out, p_cached
     
-    total_in = 0
-    total_out = 0
+    # Separate token tracking for accurate per-model costing
+    total_classify_in = 0
+    total_classify_out = 0
+    total_classify_cached = 0
+    total_promo_in = 0
+    total_promo_out = 0
+    total_promo_cached = 0
     all_results = []
     
     # 🛡️ PRE-CHECK: Check first image for promotional/coming soon BEFORE processing
     # This saves API costs by catching promotional images early
     if img_bytes_list and len(img_bytes_list) > 0:
         try:
-            is_promotional, promo_in, promo_out = check_promotional_image(
+            is_promotional, promo_in, promo_out, promo_cached = check_promotional_image(
                 img_bytes_list[0], yoda_instance, key_queue, worker_id, status_queue, ad_id
             )
-            total_in += promo_in
-            total_out += promo_out
+            total_promo_in += promo_in
+            total_promo_out += promo_out
+            total_promo_cached += promo_cached
             
             if is_promotional:
                 log_msg(f"🚫 Promotional/Coming Soon image detected on first image - returning 'Image Not Clear'", worker_id)
-                return [("Image Not Clear", 100.0)], total_in, total_out
+                return [("Image Not Clear", 100.0)], 0, 0, 0, total_promo_in, total_promo_out, total_promo_cached
         except Exception as e:
             log_msg(f"⚠️ Promotional check failed, proceeding with classification: {e}", worker_id)
             # Continue with classification if check fails
@@ -690,35 +703,48 @@ def classify_with_gemini_multi(breadcrumb: str, category_data: dict, img_bytes_l
             # Use Index 0 and 1 (Usually sorted by Vision V2 as best)
             mosaic_bytes = create_image_mosaic(img_bytes_list[0], img_bytes_list[1])
             
-            res, t_in, t_out = classify_with_gemini(breadcrumb, category_data, mosaic_bytes, yoda_instance, key_queue, worker_id, status_queue, ad_id, skip_promo_check=True)
-            total_in += t_in
-            total_out += t_out
+            res, cls_in, cls_out, cls_cached, p_in, p_out, p_cached = classify_with_gemini(breadcrumb, category_data, mosaic_bytes, yoda_instance, key_queue, worker_id, status_queue, ad_id, skip_promo_check=True)
+            total_classify_in += cls_in
+            total_classify_out += cls_out
+            total_classify_cached += cls_cached
+            total_promo_in += p_in
+            total_promo_out += p_out
+            total_promo_cached += p_cached
             all_results.extend(res)
             
         except Exception as e:
             log_msg(f"⚠️ Mosaic failed ({e}). Falling back to single image.", worker_id)
             # Fallback to single image
-            res, t_in, t_out = classify_with_gemini(breadcrumb, category_data, img_bytes_list[0], yoda_instance, key_queue, worker_id, status_queue, ad_id, skip_promo_check=True)
-            total_in += t_in
-            total_out += t_out
+            res, cls_in, cls_out, cls_cached, p_in, p_out, p_cached = classify_with_gemini(breadcrumb, category_data, img_bytes_list[0], yoda_instance, key_queue, worker_id, status_queue, ad_id, skip_promo_check=True)
+            total_classify_in += cls_in
+            total_classify_out += cls_out
+            total_classify_cached += cls_cached
+            total_promo_in += p_in
+            total_promo_out += p_out
+            total_promo_cached += p_cached
             all_results.extend(res)
     else:
         # Single Image Case
         log_msg(f"📸 Single Image Classification...", worker_id)
-        res, t_in, t_out = classify_with_gemini(breadcrumb, category_data, img_bytes_list[0], yoda_instance, key_queue, worker_id, status_queue, ad_id, skip_promo_check=True)
-        total_in += t_in
-        total_out += t_out
+        res, cls_in, cls_out, cls_cached, p_in, p_out, p_cached = classify_with_gemini(breadcrumb, category_data, img_bytes_list[0], yoda_instance, key_queue, worker_id, status_queue, ad_id, skip_promo_check=True)
+        total_classify_in += cls_in
+        total_classify_out += cls_out
+        total_classify_cached += cls_cached
+        total_promo_in += p_in
+        total_promo_out += p_out
+        total_promo_cached += p_cached
         all_results.extend(res)
     # -----------------------------
 
     if not all_results:
-        return [], total_in, total_out
+        return [], total_classify_in, total_classify_out, total_classify_cached, total_promo_in, total_promo_out, total_promo_cached
 
     combined = {cat: score for cat, score in all_results if cat and (cat not in (c:={}) or score > c[cat])}
     normalized = {cat: round(score - (score - 90) * 0.8, 1) if score > 95 else round(score, 1) for cat, score in combined.items()}
     final_res = sorted(normalized.items(), key=lambda x: x[1], reverse=True)[:3]
     
-    return final_res, total_in, total_out
+    # Return: (results, classify_in, classify_out, classify_cached, promo_in, promo_out, promo_cached)
+    return final_res, total_classify_in, total_classify_out, total_classify_cached, total_promo_in, total_promo_out, total_promo_cached
 
 def get_key_usage_stats(): return {"stats": _key_usage_stats}
 def get_token_usage_stats(): return _token_usage_stats
@@ -998,7 +1024,7 @@ def verify_dually_with_llm(ad_img_bytes_list: list[bytes], yoda_instance, key_qu
     # Filter out None/empty images
     valid_images = [img for img in ad_img_bytes_list if img]
     if not valid_images:
-        return False, 0.0, 0, 0
+        return False, 0.0, 0, 0, 0
     
     # Create mosaic from all available images for efficiency (reduces tokens significantly)
     mosaic_image = create_image_mosaic_multi(valid_images)
@@ -1072,8 +1098,8 @@ Examples: "YES-two rims each side with gap"|"YES-Box truck fender flare beyond c
                     "key_idx": _current_key_info['original_index'], "key_total": len(config.gemini_api_keys)
                 })
 
-            log_msg(f"🔍 Verifying Dually for Ad {ad_id} (Key #{_current_key_info['original_index']})...", worker_id)
-            model = setup_genai_client()
+            log_msg(f"🔍 Verifying Dually for Ad {ad_id} (Key #{_current_key_info['original_index']}) [Model: {config.gemini_model_dually_verification}]...", worker_id)
+            model = setup_genai_client(config.gemini_model_dually_verification)
             
             t_start = time.time()
             with open(os.devnull, 'w') as f, contextlib.redirect_stdout(f), contextlib.redirect_stderr(f):
@@ -1085,6 +1111,7 @@ Examples: "YES-two rims each side with gap"|"YES-Box truck fender flare beyond c
             
             in_tok = getattr(response.usage_metadata, 'prompt_token_count', 0)
             out_tok = getattr(response.usage_metadata, 'candidates_token_count', 0)
+            cached_tok = getattr(response.usage_metadata, 'cached_content_token_count', 0) or 0
             _token_usage_stats['total_tokens'] += (in_tok + out_tok)
             _token_usage_stats['api_calls'] += 1
             
@@ -1102,9 +1129,9 @@ Examples: "YES-two rims each side with gap"|"YES-Box truck fender flare beyond c
             # Confidence based on response clarity
             confidence = 95.0 if is_dually else 5.0
             
-            log_msg(f"📥 Dually Verification Result: {'✅ CONFIRMED' if is_dually else '❌ NOT DUALLY'} ({duration:.1f}s)", worker_id)
+            log_msg(f"📥 Dually Verification Result: {'✅ CONFIRMED' if is_dually else '❌ NOT DUALLY'} ({duration:.1f}s, Cached:{cached_tok})", worker_id)
             
-            return is_dually, confidence, in_tok, out_tok
+            return is_dually, confidence, in_tok, out_tok, cached_tok
 
         except Exception as e:
             error_msg = str(e).lower()
@@ -1148,7 +1175,7 @@ Examples: "YES-two rims each side with gap"|"YES-Box truck fender flare beyond c
                 log_msg(f"❌ Unexpected Dually Verification Error: {e}", worker_id)
                 raise e
     
-    return False, 0.0, 0, 0
+    return False, 0.0, 0, 0, 0
 
 # new code for classification
 

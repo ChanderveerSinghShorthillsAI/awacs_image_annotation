@@ -134,37 +134,71 @@ def get_all_image_urls(driver, ad_id, timeout=10):
         except Exception:
             return []
 
-def get_images_with_caching(image_urls):
+def get_images_with_caching(image_urls, retry_count=0, timeout=5):
     """
-    Downloads images from a list of URLs, utilizing a local cache.
+    Fetches images directly from URLs as bytes without caching to disk.
+    This avoids storage issues and follows Gemini's recommended pattern.
+    Images are fetched directly into memory and passed to the AI model.
+    
+    OPTIMIZED: Uses ThreadPoolExecutor for parallel downloads (I/O-bound).
+    
+    Args:
+        image_urls: List of image URLs to fetch
+        retry_count: Number of retry attempts (0 = no retry, 1 = one retry, etc.)
+        timeout: Request timeout in seconds (increased on retry)
     """
-    img_bytes_list = []
+    from concurrent.futures import ThreadPoolExecutor
+    import time
     
-    # Ensure cache directory exists
-    os.makedirs(config.image_cache_dir, exist_ok=True)
-    
-    # Use a session for faster connection reuse (Keep-Alive)
-    with requests.Session() as session:
-        for url in image_urls:
+    def fetch_single_image(url, attempt_timeout):
+        """Fetch a single image with retry logic"""
+        max_attempts = retry_count + 1
+        url_short = url[:60] + "..." if len(url) > 60 else url  # Truncate long URLs for display
+        
+        for attempt in range(max_attempts):
             try:
-                # Create a safe filename hash
-                file_hash = hashlib.md5(url.encode()).hexdigest()
-                cache_path = os.path.join(config.image_cache_dir, f"{file_hash}.jpg")
-                
-                if os.path.exists(cache_path):
-                    with open(cache_path, 'rb') as f:
-                        img_bytes_list.append(f.read())
-                else:
-                    # Download with a short timeout using the session
-                    r = session.get(url, timeout=5)  # OPTIMIZED: 8s -> 5s
+                # Create a session for this request (thread-safe)
+                with requests.Session() as session:
+                    # Increase timeout on retry attempts
+                    current_timeout = attempt_timeout + (attempt * 2)  # Add 2s per retry
+                    if attempt > 0:
+                        print(f"   🔄 Retry attempt {attempt + 1}/{max_attempts} for image: {url_short} (timeout: {current_timeout}s)")
+                    r = session.get(url, timeout=current_timeout, stream=True)
                     if r.status_code == 200:
                         content = r.content
-                        img_bytes_list.append(content)
-                        with open(cache_path, 'wb') as f:
-                            f.write(content)
-                            
+                        # Validate that we got actual image data (not empty or too small)
+                        if content and len(content) > 100:  # At least 100 bytes
+                            if attempt > 0:
+                                print(f"   ✅ Image retry successful: {url_short} ({len(content)} bytes)")
+                            return content
+                        else:
+                            if attempt < max_attempts - 1:
+                                print(f"   ⚠️ Image too small ({len(content)} bytes), retrying: {url_short}")
+            except requests.exceptions.Timeout:
+                if attempt < max_attempts - 1:
+                    print(f"   ⏱️ Timeout on attempt {attempt + 1}/{max_attempts}, retrying: {url_short}")
+                    time.sleep(0.5 * (attempt + 1))  # Exponential backoff
+                    continue
+                else:
+                    print(f"   ❌ Timeout after {max_attempts} attempts: {url_short}")
             except Exception as e:
-                # Log silently to file
-                log_msg(f"Error downloading {url}: {e}", -1)
-            
+                # Only log on final attempt to avoid spam
+                if attempt == max_attempts - 1:
+                    print(f"   ❌ Failed after {max_attempts} attempts: {url_short} - {str(e)[:50]}")
+                    log_msg(f"Error downloading {url} after {max_attempts} attempts: {e}", -1)
+                elif attempt < max_attempts - 1:
+                    print(f"   ⚠️ Error on attempt {attempt + 1}/{max_attempts}, retrying: {url_short} - {str(e)[:50]}")
+                    time.sleep(0.5 * (attempt + 1))  # Exponential backoff
+                    continue
+        return None
+    
+    if not image_urls:
+        return []
+    
+    # Fetch all images in parallel (max 3-5 images per ad typically)
+    img_bytes_list = []
+    with ThreadPoolExecutor(max_workers=min(len(image_urls), 5)) as executor:
+        results = executor.map(lambda url: fetch_single_image(url, timeout), image_urls)
+        img_bytes_list = [img for img in results if img is not None]
+    
     return img_bytes_list

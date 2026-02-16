@@ -448,7 +448,10 @@ def run_parallel_ai(df: pd.DataFrame, run_ts: str, job_id: str, num_workers: int
     print(f"{'='*80}")
     print(f"   Total Ads: {total}")
     print(f"   Workers: {num_workers}")
-    print(f"   Model: {config.gemini_model}")
+    print(f"   Models:")
+    print(f"      📋 Promo Check:         {config.gemini_model_promo_check}")
+    print(f"      📋 Classification:      {config.gemini_model_classification}")
+    print(f"      📋 Dually Verification: {config.gemini_model_dually_verification}")
     print(f"   API Keys: {len(config.gemini_api_keys)}")
     print(f"   📋 [Rules.json] Will be loaded by each worker from: {config.rules_json}")
     print(f"\n   🔧 DUALLY DETECTION SETTINGS:")
@@ -660,12 +663,14 @@ def verify_dually_listings(result_df: pd.DataFrame, job_id: str, yoda_instance):
         jobs[job_id]['dually_total'] = int(total_dually)
         jobs[job_id]['dually_verified'] = 0
     
-    # STEP 1: Pre-fetch all images first (fast, uses cache)
+    # STEP 1: Pre-fetch all images first (PARALLEL for speed)
     print("\n   📥 STEP 1: Pre-fetching ALL images from cache...")
     prefetch_start = time.time()
     prefetched_images = {}
     
-    for idx, row in dually_listings.iterrows():
+    # Helper function for parallel fetching
+    def fetch_images_for_ad(idx_row_tuple):
+        idx, row = idx_row_tuple
         ad_id = str(row.get("Ad ID", "")).strip()
         image_urls_str = str(row.get("Image_URLs", "")).strip()
         if image_urls_str:
@@ -676,11 +681,25 @@ def verify_dually_listings(result_df: pd.DataFrame, job_id: str, yoda_instance):
                 # Filter out None/empty images
                 valid_images = [img for img in img_bytes_list if img]
                 if valid_images:
-                    prefetched_images[idx] = (ad_id, valid_images, row)
                     print(f"   📸 Ad {ad_id}: Pre-fetched {len(valid_images)} image(s)")
+                    return (idx, ad_id, valid_images, row)
+        return None
+    
+    # Use ThreadPoolExecutor for parallel I/O-bound image fetching
+    # 10 concurrent threads for downloading images (I/O bound, so more threads = faster)
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+    with ThreadPoolExecutor(max_workers=10) as executor:
+        futures = [executor.submit(fetch_images_for_ad, (idx, row)) 
+                   for idx, row in dually_listings.iterrows()]
+        
+        for future in as_completed(futures):
+            result = future.result()
+            if result:
+                idx, ad_id, valid_images, row = result
+                prefetched_images[idx] = (ad_id, valid_images, row)
     
     prefetch_time = time.time() - prefetch_start
-    print(f"   ✅ Pre-fetched images for {len(prefetched_images)} listings in {prefetch_time:.2f}s")
+    print(f"   ✅ Pre-fetched images for {len(prefetched_images)} listings in {prefetch_time:.2f}s (PARALLEL)")
     
     if len(prefetched_images) == 0:
         print("   ⚠️ No images available for any dually listings. Skipping verification.")
@@ -2890,6 +2909,27 @@ async def start_db_annotation(fetch_id: str, background_tasks: BackgroundTasks):
         "status": JobStatus.PROCESSING,
         "message": f"AI annotation started for {fetch_job.get('total_ads')} trucks"
     }
+
+
+@app.get("/api/db-fetch/{fetch_id}/download")
+async def download_db_fetch_data(fetch_id: str):
+    """Download the fetched database Excel file (before annotation)"""
+    if fetch_id not in jobs:
+        raise HTTPException(status_code=404, detail="Fetch ID not found")
+    
+    fetch_job = jobs[fetch_id]
+    file_path = fetch_job.get('file_path')
+    
+    if not file_path or not os.path.exists(file_path):
+        raise HTTPException(status_code=404, detail="Fetched data file not found")
+    
+    filename = fetch_job.get('output_filename', fetch_job.get('filename', 'db_fetch_data.xlsx'))
+    
+    return FileResponse(
+        path=file_path,
+        filename=filename,
+        media_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+    )
 
 
 @app.post("/api/db-fetch-by-ids")

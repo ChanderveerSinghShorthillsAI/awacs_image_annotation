@@ -22,6 +22,7 @@ with open(os.devnull, 'w') as f, contextlib.redirect_stdout(f), contextlib.redir
 
 from .config_loader import config
 from .utils import log_msg
+from .cache_manager import get_cache_manager
 
 _current_key_info = None
 _key_usage_stats = {}
@@ -87,13 +88,15 @@ def get_new_key(key_queue: Queue):
             _current_key_info = None
             return False
 
-def setup_genai_client():
+def setup_genai_client(model_name: str = None):
     if not _current_key_info:
         raise NoKeysAvailableError("Worker has no API key to use.")
     genai.configure(api_key=_current_key_info['key'])
-    return genai.GenerativeModel(config.gemini_model)
+    # Use provided model_name, or fall back to default config.gemini_model
+    effective_model = model_name or config.gemini_model
+    return genai.GenerativeModel(effective_model)
 
-def log_gemini_caching_info(response, call_type: str, ad_id: str = "", worker_id: int = 0):
+def log_gemini_caching_info(response, call_type: str, ad_id: str = "", worker_id: int = 0, model_name: str = None):
     """
     Logs comprehensive caching information from Gemini API response.
     Prints all caching-related details to terminal for manual inspection.
@@ -171,7 +174,8 @@ def log_gemini_caching_info(response, call_type: str, ad_id: str = "", worker_id
         print(f"     * Request didn't meet minimum token threshold for caching")
     
     # Model-specific cache thresholds (from official docs)
-    model_name = getattr(config, 'gemini_model', 'unknown')
+    if model_name is None:
+        model_name = getattr(config, 'gemini_model', 'unknown')
     print(f"\n📋 MODEL INFO:")
     print(f"   - Model: {model_name}")
     print(f"   - Minimum tokens for caching (from docs):")
@@ -367,22 +371,73 @@ def check_promotional_image(ad_img_bytes: bytes, yoda_instance=None, key_queue: 
     global _key_usage_stats, _token_usage_stats, _current_key_info
     
     if not ad_img_bytes:
-        return False, 0, 0
+        return False, 0, 0, 0
     
     # Ensure we have at least one key to start
     if not _current_key_info:
         if not get_new_key(key_queue):
             raise AllKeysExhaustedError("No more API keys available.")
     
-    prompt_text = """Determine if this image is a placeholder/promotional (no vehicle) or a real truck listing.
+#     prompt_text = """Determine if this image is a placeholder/promotional (no vehicle) or a real truck listing.
 
-DEFAULT: "NO" (real listing). Answer "YES" ONLY if BOTH are true:
-1. ZERO vehicle visible (no truck, wheels, cab, bed, body parts)
-2. Obvious placeholder: "COMING SOON" text, camera icon, black screen, dealership-only, or "No Image" graphic
+# DEFAULT: "NO" (real listing). Answer "YES" ONLY if BOTH are true:
+# 1. ZERO vehicle visible (no truck, wheels, cab, bed, body parts)
+# 2. Obvious placeholder: "COMING SOON" text, camera icon, black screen, dealership-only, or "No Image" graphic
 
-Answer "NO" if ANY vehicle is visible, even if blurry, dark, obscured, or poor quality. When in doubt, answer "NO".
+# Answer "NO" if ANY vehicle is visible, even if blurry, dark, obscured, or poor quality. When in doubt, answer "NO".
 
-Format: "YES" or "NO"
+# Format: "YES" or "NO"
+# """
+    prompt_text = """You are an image validator for truck listings. Your task is to determine if this image shows a REAL truck available for sale, or if it's a promotional/placeholder image that should NOT be annotated.
+
+⚠️ CRITICAL: Your DEFAULT answer should be "NO" (real listing). ONLY answer "YES" if you see CLEAR, UNAMBIGUOUS evidence of promotional/placeholder status.
+
+Answer "YES" (this is a promotional/placeholder - DO NOT classify) ONLY if you see ONE of these CLEAR indicators:
+
+**1. EXPLICIT PROMOTIONAL TEXT** (Answer "YES" ONLY if you see these EXACT phrases or very similar):
+- "COMING SOON", "Coming Soon", "Available Soon"
+- "NEW ARRIVAL PHOTOS COMING SOON", "Photos Coming Soon", "New Arrival Photos Coming Soon"
+- "Image Coming Soon", "Photo Not Available", "No Image Available"
+- "IN OUR PERFECTION PROCESS" (when clearly indicating vehicle is not ready)
+- Text that EXPLICITLY states the vehicle/photos are not available yet
+
+⚠️ IMPORTANT: Do NOT confuse promotional text with:
+- Normal dealership names, logos, or branding
+- Price tags, sale banners, or promotional offers for available vehicles
+- Watermarks or copyright notices
+- General dealership signage or advertising
+- Text that describes an available vehicle (e.g., "New Arrival", "Just In", "Special Price")
+
+**2. COVERED VEHICLE WITH PROMOTIONAL TEXT** (Answer "YES" ONLY if BOTH are true):
+- Vehicle is completely covered by a tarp, sheet, or cover (no identifiable vehicle features visible)
+- AND explicit promotional text (from list above) is clearly present in the image
+
+⚠️ IMPORTANT: A covered vehicle WITHOUT promotional text is NOT promotional - it's a real listing with a covered vehicle.
+
+**3. ZERO VEHICLE VISIBLE** (Answer "YES" ONLY if):
+- ZERO vehicle is visible - no truck, cab, wheels, bed, body, or vehicle features whatsoever
+- AND one of these is present:
+  * Pure placeholder graphics: large camera icon with "no image" text, or "Image Coming Soon" graphic
+  * Completely black/white screen with NO vehicle visible
+  * Only a dealership building/logo with NO vehicle anywhere in frame
+
+**Answer "NO" (this is a real listing - proceed with classification) if:**
+- A clearly visible, identifiable truck/vehicle is shown (even if blurry, dark, or partially obscured)
+- The vehicle is visible and identifiable with NO explicit promotional text from the list above
+- The image shows a real vehicle for sale (even if covered, but without promotional text)
+- You see normal dealership branding, watermarks, or signage (these are NOT promotional indicators)
+- The image has text but it's NOT one of the explicit promotional phrases listed above
+- You have ANY doubt - default to "NO" (real listing)
+
+**CRITICAL DECISION RULES:**
+1. If you see explicit promotional text from the list above → Answer "YES" (promotional)
+2. If vehicle is covered AND explicit promotional text is present → Answer "YES" (promotional)
+3. If vehicle is covered BUT NO promotional text → Answer "NO" (real listing)
+4. If vehicle is visible (even partially) AND NO explicit promotional text → Answer "NO" (real listing)
+5. If you're unsure whether text is promotional → Answer "NO" (real listing) - only flag if text is clearly from the promotional list
+6. When in doubt → Answer "NO" (real listing) - be conservative, only flag clear promotional images
+
+Format your response as: "YES - [reason]" or "NO - [reason]"
 """
     
     parts = [prompt_text]
@@ -424,8 +479,8 @@ Format: "YES" or "NO"
                     "key_idx": _current_key_info['original_index'], "key_total": len(config.gemini_api_keys)
                 })
 
-            log_msg(f"🔍 Pre-checking for promotional/coming soon image (Ad {ad_id})...", worker_id)
-            model = setup_genai_client()
+            log_msg(f"🔍 Pre-checking for promotional/coming soon image (Ad {ad_id}) [Model: {config.gemini_model_promo_check}]...", worker_id)
+            model = setup_genai_client(config.gemini_model_promo_check)
             
             t_start = time.time()
             with open(os.devnull, 'w') as f, contextlib.redirect_stdout(f), contextlib.redirect_stderr(f):
@@ -433,13 +488,14 @@ Format: "YES" or "NO"
             duration = time.time() - t_start
 
             # Log caching information
-            log_gemini_caching_info(response, "PROMOTIONAL CHECK", ad_id, worker_id)
+            log_gemini_caching_info(response, "PROMOTIONAL CHECK", ad_id, worker_id, config.gemini_model_promo_check)
 
             key_idx = _current_key_info['original_index']
             _key_usage_stats.setdefault(key_idx, {'success': 0, 'quota_failure': 0})['success'] += 1
             
             in_tok = getattr(response.usage_metadata, 'prompt_token_count', 0)
             out_tok = getattr(response.usage_metadata, 'candidates_token_count', 0)
+            cached_tok = getattr(response.usage_metadata, 'cached_content_token_count', 0) or 0
             _token_usage_stats['total_tokens'] += (in_tok + out_tok)
             _token_usage_stats['api_calls'] += 1
             
@@ -454,9 +510,9 @@ Format: "YES" or "NO"
             response_text = response.text.strip().upper()
             is_promotional = response_text.startswith("YES")
             
-            log_msg(f"📥 Promotional check: {'🚫 PROMOTIONAL/PLACEHOLDER' if is_promotional else '✅ REAL LISTING'} ({duration:.1f}s)", worker_id)
+            log_msg(f"📥 Promotional check: {'🚫 PROMOTIONAL/PLACEHOLDER' if is_promotional else '✅ REAL LISTING'} ({duration:.1f}s, Cached:{cached_tok})", worker_id)
             
-            return is_promotional, in_tok, out_tok
+            return is_promotional, in_tok, out_tok, cached_tok
 
         except Exception as e:
             error_msg = str(e).lower()
@@ -500,7 +556,7 @@ Format: "YES" or "NO"
                 raise e
     
     # If all retries failed, assume it's not promotional to avoid false positives
-    return False, 0, 0
+    return False, 0, 0, 0
 
 
 def classify_with_gemini(breadcrumb: str, category_data: dict, ad_img_bytes: bytes | None = None, 
@@ -519,20 +575,23 @@ def classify_with_gemini(breadcrumb: str, category_data: dict, ad_img_bytes: byt
     # Initialize promotional check token counters (always track, even if check is skipped)
     promo_check_tokens_in = 0
     promo_check_tokens_out = 0
+    promo_check_tokens_cached = 0
     
     # 🛡️ PRE-CHECK: Detect promotional/coming soon images BEFORE classification 🛡️
     # Skip if already checked by caller (e.g., classify_with_gemini_multi)
     if ad_img_bytes and not skip_promo_check:
         try:
-            is_promotional, promo_in, promo_out = check_promotional_image(
+            is_promotional, promo_in, promo_out, promo_cached = check_promotional_image(
                 ad_img_bytes, yoda_instance, key_queue, worker_id, status_queue, ad_id
             )
             promo_check_tokens_in += promo_in
             promo_check_tokens_out += promo_out
+            promo_check_tokens_cached += promo_cached
             
             if is_promotional:
                 log_msg(f"🚫 Promotional/Coming Soon image detected - returning 'Image Not Clear'", worker_id)
-                return ([("Image Not Clear", 100.0)], promo_check_tokens_in, promo_check_tokens_out)
+                # Return: (results, classify_in, classify_out, classify_cached, promo_in, promo_out, promo_cached)
+                return ([("Image Not Clear", 100.0)], 0, 0, 0, promo_check_tokens_in, promo_check_tokens_out, promo_check_tokens_cached)
         except Exception as e:
             log_msg(f"⚠️ Promotional check failed, proceeding with classification: {e}", worker_id)
             # Continue with classification if check fails
@@ -1118,35 +1177,42 @@ Breadcrumb: "{breadcrumb}"
 ⚠️ EXECUTION ORDER (MANDATORY - FOLLOW EXACTLY):
 1. **FIRST**: Use the Breadcrumb above to determine vehicle intent and marketplace context.
 2. **THEN**: Apply ALL classification rules from the section above.
-3. **IF CONFLICT**: Breadcrumb context overrides ambiguous visual cues.
 --- END CONTEXT ---
 """
 
-    # Build parts array: Cacheable prefix → Context → Image → Category data
-    parts = [cacheable_rules_prefix]
-    parts.append(context_section)
+    # === EXPLICIT CACHING: Separate static (cacheable) from dynamic content ===
+    # Static content: rules prefix + category definitions (same for every ad)
+    # Dynamic content: breadcrumb + image (unique per ad)
     
-    # Log prompt structure for caching analysis
-    cacheable_tokens_approx = len(cacheable_rules_prefix.split()) * 1.3  # Rough token estimate
-    print(f"\n💡 CACHING OPTIMIZATION: 'Frozen Prefix' pattern - {int(cacheable_tokens_approx)}+ tokens of static rules FIRST (cacheable), breadcrumb injected with explicit execution order")
+    if not ad_img_bytes:
+        # Return: (results, classify_in, classify_out, classify_cached, promo_in, promo_out, promo_cached)
+        return ([("Image Not Clear", 100.0)], 0, 0, 0, promo_check_tokens_in, promo_check_tokens_out, promo_check_tokens_cached)
     
-    if ad_img_bytes:
-        parts.append({"inline_data": {"mime_type": "image/jpeg", "data": base64.b64encode(ad_img_bytes).decode("utf-8")}})
-    else:
-        return ([("Image Not Clear", 100.0)], 0, 0, 0)
-    
-    parts.append("\n---\n**Category Reference:**\n")
+    # Build the STATIC cacheable content (rules + category definitions)
+    cacheable_content_parts = [cacheable_rules_prefix]
+    cacheable_content_parts.append("\n---\n**Category Reference:**\n")
     for name, data in category_data.items():
-        parts.append(f"\n**Category: {name}**\nDefinition: {data.get('definition', 'No definition.')}")
+        cacheable_content_parts.append(f"\n**Category: {name}**\nDefinition: {data.get('definition', 'No definition.')}")
         if config.include_example_images:
-            parts.append("Example Image:")
+            cacheable_content_parts.append("Example Image:")
             if data.get("image_bytes"):
-                parts.append({"inline_data": {"mime_type": "image/jpeg", "data": base64.b64encode(data['image_bytes']).decode("utf-8")}})
+                cacheable_content_parts.append({"inline_data": {"mime_type": "image/jpeg", "data": base64.b64encode(data['image_bytes']).decode("utf-8")}})
             else:
-                parts.append("(No example image)")
+                cacheable_content_parts.append("(No example image)")
+    
+    # Build the DYNAMIC content (unique per ad — breadcrumb + image)
+    dynamic_parts = [
+        context_section,
+        {"inline_data": {"mime_type": "image/jpeg", "data": base64.b64encode(ad_img_bytes).decode("utf-8")}}
+    ]
+    
+    # Log prompt structure
+    cacheable_tokens_approx = len(cacheable_rules_prefix.split()) * 1.3
+    print(f"\n💡 EXPLICIT CACHING: {int(cacheable_tokens_approx)}+ static tokens (cached server-side) + dynamic breadcrumb/image per ad")
     
     max_retries = 3
     attempt = 0
+    using_explicit_cache = False
     
     while attempt < max_retries:
         try:
@@ -1175,16 +1241,34 @@ Breadcrumb: "{breadcrumb}"
                     "key_idx": _current_key_info['original_index'], "key_total": len(config.gemini_api_keys)
                 })
 
-            log_msg(f"📤 Sending Request (Key #{_current_key_info['original_index']})...", worker_id)
-            model = setup_genai_client()
+            # === EXPLICIT CACHING: Try new google-genai SDK for cached generation ===
+            cache_mgr = get_cache_manager()
+            log_msg(f"📤 Sending Request (Key #{_current_key_info['original_index']}) [Model: {config.gemini_model_classification}]...", worker_id)
             
             t_start = time.time()
-            with open(os.devnull, 'w') as f, contextlib.redirect_stdout(f), contextlib.redirect_stderr(f):
-                response = model.generate_content(parts, request_options={'timeout': 45})  # OPTIMIZED: 90s -> 45s
+            
+            # Try explicit caching first (uses google-genai SDK internally)
+            response, using_explicit_cache = cache_mgr.generate_with_cache(
+                api_key=_current_key_info['key'],
+                model_name=config.gemini_model_classification,
+                cacheable_content_parts=cacheable_content_parts,
+                context_text=context_section,
+                image_bytes=ad_img_bytes,
+                timeout=45
+            )
+            
+            if not using_explicit_cache:
+                # Fallback: use old google-generativeai SDK (standard non-cached call)
+                print(f"   ℹ️  Falling back to standard (non-cached) API call")
+                model = setup_genai_client(config.gemini_model_classification)
+                all_parts = cacheable_content_parts + dynamic_parts
+                with open(os.devnull, 'w') as f, contextlib.redirect_stdout(f), contextlib.redirect_stderr(f):
+                    response = model.generate_content(all_parts, request_options={'timeout': 45})
+            
             duration = time.time() - t_start
 
             # Log caching information
-            log_gemini_caching_info(response, "MAIN CLASSIFICATION", ad_id, worker_id)
+            log_gemini_caching_info(response, "MAIN CLASSIFICATION", ad_id, worker_id, config.gemini_model_classification)
 
             key_idx = _current_key_info['original_index']
             _key_usage_stats.setdefault(key_idx, {'success': 0, 'quota_failure': 0})['success'] += 1
@@ -1195,6 +1279,15 @@ Breadcrumb: "{breadcrumb}"
             _token_usage_stats['total_tokens'] += (in_tok + out_tok)
             _token_usage_stats['api_calls'] += 1
             
+            # === EXPLICIT CACHING: Track and print per-listing cost savings ===
+            cache_mgr.track_and_print_listing_savings(
+                ad_id=ad_id,
+                cached_tokens=cached_tok,
+                total_input_tokens=in_tok,
+                model_name=config.gemini_model_classification,
+                is_explicit_cache=using_explicit_cache
+            )
+            
             # Print LLM response to terminal
             print(f"\n{'='*80}")
             print(f"[CLASSIFICATION - Ad {ad_id}] LLM Response:")
@@ -1202,16 +1295,12 @@ Breadcrumb: "{breadcrumb}"
             print(response.text)
             print(f"{'='*80}\n")
             
-            log_msg(f"📥 Response ({duration:.1f}s): Tokens In:{in_tok}/Out:{out_tok} (Cached:{cached_tok})", worker_id)
+            log_msg(f"📥 Response ({duration:.1f}s): Tokens In:{in_tok}/Out:{out_tok} (Cached:{cached_tok}) [Explicit Cache: {'YES' if using_explicit_cache else 'NO'}]", worker_id)
             
             # Note: No time.sleep() needed here because Yoda handles the pacing!
-            # Add promotional check tokens to total (promotional check has no caching, so cached_tok is only from main classification)
-            total_in_tok = in_tok + promo_check_tokens_in
-            total_out_tok = out_tok + promo_check_tokens_out
-            total_cached_tok = cached_tok  # Only main classification has caching
-            
-            # Return: (results, input_tokens, output_tokens, cached_input_tokens)
-            return parse_gemini_response(response.text), total_in_tok, total_out_tok, total_cached_tok
+            # Return: (results, classify_in, classify_out, classify_cached, promo_in, promo_out, promo_cached)
+            # Tokens are kept SEPARATE so callers can cost each at the correct model rate
+            return parse_gemini_response(response.text), in_tok, out_tok, cached_tok, promo_check_tokens_in, promo_check_tokens_out, promo_check_tokens_cached
 
         except Exception as e:
             error_msg = str(e).lower()
@@ -1277,7 +1366,7 @@ def classify_with_refinement(categories: list, rule: dict, ad_img_bytes: bytes,
         pair = categories[:2]
         prompt = f"An AI identified a vehicle as possibly a '{pair[0]}' or a '{pair[1]}'.\nYour task is to use this visual test: \"{rule['decision_rule']}\"\nLook for visual cues like Rim Depth (Deep Dish = Dually) and Hub Shape. Analyze the image strictly and output ONLY the final category name."
     else:
-        return None, 0, 0
+        return None, 0, 0, 0
 
     max_retries = 3
     attempt = 0
@@ -1309,19 +1398,20 @@ def classify_with_refinement(categories: list, rule: dict, ad_img_bytes: bytes,
                     "key_idx": _current_key_info['original_index'], "key_total": len(config.gemini_api_keys)
                 })
 
-            log_msg(f"📤 Sending Refinement Request...", worker_id)
-            model = setup_genai_client()
+            log_msg(f"📤 Sending Refinement Request [Model: {config.gemini_model_classification}]...", worker_id)
+            model = setup_genai_client(config.gemini_model_classification)
             with open(os.devnull, 'w') as f, contextlib.redirect_stdout(f), contextlib.redirect_stderr(f):
                  response = model.generate_content([prompt, {"inline_data": {"mime_type": "image/jpeg", "data": base64.b64encode(ad_img_bytes).decode("utf-8")}}], request_options={'timeout': 45})  # OPTIMIZED: 90s -> 45s
             
             # Log caching information
-            log_gemini_caching_info(response, "REFINEMENT", ad_id, worker_id)
+            log_gemini_caching_info(response, "REFINEMENT", ad_id, worker_id, config.gemini_model_classification)
             
             key_idx = _current_key_info['original_index']
             _key_usage_stats.setdefault(key_idx, {'success': 0, 'quota_failure': 0})['success'] += 1
             
             in_tok = getattr(response.usage_metadata, 'prompt_token_count', 0)
             out_tok = getattr(response.usage_metadata, 'candidates_token_count', 0)
+            cached_tok = getattr(response.usage_metadata, 'cached_content_token_count', 0) or 0
             _token_usage_stats['total_tokens'] += (in_tok + out_tok)
             _token_usage_stats['api_calls'] += 1
             
@@ -1332,7 +1422,7 @@ def classify_with_refinement(categories: list, rule: dict, ad_img_bytes: bytes,
             print(response.text)
             print(f"{'='*80}\n")
             
-            log_msg(f"📥 Refinement Response: {repr(response.text)} (In:{in_tok}/Out:{out_tok})", worker_id)
+            log_msg(f"📥 Refinement Response: {repr(response.text)} (In:{in_tok}/Out:{out_tok}, Cached:{cached_tok})", worker_id)
             
             result_str = None
             if is_feature_checklist:
@@ -1357,7 +1447,7 @@ def classify_with_refinement(categories: list, rule: dict, ad_img_bytes: bytes,
                         result_str = c
                         break
             
-            return result_str, in_tok, out_tok
+            return result_str, in_tok, out_tok, cached_tok
                 
         except Exception as e:
             error_msg = str(e).lower()
@@ -1390,27 +1480,32 @@ def classify_with_gemini_multi(breadcrumb: str, category_data: dict, img_bytes_l
     Uses MOSAIC Strategy + YODA.
     """
     if not img_bytes_list:
-        res, t_in, t_out, t_cached = classify_with_gemini(breadcrumb, category_data, None, yoda_instance, key_queue, worker_id, status_queue, ad_id, skip_promo_check=True)
-        return res, t_in, t_out, t_cached
+        res, cls_in, cls_out, cls_cached, p_in, p_out, p_cached = classify_with_gemini(breadcrumb, category_data, None, yoda_instance, key_queue, worker_id, status_queue, ad_id, skip_promo_check=True)
+        return res, cls_in, cls_out, cls_cached, p_in, p_out, p_cached
     
-    total_in = 0
-    total_out = 0
-    total_cached = 0
+    # Separate token tracking for accurate per-model costing
+    total_classify_in = 0
+    total_classify_out = 0
+    total_classify_cached = 0
+    total_promo_in = 0
+    total_promo_out = 0
+    total_promo_cached = 0
     all_results = []
     
     # 🛡️ PRE-CHECK: Check first image for promotional/coming soon BEFORE processing
     # This saves API costs by catching promotional images early
     if img_bytes_list and len(img_bytes_list) > 0:
         try:
-            is_promotional, promo_in, promo_out = check_promotional_image(
+            is_promotional, promo_in, promo_out, promo_cached = check_promotional_image(
                 img_bytes_list[0], yoda_instance, key_queue, worker_id, status_queue, ad_id
             )
-            total_in += promo_in
-            total_out += promo_out
+            total_promo_in += promo_in
+            total_promo_out += promo_out
+            total_promo_cached += promo_cached
             
             if is_promotional:
                 log_msg(f"🚫 Promotional/Coming Soon image detected on first image - returning 'Image Not Clear'", worker_id)
-                return [("Image Not Clear", 100.0)], total_in, total_out, 0
+                return [("Image Not Clear", 100.0)], 0, 0, 0, total_promo_in, total_promo_out, total_promo_cached
         except Exception as e:
             log_msg(f"⚠️ Promotional check failed, proceeding with classification: {e}", worker_id)
             # Continue with classification if check fails
@@ -1426,38 +1521,48 @@ def classify_with_gemini_multi(breadcrumb: str, category_data: dict, img_bytes_l
             # Save mosaic if enabled in config
             save_mosaic_image(mosaic_bytes, ad_id, "classification")
             
-            res, t_in, t_out, t_cached = classify_with_gemini(breadcrumb, category_data, mosaic_bytes, yoda_instance, key_queue, worker_id, status_queue, ad_id, skip_promo_check=True)
-            total_in += t_in
-            total_out += t_out
-            total_cached += t_cached
+            res, cls_in, cls_out, cls_cached, p_in, p_out, p_cached = classify_with_gemini(breadcrumb, category_data, mosaic_bytes, yoda_instance, key_queue, worker_id, status_queue, ad_id, skip_promo_check=True)
+            total_classify_in += cls_in
+            total_classify_out += cls_out
+            total_classify_cached += cls_cached
+            total_promo_in += p_in
+            total_promo_out += p_out
+            total_promo_cached += p_cached
             all_results.extend(res)
             
         except Exception as e:
             log_msg(f"⚠️ Mosaic failed ({e}). Falling back to single image.", worker_id)
             # Fallback to single image
-            res, t_in, t_out, t_cached = classify_with_gemini(breadcrumb, category_data, img_bytes_list[0], yoda_instance, key_queue, worker_id, status_queue, ad_id, skip_promo_check=True)
-            total_in += t_in
-            total_out += t_out
-            total_cached += t_cached
+            res, cls_in, cls_out, cls_cached, p_in, p_out, p_cached = classify_with_gemini(breadcrumb, category_data, img_bytes_list[0], yoda_instance, key_queue, worker_id, status_queue, ad_id, skip_promo_check=True)
+            total_classify_in += cls_in
+            total_classify_out += cls_out
+            total_classify_cached += cls_cached
+            total_promo_in += p_in
+            total_promo_out += p_out
+            total_promo_cached += p_cached
             all_results.extend(res)
     else:
         # Single Image Case
         log_msg(f"📸 Single Image Classification...", worker_id)
-        res, t_in, t_out, t_cached = classify_with_gemini(breadcrumb, category_data, img_bytes_list[0], yoda_instance, key_queue, worker_id, status_queue, ad_id, skip_promo_check=True)
-        total_in += t_in
-        total_out += t_out
-        total_cached += t_cached
+        res, cls_in, cls_out, cls_cached, p_in, p_out, p_cached = classify_with_gemini(breadcrumb, category_data, img_bytes_list[0], yoda_instance, key_queue, worker_id, status_queue, ad_id, skip_promo_check=True)
+        total_classify_in += cls_in
+        total_classify_out += cls_out
+        total_classify_cached += cls_cached
+        total_promo_in += p_in
+        total_promo_out += p_out
+        total_promo_cached += p_cached
         all_results.extend(res)
     # -----------------------------
 
     if not all_results:
-        return [], total_in, total_out, total_cached
+        return [], total_classify_in, total_classify_out, total_classify_cached, total_promo_in, total_promo_out, total_promo_cached
 
     combined = {cat: score for cat, score in all_results if cat and (cat not in (c:={}) or score > c[cat])}
     normalized = {cat: round(score - (score - 90) * 0.8, 1) if score > 95 else round(score, 1) for cat, score in combined.items()}
     final_res = sorted(normalized.items(), key=lambda x: x[1], reverse=True)[:3]
     
-    return final_res, total_in, total_out, total_cached
+    # Return: (results, classify_in, classify_out, classify_cached, promo_in, promo_out, promo_cached)
+    return final_res, total_classify_in, total_classify_out, total_classify_cached, total_promo_in, total_promo_out, total_promo_cached
 
 def get_key_usage_stats(): return {"stats": _key_usage_stats}
 def get_token_usage_stats(): return _token_usage_stats
@@ -1737,7 +1842,7 @@ def verify_dually_with_llm(ad_img_bytes_list: list[bytes], yoda_instance, key_qu
     # Filter out None/empty images
     valid_images = [img for img in ad_img_bytes_list if img]
     if not valid_images:
-        return False, 0.0, 0, 0
+        return False, 0.0, 0, 0, 0
     
     # Create mosaic from all available images for efficiency (reduces tokens significantly)
     mosaic_image = create_image_mosaic_multi(valid_images)
@@ -1746,9 +1851,12 @@ def verify_dually_with_llm(ad_img_bytes_list: list[bytes], yoda_instance, key_qu
     # Save mosaic if enabled in config
     save_mosaic_image(mosaic_image, ad_id, "dually_verify")
     
-    # Detailed prompt for accurate Dually verification (ENHANCED - More Aggressive)
+    # === EXPLICIT CACHING: Separate static rules from dynamic content ===
+    # The intro text varies per ad (image count), but the bulk of the rules are static
+    
+    # Dynamic intro (varies per ad based on number of images)
     if len(valid_images) > 1:
-        prompt_text = f"""You are an expert vehicle analyst specializing in wheel configuration detection.
+        dynamic_intro = f"""You are an expert vehicle analyst specializing in wheel configuration detection.
 
 Your CRITICAL task is to determine if this vehicle has DUAL REAR WHEELS (Dually) on a SINGLE REAR AXLE.
 
@@ -1756,7 +1864,7 @@ You have been provided with a MOSAIC image showing {image_count_text} of this ve
 
 ⚠️ IMPORTANT: False NEGATIVES are a major problem - we are MISSING many Duallys. Be thorough and look for ALL indicators across ALL views in the mosaic."""
     else:
-        prompt_text = f"""You are an expert vehicle analyst specializing in wheel configuration detection.
+        dynamic_intro = f"""You are an expert vehicle analyst specializing in wheel configuration detection.
 
 Your CRITICAL task is to determine if this vehicle has DUAL REAR WHEELS (Dually) on a SINGLE REAR AXLE.
 
@@ -1764,7 +1872,8 @@ You have been provided with 1 image of this vehicle. Examine it carefully to det
 
 ⚠️ IMPORTANT: False NEGATIVES are a major problem - we are MISSING many Duallys. Be thorough and look for ALL indicators."""
     
-    prompt_text += """
+    # STATIC cacheable rules (same for every dually verification)
+    cacheable_dually_rules = """
 
 ==== WHAT IS A DUALLY (FOR THIS TASK)? ====
 A "Dually" truck has TWO separate wheels/tires mounted on EACH SIDE of the rear axle:
@@ -1928,17 +2037,11 @@ Examples:
 - "NO - I can clearly see a single thin rear tire on each side with no dual pattern"
 - "NO - Vehicle has tandem rear axles (multiple tires in length), which is excluded"
 """
-
-    parts = [prompt_text]
-    # Add mosaic image (combines all images into one for token efficiency)
-    parts.append({
-        "inline_data": {
-            "mime_type": "image/jpeg", 
-            "data": base64.b64encode(mosaic_image).decode("utf-8")
-        }
-    })
     
-    print(f"[DUALLY VERIFY] Ad {ad_id}: Sending mosaic of {len(valid_images)} image(s) for verification (COST OPTIMIZED)")
+    # Build cacheable parts list (for cache_manager)
+    cacheable_dually_parts = [cacheable_dually_rules]
+    
+    print(f"[DUALLY VERIFY] Ad {ad_id}: Sending mosaic of {len(valid_images)} image(s) for verification (EXPLICIT CACHE ENABLED)")
     
     max_retries = 3
     attempt = 0
@@ -1971,24 +2074,58 @@ Examples:
                     "key_idx": _current_key_info['original_index'], "key_total": len(config.gemini_api_keys)
                 })
 
-            log_msg(f"🔍 Verifying Dually for Ad {ad_id} (Key #{_current_key_info['original_index']})...", worker_id)
-            model = setup_genai_client()
+            # === EXPLICIT CACHING: Try cached generation for dually verification ===
+            cache_mgr = get_cache_manager()
+            log_msg(f"🔍 Verifying Dually for Ad {ad_id} (Key #{_current_key_info['original_index']}) [Model: {config.gemini_model_dually_verification}]...", worker_id)
             
             t_start = time.time()
-            with open(os.devnull, 'w') as f, contextlib.redirect_stdout(f), contextlib.redirect_stderr(f):
-                response = model.generate_content(parts, request_options={'timeout': 45})  # OPTIMIZED: 90s -> 45s
+            
+            # Dynamic content = intro text + image (combined as context_text with image bytes)
+            response, using_explicit_cache = cache_mgr.generate_with_cache(
+                api_key=_current_key_info['key'],
+                model_name=config.gemini_model_dually_verification,
+                cacheable_content_parts=cacheable_dually_parts,
+                context_text=dynamic_intro,
+                image_bytes=mosaic_image,
+                timeout=45
+            )
+            
+            if not using_explicit_cache:
+                # Fallback: use old google-generativeai SDK (standard non-cached call)
+                print(f"   ℹ️  Dually: Falling back to standard (non-cached) API call")
+                model = setup_genai_client(config.gemini_model_dually_verification)
+                parts = [dynamic_intro + cacheable_dually_rules]
+                parts.append({
+                    "inline_data": {
+                        "mime_type": "image/jpeg", 
+                        "data": base64.b64encode(mosaic_image).decode("utf-8")
+                    }
+                })
+                with open(os.devnull, 'w') as f, contextlib.redirect_stdout(f), contextlib.redirect_stderr(f):
+                    response = model.generate_content(parts, request_options={'timeout': 45})
+            
             duration = time.time() - t_start
 
             # Log caching information
-            log_gemini_caching_info(response, "DUALLY VERIFICATION", ad_id, worker_id)
+            log_gemini_caching_info(response, "DUALLY VERIFICATION", ad_id, worker_id, config.gemini_model_dually_verification)
 
             key_idx = _current_key_info['original_index']
             _key_usage_stats.setdefault(key_idx, {'success': 0, 'quota_failure': 0})['success'] += 1
             
             in_tok = getattr(response.usage_metadata, 'prompt_token_count', 0)
             out_tok = getattr(response.usage_metadata, 'candidates_token_count', 0)
+            cached_tok = getattr(response.usage_metadata, 'cached_content_token_count', 0) or 0
             _token_usage_stats['total_tokens'] += (in_tok + out_tok)
             _token_usage_stats['api_calls'] += 1
+            
+            # === EXPLICIT CACHING: Track dually verification savings ===
+            cache_mgr.track_and_print_listing_savings(
+                ad_id=ad_id,
+                cached_tokens=cached_tok,
+                total_input_tokens=in_tok,
+                model_name=config.gemini_model_dually_verification,
+                is_explicit_cache=using_explicit_cache
+            )
             
             # Print LLM response to terminal
             print(f"\n{'='*80}")
@@ -2004,9 +2141,9 @@ Examples:
             # Confidence based on response clarity
             confidence = 95.0 if is_dually else 5.0
             
-            log_msg(f"📥 Dually Verification Result: {'✅ CONFIRMED' if is_dually else '❌ NOT DUALLY'} ({duration:.1f}s)", worker_id)
+            log_msg(f"📥 Dually Verification Result: {'✅ CONFIRMED' if is_dually else '❌ NOT DUALLY'} ({duration:.1f}s, Cached:{cached_tok}) [Explicit Cache: {'YES' if using_explicit_cache else 'NO'}]", worker_id)
             
-            return is_dually, confidence, in_tok, out_tok
+            return is_dually, confidence, in_tok, out_tok, cached_tok
 
         except Exception as e:
             error_msg = str(e).lower()
@@ -2050,7 +2187,7 @@ Examples:
                 log_msg(f"❌ Unexpected Dually Verification Error: {e}", worker_id)
                 raise e
     
-    return False, 0.0, 0, 0
+    return False, 0.0, 0, 0, 0
 
 # new code for classification
 

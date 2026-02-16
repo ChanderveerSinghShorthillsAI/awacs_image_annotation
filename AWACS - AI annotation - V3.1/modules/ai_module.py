@@ -57,7 +57,7 @@ def _verify_single_dually(verification_job: dict, key_queue, status_queue,
     try:
         # Call LLM verification with ALL images (Yoda handles rate limiting)
         print(f"   [W-{worker_id}] 📤 Sending Ad {ad_id} to LLM for verification...")
-        is_dually, confidence, in_tok, out_tok = classification.verify_dually_with_llm(
+        is_dually, confidence, in_tok, out_tok, cached_tok = classification.verify_dually_with_llm(
             img_bytes_list, 
             yoda_instance, 
             key_queue, 
@@ -66,8 +66,8 @@ def _verify_single_dually(verification_job: dict, key_queue, status_queue,
             status_queue=status_queue
         )
         
-        # Calculate cost for this verification
-        cost = calculate_cost_cents(in_tok, out_tok, config.gemini_model)
+        # Calculate cost for this verification (with cached token discount)
+        cost = calculate_cost_cents(in_tok, out_tok, config.gemini_model_dually_verification, cached_tok)
         listing_time = time.time() - listing_verify_start
         
         # Prepare result
@@ -79,6 +79,7 @@ def _verify_single_dually(verification_job: dict, key_queue, status_queue,
             'cost': cost,
             'in_tokens': in_tok,
             'out_tokens': out_tok,
+            'cached_tokens': cached_tok,
             'listing_time': listing_time,
             'row_data': row_data,
             'success': True
