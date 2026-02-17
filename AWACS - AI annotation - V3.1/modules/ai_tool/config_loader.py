@@ -29,14 +29,14 @@ def load_config():
         config.rules_json = os.path.join(project_root, config_parser.get('Paths', 'RulesJson'))
         config.project_root = project_root
 
-        # Settings - Qwen model via HuggingFace
-        config.qwen_model = config_parser.get('Settings', 'QwenModel', fallback='Qwen/Qwen2.5-VL-72B-Instruct')
-        # Keep gemini_model* attributes pointing to the Qwen model so the rest of the codebase
+        # Settings - Mistral AI model
+        config.mistral_model = config_parser.get('Settings', 'MistralModel', fallback='mistral-medium-2508')
+        # Keep gemini_model* attributes pointing to the Mistral model so the rest of the codebase
         # (which references config.gemini_model_*) works without changes
-        config.gemini_model = config.qwen_model
-        config.gemini_model_promo_check = config.qwen_model
-        config.gemini_model_classification = config.qwen_model
-        config.gemini_model_dually_verification = config.qwen_model
+        config.gemini_model = config.mistral_model
+        config.gemini_model_promo_check = config.mistral_model
+        config.gemini_model_classification = config.mistral_model
+        config.gemini_model_dually_verification = config.mistral_model
         config.max_images = config_parser.getint('Settings', 'MaxImagesPerAd')
         config.ai_checkpoint_interval = config_parser.getint('Settings', 'AiCheckpointInterval', fallback=5)
         config.scraper_checkpoint_interval = config_parser.getint('Settings', 'ScraperCheckpointInterval', fallback=50)
@@ -59,9 +59,9 @@ def load_config():
         config.db_api_client_secret = config_parser.get('DB_API', 'ClientSecret', fallback='')
         config.db_api_grant_type = config_parser.get('DB_API', 'GrantType', fallback='client_credentials')
 
-        # HuggingFace API Keys - reads from [HuggingFace_Keys] section
+        # Mistral AI API Keys - reads from [Mistral_Keys] section
         config.gemini_api_keys_info = []
-        for i, (_, key) in enumerate(config_parser.items('HuggingFace_Keys')):
+        for i, (_, key) in enumerate(config_parser.items('Mistral_Keys')):
             config.gemini_api_keys_info.append({
                 "key": key,
                 "original_index": i + 1,
@@ -72,7 +72,7 @@ def load_config():
         config.gemini_api_keys = [info['key'] for info in config.gemini_api_keys_info]
 
         if not config.gemini_api_keys:
-            raise ValueError("No HuggingFace API keys found in [HuggingFace_Keys] section of config.ini.")
+            raise ValueError("No Mistral API keys found in [Mistral_Keys] section of config.ini.")
 
     except (configparser.NoSectionError, configparser.NoOptionError, ValueError) as e:
         print(f"❌ CONFIGURATION ERROR in config.ini: {e}"); sys.exit(1)

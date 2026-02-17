@@ -16,8 +16,8 @@ try:
 except ImportError:
     OPENCV_AVAILABLE = False
 
-# HuggingFace InferenceClient for Qwen2.5-VL-72B
-from huggingface_hub import InferenceClient
+# Mistral AI SDK for mistral-medium-2508
+from mistralai import Mistral
 
 from .config_loader import config
 from .utils import log_msg, initialize_logging, calculate_cost_cents
@@ -69,12 +69,12 @@ def get_new_key(key_queue: Queue) -> bool:
         except (queue.Empty, EOFError):
             return False
 
-def setup_hf_client(model_name=None):
-    """Setup and return a HuggingFace InferenceClient. Uses the current key's API key."""
+def setup_mistral_client(model_name=None):
+    """Setup and return a Mistral AI client. Uses the current key's API key."""
     if not _current_key_info:
         raise AllKeysExhaustedError("No key configured")
     
-    client = InferenceClient(
+    client = Mistral(
         api_key=_current_key_info['key'],
     )
     return client
@@ -108,23 +108,23 @@ def _build_multi_image_vision_message(prompt_text: str, image_bytes_list: list, 
         })
     return {"role": "user", "content": content}
 
-def _extract_hf_response(output):
-    """Extract text, prompt_tokens, completion_tokens from HuggingFace chat_completion output."""
+def _extract_mistral_response(output):
+    """Extract text, prompt_tokens, completion_tokens from Mistral AI chat.complete output."""
     text = output.choices[0].message.content or ""
     usage = getattr(output, 'usage', None)
     prompt_tokens = getattr(usage, 'prompt_tokens', 0) if usage else 0
     completion_tokens = getattr(usage, 'completion_tokens', 0) if usage else 0
     return text, prompt_tokens, completion_tokens
 
-def log_hf_token_info(in_tok: int, out_tok: int, call_type: str, ad_id: str = "", worker_id: int = -1, model_name: str = None):
+def log_mistral_token_info(in_tok: int, out_tok: int, call_type: str, ad_id: str = "", worker_id: int = -1, model_name: str = None):
     """
-    Logs token usage information from HuggingFace API response.
-    Simplified version — no Gemini-specific caching analysis.
+    Logs token usage information from Mistral AI API response.
+    Simplified version — no caching analysis.
     """
     if model_name is None:
-        model_name = getattr(config, 'qwen_model', 'unknown')
+        model_name = getattr(config, 'mistral_model', 'unknown')
     print(f"\n{'#'*80}")
-    print(f"# HF QWEN TOKEN USAGE - {call_type}")
+    print(f"# MISTRAL TOKEN USAGE - {call_type}")
     if ad_id:
         print(f"# Ad ID: {ad_id}")
     print(f"# Model: {model_name}")
@@ -394,22 +394,22 @@ Format your response as: "YES - [reason]" or "NO - [reason]"
                 })
 
             log_msg(f"🔍 Pre-checking for promotional/coming soon image (Ad {ad_id}) [Model: {config.gemini_model_promo_check}]...", worker_id)
-            client = setup_hf_client()
+            client = setup_mistral_client()
             
             t_start = time.time()
             messages = [_build_vision_message(prompt_text, ad_img_bytes)]
-            output = client.chat_completion(
-                messages=messages,
+            output = client.chat.complete(
                 model=config.gemini_model_promo_check,
+                messages=messages,
                 max_tokens=200,
             )
             duration = time.time() - t_start
 
-            response_text_raw, in_tok, out_tok = _extract_hf_response(output)
-            cached_tok = 0  # No caching with HuggingFace
+            response_text_raw, in_tok, out_tok = _extract_mistral_response(output)
+            cached_tok = 0  # No caching with Mistral
 
             # Log token info
-            log_hf_token_info(in_tok, out_tok, "PROMOTIONAL CHECK", ad_id, worker_id, config.gemini_model_promo_check)
+            log_mistral_token_info(in_tok, out_tok, "PROMOTIONAL CHECK", ad_id, worker_id, config.gemini_model_promo_check)
 
             key_idx = _current_key_info['original_index']
             _key_usage_stats.setdefault(key_idx, {'success': 0, 'quota_failure': 0})['success'] += 1
@@ -1156,26 +1156,26 @@ Breadcrumb: "{breadcrumb}"
                 })
 
             log_msg(f"📤 Sending Request (Key #{_current_key_info['original_index']}) [Model: {config.gemini_model_classification}]...", worker_id)
-            client = setup_hf_client()
+            client = setup_mistral_client()
             
             t_start = time.time()
             
             # Build vision message with ad image (skip example images to reduce token count)
             messages = [_build_vision_message(full_prompt_text, ad_img_bytes)]
             
-            output = client.chat_completion(
-                messages=messages,
+            output = client.chat.complete(
                 model=config.gemini_model_classification,
+                messages=messages,
                 max_tokens=500,
             )
             
             duration = time.time() - t_start
 
-            response_text_raw, in_tok, out_tok = _extract_hf_response(output)
-            cached_tok = 0  # No caching with HuggingFace
+            response_text_raw, in_tok, out_tok = _extract_mistral_response(output)
+            cached_tok = 0  # No caching with Mistral
 
             # Log token info
-            log_hf_token_info(in_tok, out_tok, "MAIN CLASSIFICATION", ad_id, worker_id, config.gemini_model_classification)
+            log_mistral_token_info(in_tok, out_tok, "MAIN CLASSIFICATION", ad_id, worker_id, config.gemini_model_classification)
 
             key_idx = _current_key_info['original_index']
             _key_usage_stats.setdefault(key_idx, {'success': 0, 'quota_failure': 0})['success'] += 1
@@ -1292,20 +1292,20 @@ def classify_with_refinement(categories: list, rule: dict, ad_img_bytes: bytes,
                 })
 
             log_msg(f"📤 Sending Refinement Request [Model: {config.gemini_model_classification}]...", worker_id)
-            client = setup_hf_client()
+            client = setup_mistral_client()
             
             messages = [_build_vision_message(prompt, ad_img_bytes)]
-            output = client.chat_completion(
-                messages=messages,
+            output = client.chat.complete(
                 model=config.gemini_model_classification,
+                messages=messages,
                 max_tokens=500,
             )
             
-            response_text_raw, in_tok, out_tok = _extract_hf_response(output)
-            cached_tok = 0  # No caching with HuggingFace
+            response_text_raw, in_tok, out_tok = _extract_mistral_response(output)
+            cached_tok = 0  # No caching with Mistral
 
             # Log token info
-            log_hf_token_info(in_tok, out_tok, "REFINEMENT", ad_id, worker_id, config.gemini_model_classification)
+            log_mistral_token_info(in_tok, out_tok, "REFINEMENT", ad_id, worker_id, config.gemini_model_classification)
             
             key_idx = _current_key_info['original_index']
             _key_usage_stats.setdefault(key_idx, {'success': 0, 'quota_failure': 0})['success'] += 1
@@ -1975,24 +1975,24 @@ Examples:
                 })
 
             log_msg(f"🔍 Verifying Dually for Ad {ad_id} (Key #{_current_key_info['original_index']}) [Model: {config.gemini_model_dually_verification}]...", worker_id)
-            client = setup_hf_client()
+            client = setup_mistral_client()
             
             t_start = time.time()
             
             messages = [_build_vision_message(full_dually_prompt, mosaic_image)]
-            output = client.chat_completion(
-                messages=messages,
+            output = client.chat.complete(
                 model=config.gemini_model_dually_verification,
+                messages=messages,
                 max_tokens=300,
             )
             
             duration = time.time() - t_start
 
-            response_text_raw, in_tok, out_tok = _extract_hf_response(output)
-            cached_tok = 0  # No caching with HuggingFace
+            response_text_raw, in_tok, out_tok = _extract_mistral_response(output)
+            cached_tok = 0  # No caching with Mistral
 
             # Log token info
-            log_hf_token_info(in_tok, out_tok, "DUALLY VERIFICATION", ad_id, worker_id, config.gemini_model_dually_verification)
+            log_mistral_token_info(in_tok, out_tok, "DUALLY VERIFICATION", ad_id, worker_id, config.gemini_model_dually_verification)
 
             key_idx = _current_key_info['original_index']
             _key_usage_stats.setdefault(key_idx, {'success': 0, 'quota_failure': 0})['success'] += 1

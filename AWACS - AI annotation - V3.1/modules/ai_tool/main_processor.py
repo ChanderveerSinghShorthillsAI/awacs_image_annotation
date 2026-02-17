@@ -10,7 +10,7 @@ import queue
 from .config_loader import config
 # ADDED darth_vision TO IMPORTS
 from . import classification, web_utils, data_processing, utils, darth_vision
-# from .cache_manager import get_cache_manager  # Disabled: Gemini-specific caching not used with HuggingFace/Qwen
+# from .cache_manager import get_cache_manager  # Disabled: Gemini-specific caching not used with Mistral AI
 from ai_tool.rate_limiter import Yoda 
 
 

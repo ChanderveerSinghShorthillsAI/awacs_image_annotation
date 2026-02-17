@@ -111,37 +111,24 @@ def calculate_cost_cents(input_tokens, output_tokens, model_name, cached_input_t
     Args:
         input_tokens: Total input tokens (including cached)
         output_tokens: Output tokens
-        model_name: Model name (supports Gemini and Qwen/HuggingFace models)
+        model_name: Model name (supports Mistral AI models)
         cached_input_tokens: Number of input tokens that were served from cache (default: 0)
     """
     model = model_name.lower()
     
     # --- PRICING TABLE (Per 1 Million Tokens) ---
     
-    # Qwen models via HuggingFace/Nebius — pricing varies by provider
-    # Set to 0 for now; update when pricing is confirmed
-    if "qwen" in model:
-        price_input_per_m = 0.0
-        price_output_per_m = 0.0
-        price_cached_input_per_m = 0.0
-        print(f"Calculating cost for {model_name} - HuggingFace/Qwen (pricing TBD, reporting 0)")
-        return 0.0
+    # Mistral AI models
+    # mistral-medium-2508 (Mistral Medium 3.1): $2/M input, $6/M output
+    if "mistral" in model:
+        price_input_per_m = 2.0
+        price_output_per_m = 6.0
+        price_cached_input_per_m = 0.0  # No caching with Mistral
     
-    # Default: Gemini 2.5 Flash (Standard)
-    price_input_per_m = 0.30
-    price_output_per_m = 2.50
-    price_cached_input_per_m = 0.03
-
-    # Gemini 2.5 Flash-Lite
-    if "2.5" in model and "lite" in model:
-        price_input_per_m = 0.10
-        price_output_per_m = 0.40
-        price_cached_input_per_m = 0.01
-    
-    # Gemini 2.0 Flash-Lite (legacy)
-    elif "lite" in model or "8b" in model:
-        price_input_per_m = 0.075
-        price_output_per_m = 0.30
+    # Default fallback (Gemini pricing kept for reference)
+    else:
+        price_input_per_m = 0.30
+        price_output_per_m = 2.50
         price_cached_input_per_m = 0.03
     
     # --- CALCULATION ---
@@ -151,13 +138,7 @@ def calculate_cost_cents(input_tokens, output_tokens, model_name, cached_input_t
                (cached_input_tokens / 1_000_000 * price_cached_input_per_m) + \
                (output_tokens / 1_000_000 * price_output_per_m)
     
-    if cached_input_tokens > 0:
-        savings_usd = (cached_input_tokens / 1_000_000 * (price_input_per_m - price_cached_input_per_m))
-        savings_percent = ((price_input_per_m - price_cached_input_per_m) / price_input_per_m) * 100
-        print(f"Calculating cost for {model_name} - Input: ${price_input_per_m} | Cached: ${price_cached_input_per_m} | Output: ${price_output_per_m}")
-        print(f"   💰 Cache savings: {cached_input_tokens:,} cached tokens saved ${savings_usd*100:.4f}¢ ({savings_percent:.1f}% discount)")
-    else:
-        print(f"Calculating cost for {model_name} - Input: ${price_input_per_m} | Output: ${price_output_per_m}")
+    print(f"Calculating cost for {model_name} - Input: ${price_input_per_m}/M | Output: ${price_output_per_m}/M")
                
     # Convert to Cents
     return round(cost_usd * 100, 4)

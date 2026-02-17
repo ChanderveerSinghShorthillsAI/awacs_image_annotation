@@ -9,8 +9,8 @@ webdriver-manager>=4.0.0
 # For making HTTP requests to download images
 requests>=2.31.0
 
-# For interacting with the Google Gemini API
-google-generativeai>=0.7.1
+# For interacting with the Mistral AI API
+mistralai>=1.0.0
 
 # For progress bar
 tqdm>=4.66.4
