@@ -16,199 +16,121 @@ try:
 except ImportError:
     OPENCV_AVAILABLE = False
 
-# This silences the initial import.
-with open(os.devnull, 'w') as f, contextlib.redirect_stdout(f), contextlib.redirect_stderr(f):
-    import google.generativeai as genai
+# HuggingFace InferenceClient for Qwen2.5-VL-72B
+from huggingface_hub import InferenceClient
 
 from .config_loader import config
-from .utils import log_msg
-from .cache_manager import get_cache_manager
+from .utils import log_msg, initialize_logging, calculate_cost_cents
 
-_current_key_info = None
 _key_usage_stats = {}
 _token_usage_stats = {'total_tokens': 0, 'api_calls': 0}
 _current_key_info = None
 
-# Tracks how many times we have resurrected the key pool
-_phoenix_cycle_count = 0
-
+# Custom exception for when all API keys are exhausted
 class AllKeysExhaustedError(Exception):
     pass
 
 class NoKeysAvailableError(Exception):
     pass
 
+# Global Phoenix system
+_phoenix_cycle_count = 0
+_phoenix_exhausted_keys = set()  # Track which keys got exhausted in current cycle
+
 def initialize_all_trackers(worker_key_pool: list = None):
-    global _key_usage_stats, _token_usage_stats, _current_key_info, _phoenix_cycle_count
+    global _key_usage_stats, _token_usage_stats, _phoenix_cycle_count, _phoenix_exhausted_keys
     if worker_key_pool is None:
         worker_key_pool = config.gemini_api_keys_info
     _key_usage_stats = {}
     _token_usage_stats = {'total_tokens': 0, 'api_calls': 0}
-    _current_key_info = None
     _phoenix_cycle_count = 0
+    _phoenix_exhausted_keys.clear()
 
-def get_new_key(key_queue: Queue):
-    """
-    Tries to get a key. Implements 3-Stage Phoenix Protocol if empty.
-    """
-    global _current_key_info, _phoenix_cycle_count
-    
+def get_new_key(key_queue: Queue) -> bool:
+    global _current_key_info, _phoenix_cycle_count, _phoenix_exhausted_keys
     try:
-        # Try to get a fresh key from the main pile
         _current_key_info = key_queue.get_nowait()
-        log_msg(f"🔑 Switched to Key #{_current_key_info['original_index']}", -1)
         return True
     except (queue.Empty, EOFError):
+        # === PHOENIX SYSTEM: Resurrect all keys ===
+        _phoenix_cycle_count += 1
+        print(f"\n🔥🐦 PHOENIX RESURRECTION #{_phoenix_cycle_count}! All keys being reborn...")
         
-        # --- PHOENIX PROTOCOL ---
-        if not config.gemini_api_keys_info: 
+        # Put all keys back into the queue
+        for key_info in config.gemini_api_keys_info:
+            key_queue.put(key_info)
+        
+        _phoenix_exhausted_keys.clear()
+        
+        try:
+            _current_key_info = key_queue.get_nowait()
+            print(f"   ✅ Reborn! Starting fresh with Key #{_current_key_info['original_index']}")
+            return True
+        except (queue.Empty, EOFError):
             return False
 
-        # Stage 1: First Collapse -> Wait 2 mins, Restart
-        if _phoenix_cycle_count == 0:
-            log_msg("🔥 [Phoenix Stage 1] All keys exhausted. Waiting 2 MIN before resurrection...", -1)
-            time.sleep(120) 
-            _phoenix_cycle_count += 1
-            _current_key_info = random.choice(config.gemini_api_keys_info)
-            log_msg(f"🦅 [Phoenix] Resurrected Key #{_current_key_info['original_index']} (Cycle 1)", -1)
-            return True
-            
-        # Stage 2: Second Collapse -> Wait 5 mins, Restart
-        elif _phoenix_cycle_count == 1:
-            log_msg("🔥🔥 [Phoenix Stage 2] All keys died AGAIN. Waiting 5 MIN before final attempt...", -1)
-            time.sleep(300) 
-            _phoenix_cycle_count += 1
-            _current_key_info = random.choice(config.gemini_api_keys_info)
-            log_msg(f"🦅 [Phoenix] Resurrected Key #{_current_key_info['original_index']} (Cycle 2)", -1)
-            return True
-            
-        # Stage 3: Total Collapse -> Graceful Exit
-        else:
-            log_msg("☠️ [Phoenix Failed] All keys died 3 times. Giving up.", -1)
-            _current_key_info = None
-            return False
-
-def setup_genai_client(model_name: str = None):
+def setup_hf_client(model_name=None):
+    """Setup and return a HuggingFace InferenceClient. Uses the current key's API key."""
     if not _current_key_info:
-        raise NoKeysAvailableError("Worker has no API key to use.")
-    genai.configure(api_key=_current_key_info['key'])
-    # Use provided model_name, or fall back to default config.gemini_model
-    effective_model = model_name or config.gemini_model
-    return genai.GenerativeModel(effective_model)
+        raise AllKeysExhaustedError("No key configured")
+    
+    client = InferenceClient(
+        api_key=_current_key_info['key'],
+    )
+    return client
 
-def log_gemini_caching_info(response, call_type: str, ad_id: str = "", worker_id: int = 0, model_name: str = None):
+def _build_vision_message(prompt_text: str, image_bytes: bytes, mime_type: str = "image/jpeg"):
+    """Build an OpenAI-compatible vision message with text + base64 image."""
+    b64_data = base64.b64encode(image_bytes).decode("utf-8")
+    return {
+        "role": "user",
+        "content": [
+            {"type": "text", "text": prompt_text},
+            {
+                "type": "image_url",
+                "image_url": {
+                    "url": f"data:{mime_type};base64,{b64_data}"
+                }
+            }
+        ]
+    }
+
+def _build_multi_image_vision_message(prompt_text: str, image_bytes_list: list, mime_type: str = "image/jpeg"):
+    """Build an OpenAI-compatible vision message with text + multiple base64 images."""
+    content = [{"type": "text", "text": prompt_text}]
+    for img_bytes in image_bytes_list:
+        b64_data = base64.b64encode(img_bytes).decode("utf-8")
+        content.append({
+            "type": "image_url",
+            "image_url": {
+                "url": f"data:{mime_type};base64,{b64_data}"
+            }
+        })
+    return {"role": "user", "content": content}
+
+def _extract_hf_response(output):
+    """Extract text, prompt_tokens, completion_tokens from HuggingFace chat_completion output."""
+    text = output.choices[0].message.content or ""
+    usage = getattr(output, 'usage', None)
+    prompt_tokens = getattr(usage, 'prompt_tokens', 0) if usage else 0
+    completion_tokens = getattr(usage, 'completion_tokens', 0) if usage else 0
+    return text, prompt_tokens, completion_tokens
+
+def log_hf_token_info(in_tok: int, out_tok: int, call_type: str, ad_id: str = "", worker_id: int = -1, model_name: str = None):
     """
-    Logs comprehensive caching information from Gemini API response.
-    Prints all caching-related details to terminal for manual inspection.
+    Logs token usage information from HuggingFace API response.
+    Simplified version — no Gemini-specific caching analysis.
     """
+    if model_name is None:
+        model_name = getattr(config, 'qwen_model', 'unknown')
     print(f"\n{'#'*80}")
-    print(f"# GEMINI IMPLICIT CACHING ANALYSIS - {call_type}")
+    print(f"# HF QWEN TOKEN USAGE - {call_type}")
     if ad_id:
         print(f"# Ad ID: {ad_id}")
-    print(f"{'#'*80}")
-    
-    # Get usage_metadata
-    usage_metadata = getattr(response, 'usage_metadata', None)
-    if not usage_metadata:
-        print("⚠️  WARNING: usage_metadata not found in response!")
-        print(f"{'#'*80}\n")
-        return
-    
-    # Extract all available fields from usage_metadata
-    prompt_tokens = getattr(usage_metadata, 'prompt_token_count', 0)
-    candidates_tokens = getattr(usage_metadata, 'candidates_token_count', 0)
-    total_tokens = getattr(usage_metadata, 'total_token_count', prompt_tokens + candidates_tokens)
-    
-    # Cache-related fields (these are the key fields for implicit caching)
-    cached_content_tokens = getattr(usage_metadata, 'cached_content_token_count', None)
-    
-    # Print all available attributes of usage_metadata for debugging
-    print(f"\n📊 USAGE_METADATA FIELDS:")
-    print(f"   - prompt_token_count: {prompt_tokens}")
-    print(f"   - candidates_token_count: {candidates_tokens}")
-    print(f"   - total_token_count: {total_tokens}")
-    
-    # Check for cached_content_token_count (main cache indicator)
-    if cached_content_tokens is not None:
-        print(f"   - cached_content_token_count: {cached_content_tokens} ✅")
-    else:
-        print(f"   - cached_content_token_count: NOT AVAILABLE (may not be in response)")
-    
-    # Print all other attributes that might exist
-    print(f"\n🔍 ALL USAGE_METADATA ATTRIBUTES:")
-    for attr in dir(usage_metadata):
-        if not attr.startswith('_'):
-            try:
-                value = getattr(usage_metadata, attr)
-                if not callable(value):
-                    print(f"   - {attr}: {value}")
-            except:
-                pass
-    
-    # Caching Analysis
-    print(f"\n💾 CACHING ANALYSIS:")
-    if cached_content_tokens is not None:
-        cache_hit = cached_content_tokens > 0
-        cache_percentage = (cached_content_tokens / prompt_tokens * 100) if prompt_tokens > 0 else 0
-        non_cached_tokens = prompt_tokens - cached_content_tokens
-        
-        print(f"   ✅ CACHING IS HAPPENING!")
-        print(f"   - Cache Hit: {'YES' if cache_hit else 'NO'}")
-        print(f"   - Cached Tokens: {cached_content_tokens}")
-        print(f"   - Non-Cached Tokens: {non_cached_tokens}")
-        print(f"   - Cache Hit Percentage: {cache_percentage:.2f}%")
-        print(f"   - Total Input Tokens: {prompt_tokens}")
-        print(f"   - Output Tokens: {candidates_tokens}")
-        
-        if cache_hit:
-            print(f"\n   🎉 SUCCESS: {cached_content_tokens} tokens were served from cache!")
-            print(f"   💰 Cost Savings: Tokens from cache are typically cheaper/free")
-        else:
-            print(f"\n   ℹ️  No cache hit this time (cached_content_token_count = 0)")
-            print(f"   💡 Tip: Put large/common content at prompt beginning for better caching")
-    else:
-        print(f"   ⚠️  Cannot determine cache status - cached_content_token_count not available")
-        print(f"   - This might mean:")
-        print(f"     * Implicit caching is not enabled for this model/request")
-        print(f"     * The field name is different in this API version")
-        print(f"     * Request didn't meet minimum token threshold for caching")
-    
-    # Model-specific cache thresholds (from official docs)
-    if model_name is None:
-        model_name = getattr(config, 'gemini_model', 'unknown')
-    print(f"\n📋 MODEL INFO:")
-    print(f"   - Model: {model_name}")
-    print(f"   - Minimum tokens for caching (from docs):")
-    if 'flash' in model_name.lower() and '3' in model_name.lower():
-        print(f"     * Gemini 3 Flash: 1024 tokens")
-    elif 'pro' in model_name.lower() and '3' in model_name.lower():
-        print(f"     * Gemini 3 Pro: 4096 tokens")
-    elif 'flash' in model_name.lower() and '2.5' in model_name.lower():
-        print(f"     * Gemini 2.5 Flash: 1024 tokens")
-    elif 'pro' in model_name.lower() and '2.5' in model_name.lower():
-        print(f"     * Gemini 2.5 Pro: 4096 tokens")
-    else:
-        print(f"     * Check official docs for {model_name}")
-    
-    if prompt_tokens > 0:
-        meets_threshold = False
-        if 'flash' in model_name.lower():
-            meets_threshold = prompt_tokens >= 1024
-            threshold = 1024
-        elif 'pro' in model_name.lower():
-            meets_threshold = prompt_tokens >= 4096
-            threshold = 4096
-        else:
-            threshold = 0
-        
-        if threshold > 0:
-            if meets_threshold:
-                print(f"   ✅ Request meets minimum token threshold ({threshold}) for caching")
-            else:
-                print(f"   ⚠️  Request below minimum threshold ({threshold} tokens)")
-                print(f"      Current: {prompt_tokens} tokens")
-                print(f"      Need: {threshold - prompt_tokens} more tokens for caching eligibility")
-    
+    print(f"# Model: {model_name}")
+    print(f"# Input Tokens: {in_tok}")
+    print(f"# Output Tokens: {out_tok}")
+    print(f"# Total Tokens: {in_tok + out_tok}")
     print(f"{'#'*80}\n")
 
 # --- MOSAIC HELPER FUNCTIONS ---
@@ -440,14 +362,6 @@ Answer "YES" (this is a promotional/placeholder - DO NOT classify) ONLY if you s
 Format your response as: "YES - [reason]" or "NO - [reason]"
 """
     
-    parts = [prompt_text]
-    parts.append({
-        "inline_data": {
-            "mime_type": "image/jpeg", 
-            "data": base64.b64encode(ad_img_bytes).decode("utf-8")
-        }
-    })
-    
     max_retries = 3
     attempt = 0
     
@@ -480,22 +394,26 @@ Format your response as: "YES - [reason]" or "NO - [reason]"
                 })
 
             log_msg(f"🔍 Pre-checking for promotional/coming soon image (Ad {ad_id}) [Model: {config.gemini_model_promo_check}]...", worker_id)
-            model = setup_genai_client(config.gemini_model_promo_check)
+            client = setup_hf_client()
             
             t_start = time.time()
-            with open(os.devnull, 'w') as f, contextlib.redirect_stdout(f), contextlib.redirect_stderr(f):
-                response = model.generate_content(parts, request_options={'timeout': 30})  # OPTIMIZED: 60s -> 30s
+            messages = [_build_vision_message(prompt_text, ad_img_bytes)]
+            output = client.chat_completion(
+                messages=messages,
+                model=config.gemini_model_promo_check,
+                max_tokens=200,
+            )
             duration = time.time() - t_start
 
-            # Log caching information
-            log_gemini_caching_info(response, "PROMOTIONAL CHECK", ad_id, worker_id, config.gemini_model_promo_check)
+            response_text_raw, in_tok, out_tok = _extract_hf_response(output)
+            cached_tok = 0  # No caching with HuggingFace
+
+            # Log token info
+            log_hf_token_info(in_tok, out_tok, "PROMOTIONAL CHECK", ad_id, worker_id, config.gemini_model_promo_check)
 
             key_idx = _current_key_info['original_index']
             _key_usage_stats.setdefault(key_idx, {'success': 0, 'quota_failure': 0})['success'] += 1
             
-            in_tok = getattr(response.usage_metadata, 'prompt_token_count', 0)
-            out_tok = getattr(response.usage_metadata, 'candidates_token_count', 0)
-            cached_tok = getattr(response.usage_metadata, 'cached_content_token_count', 0) or 0
             _token_usage_stats['total_tokens'] += (in_tok + out_tok)
             _token_usage_stats['api_calls'] += 1
             
@@ -503,14 +421,14 @@ Format your response as: "YES - [reason]" or "NO - [reason]"
             print(f"\n{'='*80}")
             print(f"[PROMOTIONAL CHECK - Ad {ad_id}] LLM Response:")
             print(f"{'='*80}")
-            print(response.text)
+            print(response_text_raw)
             print(f"{'='*80}\n")
             
             # Parse response - handle both "YES" and "YES - reason" formats
-            response_text = response.text.strip().upper()
+            response_text = response_text_raw.strip().upper()
             is_promotional = response_text.startswith("YES")
             
-            log_msg(f"📥 Promotional check: {'🚫 PROMOTIONAL/PLACEHOLDER' if is_promotional else '✅ REAL LISTING'} ({duration:.1f}s, Cached:{cached_tok})", worker_id)
+            log_msg(f"📥 Promotional check: {'🚫 PROMOTIONAL/PLACEHOLDER' if is_promotional else '✅ REAL LISTING'} ({duration:.1f}s)", worker_id)
             
             return is_promotional, in_tok, out_tok, cached_tok
 
@@ -1188,31 +1106,27 @@ Breadcrumb: "{breadcrumb}"
         # Return: (results, classify_in, classify_out, classify_cached, promo_in, promo_out, promo_cached)
         return ([("Image Not Clear", 100.0)], 0, 0, 0, promo_check_tokens_in, promo_check_tokens_out, promo_check_tokens_cached)
     
-    # Build the STATIC cacheable content (rules + category definitions)
-    cacheable_content_parts = [cacheable_rules_prefix]
-    cacheable_content_parts.append("\n---\n**Category Reference:**\n")
+    # Build the full prompt text (rules + category definitions + context)
+    full_prompt_text = cacheable_rules_prefix
+    full_prompt_text += "\n---\n**Category Reference:**\n"
     for name, data in category_data.items():
-        cacheable_content_parts.append(f"\n**Category: {name}**\nDefinition: {data.get('definition', 'No definition.')}")
-        if config.include_example_images:
-            cacheable_content_parts.append("Example Image:")
+        full_prompt_text += f"\n**Category: {name}**\nDefinition: {data.get('definition', 'No definition.')}"
+        # Note: Example images from category data are skipped for HF (text-only category definitions)
+        # The ad image itself is still sent as a vision input
+    
+    full_prompt_text += context_section
+    
+    # Collect category example images if enabled (to send as multi-image)
+    all_image_bytes = []
+    if config.include_example_images:
+        for name, data in category_data.items():
             if data.get("image_bytes"):
-                cacheable_content_parts.append({"inline_data": {"mime_type": "image/jpeg", "data": base64.b64encode(data['image_bytes']).decode("utf-8")}})
-            else:
-                cacheable_content_parts.append("(No example image)")
-    
-    # Build the DYNAMIC content (unique per ad — breadcrumb + image)
-    dynamic_parts = [
-        context_section,
-        {"inline_data": {"mime_type": "image/jpeg", "data": base64.b64encode(ad_img_bytes).decode("utf-8")}}
-    ]
-    
-    # Log prompt structure
-    cacheable_tokens_approx = len(cacheable_rules_prefix.split()) * 1.3
-    print(f"\n💡 EXPLICIT CACHING: {int(cacheable_tokens_approx)}+ static tokens (cached server-side) + dynamic breadcrumb/image per ad")
+                all_image_bytes.append(data['image_bytes'])
+    # Always add the ad image as the last image
+    all_image_bytes.append(ad_img_bytes)
     
     max_retries = 3
     attempt = 0
-    using_explicit_cache = False
     
     while attempt < max_retries:
         try:
@@ -1241,66 +1155,45 @@ Breadcrumb: "{breadcrumb}"
                     "key_idx": _current_key_info['original_index'], "key_total": len(config.gemini_api_keys)
                 })
 
-            # === EXPLICIT CACHING: Try new google-genai SDK for cached generation ===
-            cache_mgr = get_cache_manager()
             log_msg(f"📤 Sending Request (Key #{_current_key_info['original_index']}) [Model: {config.gemini_model_classification}]...", worker_id)
+            client = setup_hf_client()
             
             t_start = time.time()
             
-            # Try explicit caching first (uses google-genai SDK internally)
-            response, using_explicit_cache = cache_mgr.generate_with_cache(
-                api_key=_current_key_info['key'],
-                model_name=config.gemini_model_classification,
-                cacheable_content_parts=cacheable_content_parts,
-                context_text=context_section,
-                image_bytes=ad_img_bytes,
-                timeout=45
-            )
+            # Build vision message with ad image (skip example images to reduce token count)
+            messages = [_build_vision_message(full_prompt_text, ad_img_bytes)]
             
-            if not using_explicit_cache:
-                # Fallback: use old google-generativeai SDK (standard non-cached call)
-                print(f"   ℹ️  Falling back to standard (non-cached) API call")
-                model = setup_genai_client(config.gemini_model_classification)
-                all_parts = cacheable_content_parts + dynamic_parts
-                with open(os.devnull, 'w') as f, contextlib.redirect_stdout(f), contextlib.redirect_stderr(f):
-                    response = model.generate_content(all_parts, request_options={'timeout': 45})
+            output = client.chat_completion(
+                messages=messages,
+                model=config.gemini_model_classification,
+                max_tokens=500,
+            )
             
             duration = time.time() - t_start
 
-            # Log caching information
-            log_gemini_caching_info(response, "MAIN CLASSIFICATION", ad_id, worker_id, config.gemini_model_classification)
+            response_text_raw, in_tok, out_tok = _extract_hf_response(output)
+            cached_tok = 0  # No caching with HuggingFace
+
+            # Log token info
+            log_hf_token_info(in_tok, out_tok, "MAIN CLASSIFICATION", ad_id, worker_id, config.gemini_model_classification)
 
             key_idx = _current_key_info['original_index']
             _key_usage_stats.setdefault(key_idx, {'success': 0, 'quota_failure': 0})['success'] += 1
             
-            in_tok = getattr(response.usage_metadata, 'prompt_token_count', 0)
-            out_tok = getattr(response.usage_metadata, 'candidates_token_count', 0)
-            cached_tok = getattr(response.usage_metadata, 'cached_content_token_count', 0) or 0
             _token_usage_stats['total_tokens'] += (in_tok + out_tok)
             _token_usage_stats['api_calls'] += 1
-            
-            # === EXPLICIT CACHING: Track and print per-listing cost savings ===
-            cache_mgr.track_and_print_listing_savings(
-                ad_id=ad_id,
-                cached_tokens=cached_tok,
-                total_input_tokens=in_tok,
-                model_name=config.gemini_model_classification,
-                is_explicit_cache=using_explicit_cache
-            )
             
             # Print LLM response to terminal
             print(f"\n{'='*80}")
             print(f"[CLASSIFICATION - Ad {ad_id}] LLM Response:")
             print(f"{'='*80}")
-            print(response.text)
+            print(response_text_raw)
             print(f"{'='*80}\n")
             
-            log_msg(f"📥 Response ({duration:.1f}s): Tokens In:{in_tok}/Out:{out_tok} (Cached:{cached_tok}) [Explicit Cache: {'YES' if using_explicit_cache else 'NO'}]", worker_id)
+            log_msg(f"📥 Response ({duration:.1f}s): Tokens In:{in_tok}/Out:{out_tok}", worker_id)
             
-            # Note: No time.sleep() needed here because Yoda handles the pacing!
             # Return: (results, classify_in, classify_out, classify_cached, promo_in, promo_out, promo_cached)
-            # Tokens are kept SEPARATE so callers can cost each at the correct model rate
-            return parse_gemini_response(response.text), in_tok, out_tok, cached_tok, promo_check_tokens_in, promo_check_tokens_out, promo_check_tokens_cached
+            return parse_gemini_response(response_text_raw), in_tok, out_tok, cached_tok, promo_check_tokens_in, promo_check_tokens_out, promo_check_tokens_cached
 
         except Exception as e:
             error_msg = str(e).lower()
@@ -1399,19 +1292,24 @@ def classify_with_refinement(categories: list, rule: dict, ad_img_bytes: bytes,
                 })
 
             log_msg(f"📤 Sending Refinement Request [Model: {config.gemini_model_classification}]...", worker_id)
-            model = setup_genai_client(config.gemini_model_classification)
-            with open(os.devnull, 'w') as f, contextlib.redirect_stdout(f), contextlib.redirect_stderr(f):
-                 response = model.generate_content([prompt, {"inline_data": {"mime_type": "image/jpeg", "data": base64.b64encode(ad_img_bytes).decode("utf-8")}}], request_options={'timeout': 45})  # OPTIMIZED: 90s -> 45s
+            client = setup_hf_client()
             
-            # Log caching information
-            log_gemini_caching_info(response, "REFINEMENT", ad_id, worker_id, config.gemini_model_classification)
+            messages = [_build_vision_message(prompt, ad_img_bytes)]
+            output = client.chat_completion(
+                messages=messages,
+                model=config.gemini_model_classification,
+                max_tokens=500,
+            )
+            
+            response_text_raw, in_tok, out_tok = _extract_hf_response(output)
+            cached_tok = 0  # No caching with HuggingFace
+
+            # Log token info
+            log_hf_token_info(in_tok, out_tok, "REFINEMENT", ad_id, worker_id, config.gemini_model_classification)
             
             key_idx = _current_key_info['original_index']
             _key_usage_stats.setdefault(key_idx, {'success': 0, 'quota_failure': 0})['success'] += 1
             
-            in_tok = getattr(response.usage_metadata, 'prompt_token_count', 0)
-            out_tok = getattr(response.usage_metadata, 'candidates_token_count', 0)
-            cached_tok = getattr(response.usage_metadata, 'cached_content_token_count', 0) or 0
             _token_usage_stats['total_tokens'] += (in_tok + out_tok)
             _token_usage_stats['api_calls'] += 1
             
@@ -1419,15 +1317,15 @@ def classify_with_refinement(categories: list, rule: dict, ad_img_bytes: bytes,
             print(f"\n{'='*80}")
             print(f"[REFINEMENT - Ad {ad_id}] LLM Response:")
             print(f"{'='*80}")
-            print(response.text)
+            print(response_text_raw)
             print(f"{'='*80}\n")
             
-            log_msg(f"📥 Refinement Response: {repr(response.text)} (In:{in_tok}/Out:{out_tok}, Cached:{cached_tok})", worker_id)
+            log_msg(f"📥 Refinement Response: {repr(response_text_raw)} (In:{in_tok}/Out:{out_tok})", worker_id)
             
             result_str = None
             if is_feature_checklist:
                 try:
-                    json_str = response.text.strip().replace("```json", "").replace("```", "")
+                    json_str = response_text_raw.strip().replace("```json", "").replace("```", "")
                     ai_features = json.loads(json_str)
                     features = {f['name']: ai_features.get(f['name'], "No").lower() == "yes" for f in rule["feature_checklist"].get("features", [])}
                     logic_str = rule["feature_checklist"].get("logic", "")
@@ -1441,7 +1339,7 @@ def classify_with_refinement(categories: list, rule: dict, ad_img_bytes: bytes,
                 except Exception as e:
                     log_msg(f"   [W-{worker_id}] ⚠️ Could not parse feature logic: {e}", worker_id)
             else:
-                refined_category = response.text.strip().replace("'", "").replace('"', "")
+                refined_category = response_text_raw.strip().replace("'", "").replace('"', "")
                 for c in categories:
                     if c.lower() in refined_category.lower():
                         result_str = c
@@ -2041,7 +1939,9 @@ Examples:
     # Build cacheable parts list (for cache_manager)
     cacheable_dually_parts = [cacheable_dually_rules]
     
-    print(f"[DUALLY VERIFY] Ad {ad_id}: Sending mosaic of {len(valid_images)} image(s) for verification (EXPLICIT CACHE ENABLED)")
+    print(f"[DUALLY VERIFY] Ad {ad_id}: Sending mosaic of {len(valid_images)} image(s) for verification")
+    
+    full_dually_prompt = dynamic_intro + cacheable_dually_rules
     
     max_retries = 3
     attempt = 0
@@ -2074,74 +1974,47 @@ Examples:
                     "key_idx": _current_key_info['original_index'], "key_total": len(config.gemini_api_keys)
                 })
 
-            # === EXPLICIT CACHING: Try cached generation for dually verification ===
-            cache_mgr = get_cache_manager()
             log_msg(f"🔍 Verifying Dually for Ad {ad_id} (Key #{_current_key_info['original_index']}) [Model: {config.gemini_model_dually_verification}]...", worker_id)
+            client = setup_hf_client()
             
             t_start = time.time()
             
-            # Dynamic content = intro text + image (combined as context_text with image bytes)
-            response, using_explicit_cache = cache_mgr.generate_with_cache(
-                api_key=_current_key_info['key'],
-                model_name=config.gemini_model_dually_verification,
-                cacheable_content_parts=cacheable_dually_parts,
-                context_text=dynamic_intro,
-                image_bytes=mosaic_image,
-                timeout=45
+            messages = [_build_vision_message(full_dually_prompt, mosaic_image)]
+            output = client.chat_completion(
+                messages=messages,
+                model=config.gemini_model_dually_verification,
+                max_tokens=300,
             )
-            
-            if not using_explicit_cache:
-                # Fallback: use old google-generativeai SDK (standard non-cached call)
-                print(f"   ℹ️  Dually: Falling back to standard (non-cached) API call")
-                model = setup_genai_client(config.gemini_model_dually_verification)
-                parts = [dynamic_intro + cacheable_dually_rules]
-                parts.append({
-                    "inline_data": {
-                        "mime_type": "image/jpeg", 
-                        "data": base64.b64encode(mosaic_image).decode("utf-8")
-                    }
-                })
-                with open(os.devnull, 'w') as f, contextlib.redirect_stdout(f), contextlib.redirect_stderr(f):
-                    response = model.generate_content(parts, request_options={'timeout': 45})
             
             duration = time.time() - t_start
 
-            # Log caching information
-            log_gemini_caching_info(response, "DUALLY VERIFICATION", ad_id, worker_id, config.gemini_model_dually_verification)
+            response_text_raw, in_tok, out_tok = _extract_hf_response(output)
+            cached_tok = 0  # No caching with HuggingFace
+
+            # Log token info
+            log_hf_token_info(in_tok, out_tok, "DUALLY VERIFICATION", ad_id, worker_id, config.gemini_model_dually_verification)
 
             key_idx = _current_key_info['original_index']
             _key_usage_stats.setdefault(key_idx, {'success': 0, 'quota_failure': 0})['success'] += 1
             
-            in_tok = getattr(response.usage_metadata, 'prompt_token_count', 0)
-            out_tok = getattr(response.usage_metadata, 'candidates_token_count', 0)
-            cached_tok = getattr(response.usage_metadata, 'cached_content_token_count', 0) or 0
             _token_usage_stats['total_tokens'] += (in_tok + out_tok)
             _token_usage_stats['api_calls'] += 1
-            
-            # === EXPLICIT CACHING: Track dually verification savings ===
-            cache_mgr.track_and_print_listing_savings(
-                ad_id=ad_id,
-                cached_tokens=cached_tok,
-                total_input_tokens=in_tok,
-                model_name=config.gemini_model_dually_verification,
-                is_explicit_cache=using_explicit_cache
-            )
             
             # Print LLM response to terminal
             print(f"\n{'='*80}")
             print(f"[DUALLY VERIFICATION - Ad {ad_id}] LLM Response:")
             print(f"{'='*80}")
-            print(response.text)
+            print(response_text_raw)
             print(f"{'='*80}\n")
             
             # Parse response
-            response_text = response.text.strip().upper()
+            response_text = response_text_raw.strip().upper()
             is_dually = response_text.startswith("YES")
             
             # Confidence based on response clarity
             confidence = 95.0 if is_dually else 5.0
             
-            log_msg(f"📥 Dually Verification Result: {'✅ CONFIRMED' if is_dually else '❌ NOT DUALLY'} ({duration:.1f}s, Cached:{cached_tok}) [Explicit Cache: {'YES' if using_explicit_cache else 'NO'}]", worker_id)
+            log_msg(f"📥 Dually Verification Result: {'✅ CONFIRMED' if is_dually else '❌ NOT DUALLY'} ({duration:.1f}s)", worker_id)
             
             return is_dually, confidence, in_tok, out_tok, cached_tok
 

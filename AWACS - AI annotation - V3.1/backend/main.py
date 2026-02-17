@@ -898,7 +898,7 @@ def verify_dually_listings(result_df: pd.DataFrame, job_id: str, yoda_instance):
     print("\n" + "="*80)
     print("📊 COST VERIFICATION: Checking Cost_Cents Updates")
     print("="*80)
-    cost_sum_in_df = result_df['Cost_Cents'].sum() if 'Cost_Cents' in result_df.columns else 0
+    cost_sum_in_df = pd.to_numeric(result_df['Cost_Cents'], errors='coerce').fillna(0).sum() if 'Cost_Cents' in result_df.columns else 0
     print(f"   Total Cost_Cents in DataFrame: {cost_sum_in_df:.4f}¢")
     print(f"   Dually verification costs calculated: {total_cost:.4f}¢")
     print("="*80 + "\n")
@@ -1046,7 +1046,7 @@ def run_job_pipeline_sync(job_id: str, file_path: str):
         job['output_filename'] = output_filename
         
         # Calculate summary - Cost_Cents already includes dually verification costs (added in line 737)
-        total_cost_in_df = result_df['Cost_Cents'].sum() if 'Cost_Cents' in result_df.columns else 0
+        total_cost_in_df = pd.to_numeric(result_df['Cost_Cents'], errors='coerce').fillna(0).sum() if 'Cost_Cents' in result_df.columns else 0
         
         # For reporting: separate annotation cost (before dually) and dually cost
         annotation_cost_only = total_cost_in_df - dually_verification_cost  # Back-calculate annotation-only cost
@@ -1144,7 +1144,7 @@ def run_reannotation_pipeline_sync(job_id: str, file_path: str):
         
         # Calculate summary
         # Calculate summary - Cost_Cents already includes dually verification costs (added in line 737)
-        total_cost_in_df = result_df['Cost_Cents'].sum() if 'Cost_Cents' in result_df.columns else 0
+        total_cost_in_df = pd.to_numeric(result_df['Cost_Cents'], errors='coerce').fillna(0).sum() if 'Cost_Cents' in result_df.columns else 0
         annotation_cost_only = total_cost_in_df - dually_verification_cost  # Back-calculate annotation-only cost
         
         job['total_cost'] = float(total_cost_in_df)  # Total cost (includes dually costs already)
@@ -1294,7 +1294,7 @@ def run_db_annotation_pipeline_sync(job_id: str, file_path: str):
             # Calculate batch costs (with empty check)
             if len(batch_result_df) == 0:
                 print(f"   ⚠️ Batch {batch_num} returned no results!")
-            batch_total_cost = batch_result_df['Cost_Cents'].sum() if 'Cost_Cents' in batch_result_df.columns else 0
+            batch_total_cost = pd.to_numeric(batch_result_df['Cost_Cents'], errors='coerce').fillna(0).sum() if 'Cost_Cents' in batch_result_df.columns else 0
             batch_annotation_cost = batch_total_cost - batch_dually_cost
             
             total_annotation_cost += batch_annotation_cost
@@ -1584,7 +1584,7 @@ def run_db_fetch_pipeline_sync(
         job['output_filename'] = output_filename
         
         # Calculate summary costs - Cost_Cents already includes dually verification costs (added in line 737)
-        total_cost_in_df = result_df['Cost_Cents'].sum() if 'Cost_Cents' in result_df.columns else 0
+        total_cost_in_df = pd.to_numeric(result_df['Cost_Cents'], errors='coerce').fillna(0).sum() if 'Cost_Cents' in result_df.columns else 0
         annotation_cost_only = total_cost_in_df - dually_verification_cost  # Back-calculate annotation-only cost
         
         job['total_cost'] = float(total_cost_in_df)  # Total cost (includes dually costs already)

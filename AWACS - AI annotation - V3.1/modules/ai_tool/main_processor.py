@@ -10,7 +10,7 @@ import queue
 from .config_loader import config
 # ADDED darth_vision TO IMPORTS
 from . import classification, web_utils, data_processing, utils, darth_vision
-from .cache_manager import get_cache_manager
+# from .cache_manager import get_cache_manager  # Disabled: Gemini-specific caching not used with HuggingFace/Qwen
 from ai_tool.rate_limiter import Yoda 
 
 
@@ -498,12 +498,12 @@ def run_worker_process(worker_id, run_ts, job_queue: Queue, results_queue: Queue
                 status_queue.put({"worker_id": worker_id, "state": "ERROR", "progress": processed})
 
     finally:
-        # Print explicit caching session savings report
-        try:
-            cache_mgr = get_cache_manager()
-            cache_mgr.print_total_savings()
-        except Exception as e:
-            print(f"⚠️  Could not print cache savings report: {e}")
+        # Print explicit caching session savings report (Disabled: Gemini-specific)
+        # try:
+        #     cache_mgr = get_cache_manager()
+        #     cache_mgr.print_total_savings()
+        # except Exception as e:
+        #     print(f"⚠️  Could not print cache savings report: {e}")
         
         utils.generate_session_reports(
             classification.get_key_usage_stats(),
@@ -565,11 +565,11 @@ def run_single_process(input_file, fast_mode=False):
             
     save_checkpoint(run_ts, results, df)
     
-    # Print explicit caching session savings report
-    try:
-        cache_mgr = get_cache_manager()
-        cache_mgr.print_total_savings()
-    except Exception as e:
-        print(f"⚠️  Could not print cache savings report: {e}")
+    # Print explicit caching session savings report (Disabled: Gemini-specific)
+    # try:
+    #     cache_mgr = get_cache_manager()
+    #     cache_mgr.print_total_savings()
+    # except Exception as e:
+    #     print(f"⚠️  Could not print cache savings report: {e}")
     
     print("\nSingle Process Run Completed.")

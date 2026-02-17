@@ -29,12 +29,14 @@ def load_config():
         config.rules_json = os.path.join(project_root, config_parser.get('Paths', 'RulesJson'))
         config.project_root = project_root
 
-        # Settings
-        config.gemini_model = config_parser.get('Settings', 'GeminiModel')
-        # Per-prompt model configuration (falls back to GeminiModel if not set)
-        config.gemini_model_promo_check = config_parser.get('Settings', 'GeminiModelPromoCheck', fallback=config.gemini_model)
-        config.gemini_model_classification = config_parser.get('Settings', 'GeminiModelClassification', fallback=config.gemini_model)
-        config.gemini_model_dually_verification = config_parser.get('Settings', 'GeminiModelDuallyVerification', fallback=config.gemini_model)
+        # Settings - Qwen model via HuggingFace
+        config.qwen_model = config_parser.get('Settings', 'QwenModel', fallback='Qwen/Qwen2.5-VL-72B-Instruct')
+        # Keep gemini_model* attributes pointing to the Qwen model so the rest of the codebase
+        # (which references config.gemini_model_*) works without changes
+        config.gemini_model = config.qwen_model
+        config.gemini_model_promo_check = config.qwen_model
+        config.gemini_model_classification = config.qwen_model
+        config.gemini_model_dually_verification = config.qwen_model
         config.max_images = config_parser.getint('Settings', 'MaxImagesPerAd')
         config.ai_checkpoint_interval = config_parser.getint('Settings', 'AiCheckpointInterval', fallback=5)
         config.scraper_checkpoint_interval = config_parser.getint('Settings', 'ScraperCheckpointInterval', fallback=50)
@@ -42,7 +44,7 @@ def load_config():
         config.high_confidence_threshold = config_parser.getfloat('Settings', 'HighConfidenceThreshold', fallback=95.0)
         config.scraper_sanity_check = config_parser.getint('Settings', 'ScraperSanityCheck', fallback=50)
         config.api_key_daily_limit = config_parser.getint('Settings', 'ApiKeyDailyLimit', fallback=250)
-        config.rate_limit_rpm = config_parser.getint('Settings', 'RateLimitRPM', fallback=13)
+        config.rate_limit_rpm = config_parser.getint('Settings', 'RateLimitRPM', fallback=60)
         
         # Dually Detection Settings
         config.enable_darth_cv2_dually = config_parser.getboolean('Settings', 'EnableDarthCV2Dually', fallback=True)
@@ -57,9 +59,9 @@ def load_config():
         config.db_api_client_secret = config_parser.get('DB_API', 'ClientSecret', fallback='')
         config.db_api_grant_type = config_parser.get('DB_API', 'GrantType', fallback='client_credentials')
 
-        # API Keys - Now stores a list of dictionaries for rich data
+        # HuggingFace API Keys - reads from [HuggingFace_Keys] section
         config.gemini_api_keys_info = []
-        for i, (_, key) in enumerate(config_parser.items('API_Keys')):
+        for i, (_, key) in enumerate(config_parser.items('HuggingFace_Keys')):
             config.gemini_api_keys_info.append({
                 "key": key,
                 "original_index": i + 1,
@@ -70,7 +72,7 @@ def load_config():
         config.gemini_api_keys = [info['key'] for info in config.gemini_api_keys_info]
 
         if not config.gemini_api_keys:
-            raise ValueError("No API keys found in config.ini.")
+            raise ValueError("No HuggingFace API keys found in [HuggingFace_Keys] section of config.ini.")
 
     except (configparser.NoSectionError, configparser.NoOptionError, ValueError) as e:
         print(f"❌ CONFIGURATION ERROR in config.ini: {e}"); sys.exit(1)

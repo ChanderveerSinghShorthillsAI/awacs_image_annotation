@@ -106,53 +106,47 @@ def merge_worker_logs(run_ts):
 
 def calculate_cost_cents(input_tokens, output_tokens, model_name, cached_input_tokens=0):
     """
-    Calculates the cost of an API call in Cents based on the specific Gemini model.
+    Calculates the cost of an API call in Cents based on the model.
     
     Args:
         input_tokens: Total input tokens (including cached)
         output_tokens: Output tokens
-        model_name: Gemini model name
+        model_name: Model name (supports Gemini and Qwen/HuggingFace models)
         cached_input_tokens: Number of input tokens that were served from cache (default: 0)
-    
-    Note: Cached tokens pricing from official Gemini docs:
-    - Context caching: $0.03 per 1M tokens (text/image/video)
-    - Regular input: $0.30 per 1M tokens (Gemini 2.5 Flash)
-    - This means cached tokens are 90% cheaper than regular input tokens!
     """
     model = model_name.lower()
     
     # --- PRICING TABLE (Per 1 Million Tokens) ---
     
+    # Qwen models via HuggingFace/Nebius — pricing varies by provider
+    # Set to 0 for now; update when pricing is confirmed
+    if "qwen" in model:
+        price_input_per_m = 0.0
+        price_output_per_m = 0.0
+        price_cached_input_per_m = 0.0
+        print(f"Calculating cost for {model_name} - HuggingFace/Qwen (pricing TBD, reporting 0)")
+        return 0.0
+    
     # Default: Gemini 2.5 Flash (Standard)
-    # Input: $0.30 | Output: $2.50
-    # Cached Input: $0.03 (official Gemini pricing - 90% cheaper!)
     price_input_per_m = 0.30
     price_output_per_m = 2.50
-    price_cached_input_per_m = 0.03  # Official Gemini context caching price
-    
-    # price_input_per_m = 0.10# gemini-2.0-flash
-    # price_output_per_m = 0.40# gemini-2.0-flash
+    price_cached_input_per_m = 0.03
 
     # Gemini 2.5 Flash-Lite
-    # Input: $0.10 (text/image/video) | Output: $0.40 (including thinking tokens)
-    # Context Caching: $0.01 (text/image/video)
     if "2.5" in model and "lite" in model:
-        price_input_per_m = 0.10   # gemini-2.5-flash-lite
-        price_output_per_m = 0.40  # gemini-2.5-flash-lite (including thinking tokens)
-        price_cached_input_per_m = 0.01  # gemini-2.5-flash-lite context caching price
+        price_input_per_m = 0.10
+        price_output_per_m = 0.40
+        price_cached_input_per_m = 0.01
     
     # Gemini 2.0 Flash-Lite (legacy)
-    # Input: $0.075 | Output: $0.30
     elif "lite" in model or "8b" in model:
-        price_input_per_m = 0.075  # gemini-2.0-flash-lite
-        price_output_per_m = 0.30  # gemini-2.0-flash-lite
-        price_cached_input_per_m = 0.03  # Same cached price applies
+        price_input_per_m = 0.075
+        price_output_per_m = 0.30
+        price_cached_input_per_m = 0.03
     
     # --- CALCULATION ---
-    # Separate cached and non-cached input tokens (guard against negative values)
     non_cached_input_tokens = max(0, input_tokens - cached_input_tokens)
     
-    # Calculate cost: (non-cached input * regular price) + (cached input * cached price) + (output * output price)
     cost_usd = (non_cached_input_tokens / 1_000_000 * price_input_per_m) + \
                (cached_input_tokens / 1_000_000 * price_cached_input_per_m) + \
                (output_tokens / 1_000_000 * price_output_per_m)
