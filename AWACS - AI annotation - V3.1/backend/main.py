@@ -14,7 +14,7 @@ import queue
 # import random
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
-from fastapi import FastAPI, UploadFile, File, HTTPException, BackgroundTasks
+from fastapi import FastAPI, UploadFile, File, HTTPException, BackgroundTasks, Form
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 import pandas as pd
@@ -1188,7 +1188,7 @@ def run_db_annotation_pipeline_sync(job_id: str, file_path: str):
     After all batches: combines into one final complete file.
     Handles any size: 700→[500,200], 300→[300], 1500→[500,500,500]
     """
-    BATCH_SIZE = 10
+    BATCH_SIZE = 500
     job = jobs[job_id]
     run_ts = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
     
@@ -3181,6 +3181,365 @@ async def fetch_by_ad_ids(
         "status": "fetching",
         "message": f"Fetching {ad_count} trucks from database API. This is much faster than scraping!"
     }
+
+
+# ==================== DB CATEGORY UPDATE FEATURE ====================
+
+# Category name -> ID mapping for the Trader API
+# Categories without a real dev ID use placeholder values (will be replaced with prod IDs later)
+CATEGORY_ID_MAP = {
+    "Flatbed Truck": "2000617",
+    "Pickup Truck": "2000635",
+    "Mechanics Truck": "644245525",
+    "Utility Truck - Service Truck": "2002561",
+    "Dump Truck": "2000609",
+    "Flatbed Dump": "2011212",
+    "Landscape Truck": "2000625",
+    "Contractor Truck": "644247521",
+    "Stake Bed": "2014892",
+    "Hauler": "2005520",
+    "Cab Chassis": "2000881",
+    "Stepvan": "2013294",
+    "Selfloader": "2007240",
+    "Bucket Truck - Boom Truck": "2005161",
+    "Cabover Truck - COE": "2000559",
+    "Box Truck - Straight Truck": "2002281",
+    "Moving Van": "2012012",
+    "Refrigerated Truck": "2000641",
+    "Cutaway-Cube Van": "644245665",
+    "Van": "2000523",
+    "Cargo Van": "2011732",
+    "Passanger Van": "644245480",
+    "Rollback - Tow Truck": "2009720",
+    "Conventional Day Cab": "2000601",
+    "Dually": "644245588",
+    "Dry Van": "644245645",
+}
+
+# Statuses that should be SKIPPED during DB update iteration
+DB_UPDATE_SKIP_STATUSES = [
+    "no images present",
+    "inactive",
+    "inactive ad",
+    "image not clear",
+    "no change",
+    "exclusion rule conflict",
+]
+
+
+def get_db_update_bearer_token(token_url: str, client_id: str, client_secret: str, grant_type: str) -> dict:
+    """
+    Fetches a bearer token from the Trader API token endpoint.
+    Returns a dict with 'access_token', 'expires_at' (unix timestamp), and 'expires_in'.
+    Raises an exception on failure.
+    """
+    response = requests.post(
+        token_url,
+        data={
+            "client_id": client_id,
+            "client_secret": client_secret,
+            "grant_type": grant_type,
+        },
+        timeout=30,
+    )
+    if response.status_code != 200:
+        raise Exception(f"Token API returned status {response.status_code}: {response.text}")
+    
+    token_data = response.json()
+    access_token = token_data.get("access_token")
+    if not access_token:
+        raise Exception(f"No access_token in token response: {token_data}")
+    
+    expires_in = token_data.get("expires_in", 3600)
+    # Refresh 5 minutes before actual expiry as a safety buffer
+    expires_at = time.time() + max(expires_in - 300, 60)
+    
+    print(f"   ✅ Bearer token obtained successfully (expires in {expires_in}s, will refresh at {expires_in - 300}s)")
+    return {
+        "access_token": access_token,
+        "expires_at": expires_at,
+        "expires_in": expires_in,
+    }
+
+
+def update_ad_categories_in_db(
+    base_url: str, ad_id: str, categories: list, bearer_token: str
+) -> dict:
+    """
+    Calls PUT {base_url}/{ad_id} to update the categories for a single ad.
+    
+    Args:
+        base_url: e.g. https://api-dev.traderonline.com/vLatest/trucks
+        ad_id: The ad ID string
+        categories: List of {"id": "...", "name": "..."} dicts
+        bearer_token: The bearer token string
+    
+    Returns:
+        dict with "success" bool and optional "error" message
+    """
+    url = f"{base_url}/{ad_id}"
+    headers = {
+        "Authorization": f"Bearer {bearer_token}",
+        "Content-Type": "application/json",
+    }
+    body = {
+        "ad": {
+            "categories": categories
+        }
+    }
+    
+    try:
+        response = requests.put(url, json=body, headers=headers, timeout=30)
+        if response.status_code in (200, 201, 204):
+            return {"success": True}
+        else:
+            return {
+                "success": False,
+                "error": f"HTTP {response.status_code}: {response.text[:200]}"
+            }
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+
+
+@app.get("/api/db-update-config")
+async def get_db_update_config():
+    """
+    Returns the DB Update API configuration (without the secret) 
+    so the frontend can display pre-filled values.
+    """
+    return {
+        "token_url": getattr(config, 'db_update_token_url', ''),
+        "update_base_url": getattr(config, 'db_update_base_url', ''),
+        "client_id": getattr(config, 'db_update_client_id', ''),
+        "grant_type": getattr(config, 'db_update_grant_type', 'client_credentials'),
+        "has_secret": bool(getattr(config, 'db_update_client_secret', '')),
+    }
+
+
+@app.post("/api/db-update")
+async def db_update_categories(
+    file: UploadFile = File(..., description="AI Output Excel file with annotated categories"),
+    client_secret: str = Form(None),
+):
+    """
+    DB Category Update Feature:
+    1. Accepts an AI output Excel file
+    2. Filters rows where Status == "Require Update"
+    3. Skips: No Images Present, Inactive, Image not clear, No change
+    4. Gets bearer token from Trader API
+    5. Calls PUT for each qualifying ad to update categories
+    6. Returns summary of results
+    """
+    if not file.filename.endswith(('.xlsx', '.xls')):
+        raise HTTPException(status_code=400, detail="Only Excel files (.xlsx, .xls) are supported")
+    
+    # Save uploaded file temporarily
+    upload_dir = os.path.join(config.project_root, "uploads")
+    os.makedirs(upload_dir, exist_ok=True)
+    temp_id = str(uuid.uuid4())[:8]
+    file_path = os.path.join(upload_dir, f"{temp_id}_db_update_{file.filename}")
+    
+    try:
+        with open(file_path, "wb") as f:
+            content = await file.read()
+            f.write(content)
+        
+        # Read Excel
+        df = pd.read_excel(file_path, dtype={"Ad ID": str})
+        df["Ad ID"] = df["Ad ID"].astype(str).str.replace(r'\.0$', '', regex=True).str.strip()
+        
+        # Validate required columns
+        required_cols = ["Ad ID", "Status", "Annotated_Top1"]
+        missing_cols = [c for c in required_cols if c not in df.columns]
+        if missing_cols:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Excel file is missing required columns: {', '.join(missing_cols)}"
+            )
+        
+        total_rows = len(df)
+        
+        # Filter rows: only "Require Update"
+        update_rows = []
+        skipped_rows = []
+        
+        for idx, row in df.iterrows():
+            status = str(row.get("Status", "")).strip()
+            ad_id = str(row.get("Ad ID", "")).strip()
+            
+            if not ad_id or ad_id.lower() == "nan":
+                skipped_rows.append({"ad_id": "EMPTY", "reason": "Empty Ad ID"})
+                continue
+            
+            status_lower = status.lower()
+            
+            # Check if this status should be skipped
+            should_skip = False
+            for skip_status in DB_UPDATE_SKIP_STATUSES:
+                if skip_status in status_lower:
+                    should_skip = True
+                    skipped_rows.append({"ad_id": ad_id, "reason": status})
+                    break
+            
+            if should_skip:
+                continue
+            
+            # Only process "Require Update" rows
+            if status_lower == "require update":
+                update_rows.append(row)
+            else:
+                skipped_rows.append({"ad_id": ad_id, "reason": f"Unknown status: {status}"})
+        
+        if not update_rows:
+            return {
+                "status": "completed",
+                "message": "No rows with 'Require Update' status found in the uploaded file.",
+                "total_rows": total_rows,
+                "update_count": 0,
+                "skipped_count": len(skipped_rows),
+                "success_count": 0,
+                "failed_count": 0,
+                "results": [],
+                "skipped": skipped_rows[:50],  # Limit for response size
+            }
+        
+        # Get credentials
+        token_url = getattr(config, 'db_update_token_url', '').strip()
+        base_url = getattr(config, 'db_update_base_url', '').strip()
+        c_id = getattr(config, 'db_update_client_id', '').strip()
+        c_secret = (client_secret or getattr(config, 'db_update_client_secret', '')).strip()
+        c_grant = getattr(config, 'db_update_grant_type', 'client_credentials').strip()
+        
+        if not token_url:
+            raise HTTPException(status_code=400, detail="DB Update API TokenUrl not configured in config.ini")
+        if not base_url:
+            raise HTTPException(status_code=400, detail="DB Update API UpdateBaseUrl not configured in config.ini")
+        if not c_id:
+            raise HTTPException(status_code=400, detail="DB Update API ClientId not configured in config.ini")
+        if not c_secret:
+            raise HTTPException(status_code=400, detail="DB Update API ClientSecret not configured. Please enter it manually or add it to config.ini")
+        
+        # Step 1: Get bearer token
+        print("\n" + "=" * 80)
+        print("🔑 DB CATEGORY UPDATE: OBTAINING BEARER TOKEN")
+        print("=" * 80)
+        
+        try:
+            token_info = get_db_update_bearer_token(token_url, c_id, c_secret, c_grant)
+            bearer_token = token_info["access_token"]
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=f"Failed to obtain bearer token: {str(e)}")
+        
+        # Step 2: Process each "Require Update" row
+        print("\n" + "=" * 80)
+        print(f"📝 DB CATEGORY UPDATE: PROCESSING {len(update_rows)} ADS")
+        print("=" * 80)
+        
+        results = []
+        success_count = 0
+        failed_count = 0
+        
+        for i, row in enumerate(update_rows, 1):
+            # Auto-refresh token if it's about to expire (for large batches)
+            if time.time() >= token_info["expires_at"]:
+                print("   🔄 Bearer token expiring soon, refreshing...")
+                try:
+                    token_info = get_db_update_bearer_token(token_url, c_id, c_secret, c_grant)
+                    bearer_token = token_info["access_token"]
+                except Exception as e:
+                    print(f"   ⚠️ Token refresh failed: {e} — continuing with old token")
+            
+            ad_id = str(row.get("Ad ID", "")).strip()
+            
+            # Collect annotated categories (up to 3) — ALL must have known IDs or the entire row is skipped
+            categories = []
+            unmapped_cats = []
+            for col in ["Annotated_Top1", "Annotated_Top2", "Annotated_Top3"]:
+                cat_name = str(row.get(col, "")).strip() if pd.notna(row.get(col)) else ""
+                if cat_name and cat_name.lower() not in ["", "nan", "none"]:
+                    cat_id = CATEGORY_ID_MAP.get(cat_name)
+                    if cat_id:
+                        categories.append({"id": cat_id, "name": cat_name})
+                    else:
+                        unmapped_cats.append(cat_name)
+            
+            if not categories and not unmapped_cats:
+                results.append({
+                    "ad_id": ad_id,
+                    "success": False,
+                    "error": "No annotated categories found",
+                    "categories": []
+                })
+                failed_count += 1
+                print(f"   [{i}/{len(update_rows)}] ❌ Ad {ad_id}: No annotated categories found")
+                continue
+            
+            if unmapped_cats:
+                error_msg = f"Skipped — unmapped category: {', '.join(unmapped_cats)}"
+                results.append({
+                    "ad_id": ad_id,
+                    "success": False,
+                    "error": error_msg,
+                    "categories": [c["name"] for c in categories] + unmapped_cats
+                })
+                failed_count += 1
+                print(f"   [{i}/{len(update_rows)}] ⚠️ Ad {ad_id}: {error_msg}")
+                continue
+            
+            # Call PUT API
+            result = update_ad_categories_in_db(base_url, ad_id, categories, bearer_token)
+            
+            cat_names = [c["name"] for c in categories]
+            if result["success"]:
+                success_count += 1
+                print(f"   [{i}/{len(update_rows)}] ✅ Ad {ad_id}: Updated -> {cat_names}")
+            else:
+                failed_count += 1
+                print(f"   [{i}/{len(update_rows)}] ❌ Ad {ad_id}: {result.get('error', 'Unknown error')}")
+            
+            results.append({
+                "ad_id": ad_id,
+                "success": result["success"],
+                "error": result.get("error", ""),
+                "categories": cat_names,
+            })
+        
+        # Summary
+        print("\n" + "=" * 80)
+        print(f"🎉 DB CATEGORY UPDATE COMPLETE")
+        print(f"   Total rows in file: {total_rows}")
+        print(f"   Rows to update: {len(update_rows)}")
+        print(f"   ✅ Success: {success_count}")
+        print(f"   ❌ Failed: {failed_count}")
+        print(f"   ⏭️ Skipped: {len(skipped_rows)}")
+        print("=" * 80 + "\n")
+        
+        return {
+            "status": "completed",
+            "message": f"DB update completed. {success_count} successful, {failed_count} failed, {len(skipped_rows)} skipped.",
+            "total_rows": total_rows,
+            "update_count": len(update_rows),
+            "skipped_count": len(skipped_rows),
+            "success_count": success_count,
+            "failed_count": failed_count,
+            "results": results,
+            "skipped": skipped_rows[:50],  # Limit for response size
+        }
+    
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"❌ DB Update error: {e}")
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=f"DB Update failed: {str(e)}")
+    finally:
+        # Clean up temp file
+        if os.path.exists(file_path):
+            try:
+                os.remove(file_path)
+            except:
+                pass
 
 
 if __name__ == "__main__":

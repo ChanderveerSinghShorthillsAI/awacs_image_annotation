@@ -57,6 +57,13 @@ def load_config():
         config.db_api_client_secret = config_parser.get('DB_API', 'ClientSecret', fallback='')
         config.db_api_grant_type = config_parser.get('DB_API', 'GrantType', fallback='client_credentials')
 
+        # DB Update API Credentials (for updating ad categories in the database)
+        config.db_update_token_url = config_parser.get('DB_Update_API', 'TokenUrl', fallback='')
+        config.db_update_base_url = config_parser.get('DB_Update_API', 'UpdateBaseUrl', fallback='')
+        config.db_update_client_id = config_parser.get('DB_Update_API', 'ClientId', fallback='')
+        config.db_update_client_secret = config_parser.get('DB_Update_API', 'ClientSecret', fallback='')
+        config.db_update_grant_type = config_parser.get('DB_Update_API', 'GrantType', fallback='client_credentials')
+
         # API Keys - Now stores a list of dictionaries for rich data
         config.gemini_api_keys_info = []
         for i, (_, key) in enumerate(config_parser.items('API_Keys')):

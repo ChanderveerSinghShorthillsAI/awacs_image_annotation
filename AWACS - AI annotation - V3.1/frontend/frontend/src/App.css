@@ -1755,5 +1755,374 @@ body {
   }
 }
 
+/* =========================================
+   DB UPDATE SECTION STYLES
+   ========================================= */
+
+.db-update-section {
+  margin-top: 1.5rem;
+}
+
+/* Upload Zone */
+.db-update-upload-zone {
+  border: 2px dashed rgba(255, 255, 255, 0.2);
+  border-radius: 12px;
+  padding: 2.5rem;
+  text-align: center;
+  cursor: pointer;
+  transition: all 0.3s ease;
+  background: rgba(255, 255, 255, 0.03);
+  margin-bottom: 1.5rem;
+}
+
+.db-update-upload-zone:hover {
+  border-color: rgba(255, 165, 0, 0.4);
+  background: rgba(255, 165, 0, 0.05);
+}
+
+.db-update-upload-zone.drag-active {
+  border-color: rgba(255, 165, 0, 0.6);
+  background: rgba(255, 165, 0, 0.1);
+  transform: scale(1.01);
+}
+
+.db-update-upload-zone.has-file {
+  border-color: rgba(76, 175, 80, 0.4);
+  background: rgba(76, 175, 80, 0.05);
+  border-style: solid;
+}
+
+.db-update-upload-prompt {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.db-update-upload-prompt .upload-icon {
+  font-size: 2.5rem;
+  margin-bottom: 0.5rem;
+}
+
+.db-update-upload-prompt .upload-text {
+  font-size: 1.1rem;
+  color: rgba(255, 255, 255, 0.8);
+  font-weight: 500;
+}
+
+.db-update-upload-prompt .upload-hint {
+  font-size: 0.85rem;
+  color: rgba(255, 255, 255, 0.4);
+}
+
+.db-update-file-info {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  justify-content: center;
+}
+
+.db-update-file-info .file-icon {
+  font-size: 2rem;
+}
+
+.db-update-file-info .file-name {
+  font-weight: 600;
+  color: rgba(255, 255, 255, 0.9);
+  font-size: 1rem;
+}
+
+.db-update-file-info .file-size {
+  font-size: 0.85rem;
+  color: rgba(255, 255, 255, 0.5);
+}
+
+.file-remove-btn {
+  background: rgba(255, 0, 0, 0.2);
+  border: 1px solid rgba(255, 0, 0, 0.3);
+  color: #ff6b6b;
+  border-radius: 50%;
+  width: 28px;
+  height: 28px;
+  font-size: 0.9rem;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.2s ease;
+}
+
+.file-remove-btn:hover {
+  background: rgba(255, 0, 0, 0.4);
+}
+
+/* Credentials Section */
+.db-update-credentials {
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 12px;
+  padding: 1.5rem;
+  margin-bottom: 1.5rem;
+}
+
+.db-update-credentials .form-group {
+  margin-bottom: 1rem;
+}
+
+.db-update-credentials label {
+  display: block;
+  font-size: 0.9rem;
+  font-weight: 600;
+  color: rgba(255, 255, 255, 0.8);
+  margin-bottom: 0.5rem;
+}
+
+.config-hint {
+  font-weight: 400;
+  color: rgba(76, 175, 80, 0.7);
+  font-size: 0.8rem;
+}
+
+.form-input {
+  width: 100%;
+  padding: 0.75rem 1rem;
+  background: rgba(0, 0, 0, 0.3);
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  border-radius: 8px;
+  color: rgba(255, 255, 255, 0.9);
+  font-size: 0.9rem;
+  transition: all 0.2s ease;
+  box-sizing: border-box;
+}
+
+.form-input:focus {
+  outline: none;
+  border-color: rgba(255, 165, 0, 0.5);
+  background: rgba(0, 0, 0, 0.4);
+}
+
+.form-input::placeholder {
+  color: rgba(255, 255, 255, 0.3);
+}
+
+.db-update-config-info {
+  margin-top: 0.75rem;
+  padding: 0.75rem;
+  background: rgba(0, 0, 0, 0.2);
+  border-radius: 8px;
+  font-size: 0.8rem;
+  color: rgba(255, 255, 255, 0.5);
+}
+
+.db-update-config-info p {
+  margin: 0.25rem 0;
+}
+
+.db-update-config-info strong {
+  color: rgba(255, 255, 255, 0.7);
+}
+
+/* Update Button */
+.db-update-actions {
+  text-align: center;
+  margin-bottom: 1.5rem;
+}
+
+.btn-db-update {
+  background: linear-gradient(135deg, #ff8c00, #ff6600) !important;
+  border: none;
+  color: white;
+  padding: 0.85rem 2.5rem;
+  font-size: 1rem;
+  font-weight: 600;
+  border-radius: 10px;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  transition: all 0.3s ease;
+  box-shadow: 0 4px 15px rgba(255, 102, 0, 0.3);
+}
+
+.btn-db-update:hover:not(.disabled) {
+  transform: translateY(-1px);
+  box-shadow: 0 6px 20px rgba(255, 102, 0, 0.4);
+}
+
+.btn-db-update.disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+/* Results Section */
+.db-update-results {
+  animation: fadeInUp 0.4s ease;
+}
+
+.db-update-result-header {
+  text-align: center;
+  margin-bottom: 1.5rem;
+}
+
+.db-update-result-header .result-icon {
+  font-size: 3rem;
+  margin-bottom: 0.5rem;
+}
+
+.db-update-result-header h3 {
+  font-size: 1.5rem;
+  color: rgba(255, 255, 255, 0.9);
+}
+
+/* Stats Cards */
+.db-update-stats {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 1rem;
+  margin-bottom: 1.5rem;
+}
+
+.db-update-stat-card {
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 12px;
+  padding: 1.25rem;
+  text-align: center;
+  transition: all 0.3s ease;
+}
+
+.db-update-stat-card.main {
+  border-color: rgba(76, 175, 80, 0.3);
+  background: rgba(76, 175, 80, 0.08);
+}
+
+.db-update-stat-card .stat-value {
+  font-size: 2rem;
+  font-weight: 700;
+  color: rgba(76, 175, 80, 0.9);
+  margin-bottom: 0.25rem;
+}
+
+.db-update-stat-card .stat-value.red {
+  color: #ff6b6b;
+}
+
+.db-update-stat-card .stat-value.gray {
+  color: rgba(255, 255, 255, 0.5);
+}
+
+.stat-label-text {
+  font-size: 0.85rem;
+  color: rgba(255, 255, 255, 0.6);
+  font-weight: 500;
+}
+
+/* Message */
+.db-update-message {
+  text-align: center;
+  padding: 1rem;
+  background: rgba(255, 255, 255, 0.03);
+  border-radius: 8px;
+  margin-bottom: 1.5rem;
+  color: rgba(255, 255, 255, 0.7);
+  font-size: 0.95rem;
+}
+
+/* Details Section */
+.db-update-details-section {
+  margin-bottom: 1.5rem;
+}
+
+.db-update-toggle-btn {
+  width: 100%;
+  text-align: center;
+  margin-bottom: 1rem;
+}
+
+.db-update-details-list {
+  max-height: 400px;
+  overflow-y: auto;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 10px;
+  background: rgba(0, 0, 0, 0.2);
+}
+
+.db-update-detail-item {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 0.75rem 1rem;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+  font-size: 0.85rem;
+  transition: background 0.2s ease;
+}
+
+.db-update-detail-item:hover {
+  background: rgba(255, 255, 255, 0.03);
+}
+
+.db-update-detail-item:last-child {
+  border-bottom: none;
+}
+
+.db-update-detail-item.success {
+  border-left: 3px solid rgba(76, 175, 80, 0.5);
+}
+
+.db-update-detail-item.failed {
+  border-left: 3px solid rgba(255, 107, 107, 0.5);
+}
+
+.detail-status {
+  font-size: 1rem;
+  flex-shrink: 0;
+}
+
+.detail-ad-id {
+  font-weight: 600;
+  color: rgba(255, 255, 255, 0.9);
+  min-width: 120px;
+  flex-shrink: 0;
+}
+
+.detail-categories {
+  color: rgba(255, 165, 0, 0.8);
+  flex: 1;
+}
+
+.detail-error {
+  color: #ff6b6b;
+  font-size: 0.8rem;
+  margin-left: auto;
+  flex-shrink: 0;
+  max-width: 250px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Result Actions */
+.db-update-result-actions {
+  text-align: center;
+  margin-top: 1.5rem;
+}
+
+/* Responsive */
+@media (max-width: 768px) {
+  .db-update-stats {
+    grid-template-columns: repeat(2, 1fr);
+  }
+
+  .db-update-detail-item {
+    flex-wrap: wrap;
+  }
+
+  .detail-error {
+    max-width: 100%;
+    margin-left: 0;
+    margin-top: 0.25rem;
+  }
+}
+
 /* Import Google Fonts */
 @import url('https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap');

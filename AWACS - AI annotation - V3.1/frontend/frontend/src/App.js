@@ -58,6 +58,13 @@ const TabSwitcher = ({ activeTab, onTabChange }) => (
       <span className="tab-icon">📊</span>
       Accuracy Audit
     </button>
+    <button
+      className={`tab-btn ${activeTab === 'dbupdate' ? 'active' : ''}`}
+      onClick={() => onTabChange('dbupdate')}
+    >
+      <span className="tab-icon">🔄</span>
+      DB Update
+    </button>
   </div>
 );
 
@@ -1474,6 +1481,284 @@ const AuditSection = () => {
   );
 };
 
+// DB Update Section Component
+const DBUpdateSection = () => {
+  const [updateFile, setUpdateFile] = useState(null);
+  const [clientSecret, setClientSecret] = useState('');
+  const [isUpdating, setIsUpdating] = useState(false);
+  const [updateResult, setUpdateResult] = useState(null);
+  const [error, setError] = useState(null);
+  const [dbUpdateConfig, setDbUpdateConfig] = useState(null);
+  const [dragActive, setDragActive] = useState(false);
+  const [showDetails, setShowDetails] = useState(false);
+  const fileInputRef = useRef(null);
+
+  // Load DB Update config on mount
+  useEffect(() => {
+    fetch(`${API_BASE}/api/db-update-config`)
+      .then(res => res.json())
+      .then(data => setDbUpdateConfig(data))
+      .catch(err => console.error('Failed to fetch DB Update config:', err));
+  }, []);
+
+  const canUpdate = updateFile && !isUpdating;
+
+  const handleDrag = (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    if (e.type === 'dragenter' || e.type === 'dragover') {
+      setDragActive(true);
+    } else if (e.type === 'dragleave') {
+      setDragActive(false);
+    }
+  };
+
+  const handleDrop = (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setDragActive(false);
+    if (e.dataTransfer.files && e.dataTransfer.files[0]) {
+      setUpdateFile(e.dataTransfer.files[0]);
+      setUpdateResult(null);
+      setError(null);
+    }
+  };
+
+  const handleFileChange = (e) => {
+    if (e.target.files && e.target.files[0]) {
+      setUpdateFile(e.target.files[0]);
+      setUpdateResult(null);
+      setError(null);
+    }
+  };
+
+  const handleUpdate = async () => {
+    if (!canUpdate) return;
+
+    setIsUpdating(true);
+    setError(null);
+    setUpdateResult(null);
+
+    try {
+      const formData = new FormData();
+      formData.append('file', updateFile);
+      if (clientSecret) {
+        formData.append('client_secret', clientSecret);
+      }
+
+      const res = await fetch(`${API_BASE}/api/db-update`, {
+        method: 'POST',
+        body: formData
+      });
+
+      if (!res.ok) {
+        let errorMessage = `DB Update failed with status ${res.status}`;
+        try {
+          const errData = await res.json();
+          if (errData.detail) errorMessage = errData.detail;
+        } catch (_) {
+          // Response was not JSON (e.g. proxy error page) — use default message
+        }
+        throw new Error(errorMessage);
+      }
+
+      const data = await res.json();
+      setUpdateResult(data);
+
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setIsUpdating(false);
+    }
+  };
+
+  const handleReset = () => {
+    setUpdateFile(null);
+    setUpdateResult(null);
+    setError(null);
+    setClientSecret('');
+    setShowDetails(false);
+  };
+
+  return (
+    <div className="db-update-section">
+      {!updateResult && (
+        <>
+          {/* File upload area */}
+          <div
+            className={`db-update-upload-zone ${dragActive ? 'drag-active' : ''} ${updateFile ? 'has-file' : ''}`}
+            onDragEnter={handleDrag}
+            onDragLeave={handleDrag}
+            onDragOver={handleDrag}
+            onDrop={handleDrop}
+            onClick={() => fileInputRef.current?.click()}
+          >
+            <input
+              ref={fileInputRef}
+              type="file"
+              accept=".xlsx,.xls"
+              onChange={handleFileChange}
+              style={{ display: 'none' }}
+            />
+            {updateFile ? (
+              <div className="db-update-file-info">
+                <span className="file-icon">📄</span>
+                <div>
+                  <p className="file-name">{updateFile.name}</p>
+                  <p className="file-size">{(updateFile.size / 1024).toFixed(1)} KB</p>
+                </div>
+                <button
+                  className="file-remove-btn"
+                  onClick={(e) => { e.stopPropagation(); setUpdateFile(null); }}
+                >
+                  ✕
+                </button>
+              </div>
+            ) : (
+              <div className="db-update-upload-prompt">
+                <span className="upload-icon">📤</span>
+                <p className="upload-text">
+                  {dragActive ? 'Drop your Excel file here' : 'Drag & drop AI Output Excel file here'}
+                </p>
+                <p className="upload-hint">or click to browse (.xlsx, .xls)</p>
+              </div>
+            )}
+          </div>
+
+          {/* Client Secret input */}
+          <div className="db-update-credentials">
+            <div className="form-group">
+              <label>
+                Client Secret
+                {dbUpdateConfig?.has_secret && (
+                  <span className="config-hint"> (configured in config.ini)</span>
+                )}
+              </label>
+              <input
+                type="password"
+                value={clientSecret}
+                onChange={(e) => setClientSecret(e.target.value)}
+                placeholder={dbUpdateConfig?.has_secret ? 'Using config.ini value (override here if needed)' : 'Enter client secret'}
+                className="form-input"
+              />
+            </div>
+            {dbUpdateConfig && (
+              <div className="db-update-config-info">
+                <p><strong>Token URL:</strong> {dbUpdateConfig.token_url || 'Not configured'}</p>
+                <p><strong>Client ID:</strong> {dbUpdateConfig.client_id || 'Not configured'}</p>
+              </div>
+            )}
+          </div>
+
+          {/* Update button */}
+          <div className="db-update-actions">
+            <button
+              className={`btn btn-db-update ${canUpdate ? '' : 'disabled'}`}
+              onClick={handleUpdate}
+              disabled={!canUpdate}
+            >
+              {isUpdating ? (
+                <>
+                  <div className="btn-spinner"></div>
+                  Updating Database...
+                </>
+              ) : (
+                <>
+                  <span>🔄</span> Update Database Categories
+                </>
+              )}
+            </button>
+          </div>
+
+          {/* Error message */}
+          {error && (
+            <div className="audit-error">
+              <span className="error-icon">❌</span>
+              <span>{error}</span>
+            </div>
+          )}
+        </>
+      )}
+
+      {/* Results */}
+      {updateResult && (
+        <div className="db-update-results">
+          <div className="db-update-result-header">
+            <div className="result-icon">
+              {updateResult.failed_count === 0 ? '✅' : '⚠️'}
+            </div>
+            <h3>DB Update Complete!</h3>
+          </div>
+
+          {/* Summary Stats */}
+          <div className="db-update-stats">
+            <div className="db-update-stat-card main">
+              <div className="stat-value">{updateResult.success_count}</div>
+              <div className="stat-label-text">Successfully Updated</div>
+            </div>
+            <div className="db-update-stat-card">
+              <div className="stat-value red">{updateResult.failed_count}</div>
+              <div className="stat-label-text">Failed</div>
+            </div>
+            <div className="db-update-stat-card">
+              <div className="stat-value gray">{updateResult.skipped_count}</div>
+              <div className="stat-label-text">Skipped</div>
+            </div>
+            <div className="db-update-stat-card">
+              <div className="stat-value">{updateResult.total_rows}</div>
+              <div className="stat-label-text">Total Rows</div>
+            </div>
+          </div>
+
+          {/* Message */}
+          <div className="db-update-message">
+            <p>{updateResult.message}</p>
+          </div>
+
+          {/* Details toggle */}
+          {updateResult.results && updateResult.results.length > 0 && (
+            <div className="db-update-details-section">
+              <button
+                className="btn btn-secondary db-update-toggle-btn"
+                onClick={() => setShowDetails(!showDetails)}
+              >
+                {showDetails ? '▼ Hide Details' : '▶ Show Details'} ({updateResult.results.length} ads)
+              </button>
+
+              {showDetails && (
+                <div className="db-update-details-list">
+                  {updateResult.results.map((result, idx) => (
+                    <div key={idx} className={`db-update-detail-item ${result.success ? 'success' : 'failed'}`}>
+                      <span className="detail-status">{result.success ? '✅' : '❌'}</span>
+                      <span className="detail-ad-id">Ad {result.ad_id}</span>
+                      <span className="detail-categories">
+                        {result.categories && result.categories.length > 0
+                          ? result.categories.join(', ')
+                          : 'No categories'}
+                      </span>
+                      {result.error && (
+                        <span className="detail-error">{result.error}</span>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* Action buttons */}
+          <div className="db-update-result-actions">
+            <button className="btn btn-secondary" onClick={handleReset}>
+              <span>🔄</span> New Update
+            </button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+};
+
+
 // Main App component
 function App() {
   const [activeTab, setActiveTab] = useState('annotation');
@@ -2007,6 +2292,37 @@ function App() {
                   <div className="info-icon">📈</div>
                   <h4>Detailed Report</h4>
                   <p>Get accuracy metrics, mismatch patterns, and a downloadable Excel report.</p>
+                </div>
+              </div>
+            </>
+          )}
+
+          {/* DB UPDATE TAB */}
+          {activeTab === 'dbupdate' && (
+            <>
+              <div className="section-header">
+                <h2>Database Category Update</h2>
+                <p className="mode-badge">Upload AI Output Excel → Update Categories in DB</p>
+              </div>
+
+              <DBUpdateSection />
+
+              {/* Info cards for DB update */}
+              <div className="info-section">
+                <div className="info-card">
+                  <div className="info-icon">📤</div>
+                  <h4>Upload Output</h4>
+                  <p>Upload the AI annotated Excel file. Only rows with "Require Update" status will be processed.</p>
+                </div>
+                <div className="info-card">
+                  <div className="info-icon">🔄</div>
+                  <h4>Auto Update</h4>
+                  <p>Automatically updates ad categories in the database via the Trader API using AI predictions.</p>
+                </div>
+                <div className="info-card">
+                  <div className="info-icon">⏭️</div>
+                  <h4>Smart Skip</h4>
+                  <p>Skips inactive ads, no-image cases, and unchanged categories. Only updates what needs updating.</p>
                 </div>
               </div>
             </>
