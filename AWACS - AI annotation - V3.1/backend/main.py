@@ -3216,6 +3216,31 @@ CATEGORY_ID_MAP = {
     "Dry Van": "644245645",
 }
 
+def _normalize_category_key(name: str) -> str:
+    """Normalize a category name for fuzzy matching: lowercase, collapse
+    hyphens/underscores/extra spaces into a single space, strip edges."""
+    import re
+    return re.sub(r'[\s\-_]+', ' ', name).strip().lower()
+
+# Build a normalized lookup: normalized_key -> (original_name, id)
+_CATEGORY_NORMALIZED_MAP = {
+    _normalize_category_key(k): (k, v) for k, v in CATEGORY_ID_MAP.items()
+}
+
+def lookup_category(raw_name: str):
+    """Look up a category by name, tolerant of hyphens/spaces/case differences.
+    Returns (canonical_name, category_id) or (None, None) if not found."""
+    # Try exact match first (fast path)
+    cat_id = CATEGORY_ID_MAP.get(raw_name)
+    if cat_id:
+        return raw_name, cat_id
+    # Fall back to normalized match
+    normalized = _normalize_category_key(raw_name)
+    match = _CATEGORY_NORMALIZED_MAP.get(normalized)
+    if match:
+        return match  # (canonical_name, id)
+    return None, None
+
 # Statuses that should be SKIPPED during DB update iteration
 DB_UPDATE_SKIP_STATUSES = [
     "no images present",
@@ -3299,6 +3324,197 @@ def update_ad_categories_in_db(
             }
     except Exception as e:
         return {"success": False, "error": str(e)}
+
+
+def _derive_patch_base_url(update_base_url: str) -> str:
+    """
+    Derives the ad-patches API base URL from the existing update base URL.
+    e.g. 'https://nebulous-prod.traderonline.com/vLatest/trucks'
+      -> 'https://nebulous-prod.traderonline.com/v1/ad-patches'
+    """
+    from urllib.parse import urlparse
+    parsed = urlparse(update_base_url)
+    return f"{parsed.scheme}://{parsed.netloc}/v1/ad-patches"
+
+
+def check_ad_patch(patch_base_url: str, ad_id: str, bearer_token: str) -> dict:
+    """
+    Checks if an ad has a patch by calling GET {patch_base_url}/{ad_id}.
+    
+    Returns:
+        dict with keys:
+            - "has_patch": bool (True if 200, False if 404)
+            - "has_categories": bool (True if patch contains a non-empty 'categories' list)
+            - "categories": list of category dicts from the patch (empty if no patch / no categories)
+            - "error": optional error string if the request itself failed
+    """
+    url = f"{patch_base_url}/{ad_id}"
+    headers = {
+        "Authorization": f"Bearer {bearer_token}",
+        "Content-Type": "application/json",
+    }
+    try:
+        response = requests.get(url, headers=headers, timeout=30)
+        if response.status_code == 200:
+            data = response.json()
+            result = data.get("result", {})
+            categories = result.get("categories", [])
+            has_categories = isinstance(categories, list) and len(categories) > 0
+            print(f"      🔍 Patch check for Ad {ad_id}: PATCH FOUND | categories in patch: {has_categories}")
+            if has_categories:
+                cat_names = [c.get("name", c.get("id", "?")) for c in categories]
+                print(f"         Patched categories: {cat_names}")
+            return {
+                "has_patch": True,
+                "has_categories": has_categories,
+                "categories": categories,
+            }
+        elif response.status_code == 404:
+            print(f"      🔍 Patch check for Ad {ad_id}: NO PATCH (404)")
+            return {
+                "has_patch": False,
+                "has_categories": False,
+                "categories": [],
+            }
+        else:
+            error_msg = f"Patch check returned HTTP {response.status_code}: {response.text[:200]}"
+            print(f"      ⚠️ Patch check for Ad {ad_id}: {error_msg}")
+            return {
+                "has_patch": False,
+                "has_categories": False,
+                "categories": [],
+                "error": error_msg,
+            }
+    except Exception as e:
+        error_msg = f"Patch check request failed: {str(e)}"
+        print(f"      ⚠️ Patch check for Ad {ad_id}: {error_msg}")
+        return {
+            "has_patch": False,
+            "has_categories": False,
+            "categories": [],
+            "error": error_msg,
+        }
+
+
+def delete_patch_categories(patch_base_url: str, ad_id: str, bearer_token: str) -> dict:
+    """
+    Deletes the categories field from an ad's patch by calling
+    DELETE {patch_base_url}/{ad_id}?field=categories
+    
+    Expects 204 on success.
+    
+    Returns:
+        dict with "success" bool and optional "error" message
+    """
+    url = f"{patch_base_url}/{ad_id}?field=categories"
+    headers = {
+        "Authorization": f"Bearer {bearer_token}",
+        "Content-Type": "application/json",
+    }
+    try:
+        response = requests.delete(url, headers=headers, timeout=30)
+        if response.status_code == 204:
+            print(f"      🗑️ Successfully deleted categories from patch for Ad {ad_id} (204)")
+            return {"success": True}
+        else:
+            error_msg = f"Patch category delete returned HTTP {response.status_code}: {response.text[:200]}"
+            print(f"      ❌ Failed to delete patch categories for Ad {ad_id}: {error_msg}")
+            return {"success": False, "error": error_msg}
+    except Exception as e:
+        error_msg = f"Patch category delete request failed: {str(e)}"
+        print(f"      ❌ Failed to delete patch categories for Ad {ad_id}: {error_msg}")
+        return {"success": False, "error": error_msg}
+
+
+def create_or_update_ad_patch_categories(
+    patch_base_url: str, ad_id: str, categories: list, had_patch: bool, bearer_token: str
+) -> dict:
+    """
+    After a successful ad category update, creates or updates the ad-patch
+    so it includes the newly AI-annotated categories.
+
+    - If had_patch is True:  GET current patch fields → PUT with existing fields + new categories
+    - If had_patch is False: PUT with only categories
+
+    Args:
+        patch_base_url: e.g. https://nebulous-prod.traderonline.com/v1/ad-patches
+        ad_id:          The ad ID string
+        categories:     List of {"id": "...", "name": "..."} dicts (AI-annotated)
+        had_patch:      Whether the ad already had a patch before the update
+        bearer_token:   The bearer token string
+
+    Returns:
+        dict with "success" bool, optional "error" message, and "action" ("created" | "updated")
+    """
+    url = f"{patch_base_url}/{ad_id}"
+    headers = {
+        "Authorization": f"Bearer {bearer_token}",
+        "Content-Type": "application/json",
+    }
+
+    patch_body = {}
+    action = "created"  # default: no prior patch
+
+    if had_patch:
+        action = "updated"
+        # ── GET existing patch fields so we can preserve them ──
+        print(f"      📥 [Patch Step] Ad {ad_id}: Patch exists — fetching current patch fields...")
+        try:
+            get_resp = requests.get(url, headers=headers, timeout=30)
+            if get_resp.status_code == 200:
+                result = get_resp.json().get("result", {})
+                skipped_fields = []
+                # Copy every field except 'id' and 'categories' (we'll add new categories)
+                for key, value in result.items():
+                    if key in ("id", "categories"):
+                        continue
+                    # Skip None/null values — API rejects them
+                    if value is None:
+                        skipped_fields.append(f"{key}(null)")
+                        continue
+                    # Skip nested dicts/lists — only simple scalar fields belong in patch
+                    if isinstance(value, (dict, list)):
+                        skipped_fields.append(f"{key}(complex)")
+                        continue
+                    # Convert everything to string (API expects strings in PUT body)
+                    patch_body[key] = str(value)
+                
+                copied_keys = list(patch_body.keys())
+                print(f"      📥 [Patch Step] Ad {ad_id}: Copied {len(patch_body)} existing patch fields: {copied_keys}")
+                if skipped_fields:
+                    print(f"      ⏭️ [Patch Step] Ad {ad_id}: Skipped fields: {skipped_fields}")
+            else:
+                print(f"      ⚠️ [Patch Step] Ad {ad_id}: GET patch returned HTTP {get_resp.status_code} — will PUT with categories only")
+        except Exception as e:
+            print(f"      ⚠️ [Patch Step] Ad {ad_id}: Failed to GET existing patch: {e} — will PUT with categories only")
+    else:
+        print(f"      📥 [Patch Step] Ad {ad_id}: No prior patch — will create new patch with categories only")
+
+    # Append the new AI-annotated categories
+    patch_body["categories"] = categories
+
+    # ── PUT the patch ──
+    body = {"patch": patch_body}
+    cat_names = [c.get("name", c.get("id", "?")) for c in categories]
+    print(f"      📤 [Patch Step] Ad {ad_id}: Sending PUT to {action} patch with categories: {cat_names}")
+
+    try:
+        put_resp = requests.put(url, json=body, headers=headers, timeout=30)
+        if put_resp.status_code in (200, 201, 204):
+            print(f"      ✅ [Patch Step] Ad {ad_id}: Patch {action} successfully (HTTP {put_resp.status_code})")
+            return {"success": True, "action": action}
+        else:
+            error_msg = f"Patch PUT returned HTTP {put_resp.status_code}: {put_resp.text[:200]}"
+            print(f"      ❌ [Patch Step] Ad {ad_id}: Failed to {action[:-1]}e patch — {error_msg}")
+            return {"success": False, "error": error_msg, "action": action}
+    except Exception as e:
+        error_msg = f"Patch PUT request failed: {str(e)}"
+        print(f"      ❌ [Patch Step] Ad {ad_id}: Failed to {action[:-1]}e patch — {error_msg}")
+        return {"success": False, "error": error_msg, "action": action}
+
+
+# Global storage for patch summary reports (keyed by report ID)
+db_update_patch_reports: Dict[str, dict] = {}
 
 
 @app.get("/api/db-update-config")
@@ -3430,98 +3646,252 @@ async def db_update_categories(
         except Exception as e:
             raise HTTPException(status_code=500, detail=f"Failed to obtain bearer token: {str(e)}")
         
-        # Step 2: Process each "Require Update" row
-        print("\n" + "=" * 80)
-        print(f"📝 DB CATEGORY UPDATE: PROCESSING {len(update_rows)} ADS")
-        print("=" * 80)
+        # Derive the ad-patches base URL from the update base URL
+        patch_base_url = _derive_patch_base_url(base_url)
+        print(f"   📌 Patch API base URL: {patch_base_url}")
         
-        results = []
-        success_count = 0
-        failed_count = 0
+        # ── Pre-validate all rows (single-threaded, fast) ──
+        # This separates category-lookup / validation from the network-bound work
+        prepared_ads = []   # List of (ad_id, categories_list, cat_names) ready for API calls
+        pre_skip_results = []  # Results for rows skipped during validation
         
         for i, row in enumerate(update_rows, 1):
-            # Auto-refresh token if it's about to expire (for large batches)
-            if time.time() >= token_info["expires_at"]:
-                print("   🔄 Bearer token expiring soon, refreshing...")
-                try:
-                    token_info = get_db_update_bearer_token(token_url, c_id, c_secret, c_grant)
-                    bearer_token = token_info["access_token"]
-                except Exception as e:
-                    print(f"   ⚠️ Token refresh failed: {e} — continuing with old token")
-            
             ad_id = str(row.get("Ad ID", "")).strip()
             
-            # Collect annotated categories (up to 3) — ALL must have known IDs or the entire row is skipped
             categories = []
             unmapped_cats = []
             for col in ["Annotated_Top1", "Annotated_Top2", "Annotated_Top3"]:
                 cat_name = str(row.get(col, "")).strip() if pd.notna(row.get(col)) else ""
                 if cat_name and cat_name.lower() not in ["", "nan", "none"]:
-                    cat_id = CATEGORY_ID_MAP.get(cat_name)
+                    canonical_name, cat_id = lookup_category(cat_name)
                     if cat_id:
-                        categories.append({"id": cat_id, "name": cat_name})
+                        categories.append({"id": cat_id, "name": canonical_name})
                     else:
                         unmapped_cats.append(cat_name)
             
             if not categories and not unmapped_cats:
-                results.append({
+                pre_skip_results.append({
                     "ad_id": ad_id,
                     "success": False,
                     "error": "No annotated categories found",
                     "categories": []
                 })
-                failed_count += 1
-                print(f"   [{i}/{len(update_rows)}] ❌ Ad {ad_id}: No annotated categories found")
+                print(f"   [pre-check] ❌ Ad {ad_id}: No annotated categories found")
                 continue
             
             if unmapped_cats:
                 error_msg = f"Skipped — unmapped category: {', '.join(unmapped_cats)}"
-                results.append({
+                pre_skip_results.append({
                     "ad_id": ad_id,
                     "success": False,
                     "error": error_msg,
                     "categories": [c["name"] for c in categories] + unmapped_cats
                 })
-                failed_count += 1
-                print(f"   [{i}/{len(update_rows)}] ⚠️ Ad {ad_id}: {error_msg}")
+                print(f"   [pre-check] ⚠️ Ad {ad_id}: {error_msg}")
                 continue
             
-            # Call PUT API
-            result = update_ad_categories_in_db(base_url, ad_id, categories, bearer_token)
-            
             cat_names = [c["name"] for c in categories]
-            if result["success"]:
-                success_count += 1
-                print(f"   [{i}/{len(update_rows)}] ✅ Ad {ad_id}: Updated -> {cat_names}")
-            else:
-                failed_count += 1
-                print(f"   [{i}/{len(update_rows)}] ❌ Ad {ad_id}: {result.get('error', 'Unknown error')}")
+            prepared_ads.append((ad_id, categories, cat_names))
+        
+        # Step 2: Process prepared ads with MULTITHREADING
+        max_workers = 5
+        print("\n" + "=" * 80)
+        print(f"📝 DB CATEGORY UPDATE: PROCESSING {len(prepared_ads)} ADS (MULTITHREADED, {max_workers} workers)")
+        print(f"   ⏭️ Pre-skipped: {len(pre_skip_results)} ads (validation failures)")
+        print(f"   🚀 Using {max_workers} concurrent workers for ~{max_workers}x speedup!")
+        print("=" * 80)
+        
+        # Thread-safe token holder with lock for refresh
+        token_lock = threading.Lock()
+        token_holder = {"access_token": bearer_token, "expires_at": token_info["expires_at"]}
+        
+        def _get_valid_token():
+            """Get current bearer token, refreshing if expired (thread-safe)."""
+            with token_lock:
+                if time.time() >= token_holder["expires_at"]:
+                    print("   🔄 Bearer token expiring soon, refreshing...")
+                    try:
+                        new_info = get_db_update_bearer_token(token_url, c_id, c_secret, c_grant)
+                        token_holder["access_token"] = new_info["access_token"]
+                        token_holder["expires_at"] = new_info["expires_at"]
+                    except Exception as e:
+                        print(f"   ⚠️ Token refresh failed: {e} — continuing with old token")
+                return token_holder["access_token"]
+        
+        def _process_single_ad(ad_data, idx, total):
+            """
+            Worker function: check patch → delete patch categories if needed → PUT update.
+            Returns (result_dict, patch_summary_dict_or_None).
+            """
+            ad_id, categories, cat_names = ad_data
+            current_token = _get_valid_token()
             
-            results.append({
+            print(f"\n   [{idx}/{total}] 🔎 Processing Ad {ad_id} ...")
+            patch_info = check_ad_patch(patch_base_url, ad_id, current_token)
+            
+            patch_deleted = False
+            old_patch_categories = []
+            patch_summary = None
+            
+            if patch_info.get("has_patch") and patch_info.get("has_categories"):
+                old_patch_categories = patch_info["categories"]
+                old_cat_names = [c.get("name", c.get("id", "?")) for c in old_patch_categories]
+                print(f"      ⚡ Ad {ad_id} has PATCHED categories: {old_cat_names}")
+                print(f"      🗑️ Deleting categories from patch before PUT update...")
+                
+                # Re-fetch token in case it expired during previous calls
+                current_token = _get_valid_token()
+                delete_result = delete_patch_categories(patch_base_url, ad_id, current_token)
+                
+                if not delete_result["success"]:
+                    error_msg = f"Failed to delete patch categories: {delete_result.get('error', 'Unknown error')}"
+                    print(f"   [{idx}/{total}] ❌ Ad {ad_id}: {error_msg}")
+                    return (
+                        {"ad_id": ad_id, "success": False, "error": error_msg, "categories": cat_names},
+                        {"ad_id": ad_id, "old_patched_categories": ", ".join(old_cat_names),
+                         "new_updated_categories": ", ".join(cat_names),
+                         "patch_deleted": "FAILED", "update_success": "No (patch delete failed)"},
+                    )
+                
+                patch_deleted = True
+                print(f"      ✅ Patch categories deleted successfully for Ad {ad_id}")
+            elif patch_info.get("has_patch") and not patch_info.get("has_categories"):
+                print(f"      ℹ️ Ad {ad_id} has a patch but NO categories in it — proceeding with direct PUT")
+            else:
+                print(f"      ℹ️ Ad {ad_id} has no patch — proceeding with direct PUT")
+            
+            # ── PUT UPDATE ──
+            current_token = _get_valid_token()
+            print(f"      📤 Sending PUT to update Ad {ad_id} with categories: {cat_names}")
+            result = update_ad_categories_in_db(base_url, ad_id, categories, current_token)
+            
+            if result["success"]:
+                print(f"   [{idx}/{total}] ✅ Ad {ad_id}: Updated -> {cat_names}")
+            else:
+                print(f"   [{idx}/{total}] ❌ Ad {ad_id}: {result.get('error', 'Unknown error')}")
+            
+            # ── PATCH STEP: Create or update ad-patch with new categories ──
+            patch_action = None       # "created" | "updated" | None
+            patch_step_success = False
+            patch_step_error = ""
+            
+            if result["success"]:
+                print(f"\n      🩹 [Patch Step] Ad {ad_id}: Ad update succeeded — now creating/updating patch with categories...")
+                current_token = _get_valid_token()
+                patch_result = create_or_update_ad_patch_categories(
+                    patch_base_url, ad_id, categories,
+                    had_patch=patch_info.get("has_patch", False),
+                    bearer_token=current_token,
+                )
+                patch_step_success = patch_result["success"]
+                patch_action = patch_result.get("action")
+                patch_step_error = patch_result.get("error", "")
+                if patch_step_success:
+                    print(f"   [{idx}/{total}] 🩹 Ad {ad_id}: Patch {patch_action} successfully with categories: {cat_names}")
+                else:
+                    print(f"   [{idx}/{total}] ⚠️ Ad {ad_id}: Ad updated OK but patch step failed — {patch_step_error}")
+            else:
+                print(f"      ⏭️ [Patch Step] Ad {ad_id}: Skipping patch step because ad update failed")
+            
+            result_dict = {
                 "ad_id": ad_id,
                 "success": result["success"],
                 "error": result.get("error", ""),
                 "categories": cat_names,
-            })
+                "patch_action": patch_action,           # "created" | "updated" | None
+                "patch_step_success": patch_step_success,
+                "patch_step_error": patch_step_error,
+            }
+            
+            # Build patch summary if a patch action was taken OR this ad had patch categories
+            if patch_action or patch_deleted or (patch_info.get("has_patch") and patch_info.get("has_categories")):
+                old_cat_names = [c.get("name", c.get("id", "?")) for c in old_patch_categories]
+                patch_summary = {
+                    "ad_id": ad_id,
+                    "old_patched_categories": ", ".join(old_cat_names),
+                    "new_updated_categories": ", ".join(cat_names),
+                    "patch_deleted": "Yes" if patch_deleted else "No",
+                    "update_success": "Yes" if result["success"] else f"No ({result.get('error', 'Unknown')})",
+                    "patch_step": f"{patch_action} ({'OK' if patch_step_success else 'FAILED'})" if patch_action else "N/A",
+                }
+            
+            return (result_dict, patch_summary)
+        
+        # ── Run with ThreadPoolExecutor ──
+        results = list(pre_skip_results)  # Start with pre-skipped results
+        patched_ads_summary = []
+        update_start = time.time()
+        
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            future_to_ad = {
+                executor.submit(_process_single_ad, ad_data, i, len(prepared_ads)): ad_data
+                for i, ad_data in enumerate(prepared_ads, 1)
+            }
+            
+            for future in as_completed(future_to_ad):
+                try:
+                    result_dict, patch_summary = future.result()
+                    results.append(result_dict)
+                    if patch_summary:
+                        patched_ads_summary.append(patch_summary)
+                except Exception as e:
+                    ad_data = future_to_ad[future]
+                    ad_id = ad_data[0]
+                    print(f"   ❌ Worker exception for Ad {ad_id}: {e}")
+                    results.append({
+                        "ad_id": ad_id,
+                        "success": False,
+                        "error": f"Worker exception: {str(e)}",
+                        "categories": ad_data[2],
+                    })
+        
+        update_elapsed = time.time() - update_start
+        
+        # Count successes/failures from all results
+        success_count = sum(1 for r in results if r["success"])
+        failed_count = sum(1 for r in results if not r["success"])
+        
+        # Count patch step outcomes
+        patches_created = sum(1 for r in results if r.get("patch_action") == "created" and r.get("patch_step_success"))
+        patches_updated = sum(1 for r in results if r.get("patch_action") == "updated" and r.get("patch_step_success"))
+        patches_failed  = sum(1 for r in results if r.get("patch_action") and not r.get("patch_step_success"))
+        
+        # Store patch report if any patched ads were found
+        patch_report_id = None
+        if patched_ads_summary:
+            patch_report_id = str(uuid.uuid4())[:8]
+            db_update_patch_reports[patch_report_id] = {
+                "created_at": datetime.now().isoformat(),
+                "summary": patched_ads_summary,
+            }
+            print(f"\n   📋 Patch summary report stored with ID: {patch_report_id} ({len(patched_ads_summary)} patched ads)")
         
         # Summary
         print("\n" + "=" * 80)
-        print(f"🎉 DB CATEGORY UPDATE COMPLETE")
+        print(f"🎉 DB CATEGORY UPDATE COMPLETE ({update_elapsed:.1f}s with {max_workers} workers)")
         print(f"   Total rows in file: {total_rows}")
         print(f"   Rows to update: {len(update_rows)}")
-        print(f"   ✅ Success: {success_count}")
-        print(f"   ❌ Failed: {failed_count}")
+        print(f"   ✅ Ad updates successful: {success_count}")
+        print(f"   ❌ Ad updates failed: {failed_count}")
         print(f"   ⏭️ Skipped: {len(skipped_rows)}")
+        print(f"   🩹 Patched ads (had categories in patch): {len(patched_ads_summary)}")
+        print(f"   🩹 Patch step — created: {patches_created}, updated: {patches_updated}, failed: {patches_failed}")
+        print(f"   ⚡ Speed: {max_workers} concurrent workers")
         print("=" * 80 + "\n")
         
         return {
             "status": "completed",
-            "message": f"DB update completed. {success_count} successful, {failed_count} failed, {len(skipped_rows)} skipped.",
+            "message": f"DB update completed in {update_elapsed:.1f}s. {success_count} successful, {failed_count} failed, {len(skipped_rows)} skipped. Patch step: {patches_created} created, {patches_updated} updated, {patches_failed} failed.",
             "total_rows": total_rows,
             "update_count": len(update_rows),
             "skipped_count": len(skipped_rows),
             "success_count": success_count,
             "failed_count": failed_count,
+            "patched_count": len(patched_ads_summary),
+            "patches_created": patches_created,
+            "patches_updated": patches_updated,
+            "patches_failed": patches_failed,
+            "patch_report_id": patch_report_id,
             "results": results,
             "skipped": skipped_rows[:50],  # Limit for response size
         }
@@ -3540,6 +3910,52 @@ async def db_update_categories(
                 os.remove(file_path)
             except:
                 pass
+
+
+@app.get("/api/db-update/patch-report/{report_id}/download")
+async def download_patch_report(report_id: str):
+    """
+    Downloads an Excel summary of all ads that had patched categories
+    during a DB update run. Shows old patched categories, new updated
+    categories, whether the patch was deleted, and update success.
+    """
+    if report_id not in db_update_patch_reports:
+        raise HTTPException(status_code=404, detail="Patch report not found. It may have expired or the server was restarted.")
+    
+    report_data = db_update_patch_reports[report_id]
+    summary = report_data["summary"]
+    
+    if not summary:
+        raise HTTPException(status_code=404, detail="Patch report is empty — no patched ads were recorded.")
+    
+    # Build DataFrame from summary
+    df = pd.DataFrame(summary)
+    # Rename columns to human-readable headers (order matches dict keys in patch_summary)
+    column_map = {
+        "ad_id": "Ad ID",
+        "old_patched_categories": "Old Patched Categories",
+        "new_updated_categories": "New Updated Categories",
+        "patch_deleted": "Patch Deleted",
+        "update_success": "Update Success",
+        "patch_step": "Patch Create/Update Step",
+    }
+    df.rename(columns=column_map, inplace=True)
+    
+    # Write to a temporary Excel file
+    report_dir = os.path.join(config.project_root, "uploads")
+    os.makedirs(report_dir, exist_ok=True)
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    filename = f"patch_summary_{report_id}_{timestamp}.xlsx"
+    file_path = os.path.join(report_dir, filename)
+    
+    df.to_excel(file_path, index=False, engine="openpyxl")
+    print(f"📥 Patch report Excel generated: {file_path} ({len(summary)} rows)")
+    
+    return FileResponse(
+        path=file_path,
+        filename=filename,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    )
 
 
 if __name__ == "__main__":

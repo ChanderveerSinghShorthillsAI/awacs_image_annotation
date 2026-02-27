@@ -1708,6 +1708,12 @@ const DBUpdateSection = () => {
               <div className="stat-value">{updateResult.total_rows}</div>
               <div className="stat-label-text">Total Rows</div>
             </div>
+            {updateResult.patched_count > 0 && (
+              <div className="db-update-stat-card" style={{ borderLeft: '3px solid #ff9800' }}>
+                <div className="stat-value" style={{ color: '#ff9800' }}>{updateResult.patched_count}</div>
+                <div className="stat-label-text">Patched Ads</div>
+              </div>
+            )}
           </div>
 
           {/* Message */}
@@ -1743,6 +1749,37 @@ const DBUpdateSection = () => {
                   ))}
                 </div>
               )}
+            </div>
+          )}
+
+          {/* Patch Summary Download */}
+          {((updateResult.patched_count > 0) || (updateResult.patches_created > 0) || (updateResult.patches_updated > 0)) && updateResult.patch_report_id && (
+            <div className="db-update-patch-download" style={{ margin: '1rem 0', padding: '1rem', background: 'rgba(255, 152, 0, 0.08)', borderRadius: '10px', border: '1px solid rgba(255, 152, 0, 0.25)' }}>
+              <p style={{ margin: '0 0 0.75rem 0', fontSize: '0.9rem', color: '#ff9800' }}>
+                🩹 <strong>{updateResult.patches_created} patch(es) created, {updateResult.patches_updated} updated{updateResult.patches_failed > 0 ? `, ${updateResult.patches_failed} failed` : ''}.</strong> Download the patch summary for the data team to review.
+              </p>
+              <button
+                className="btn"
+                onClick={() => {
+                  window.open(`${API_BASE}/api/db-update/patch-report/${updateResult.patch_report_id}/download`, '_blank');
+                }}
+                style={{
+                  background: 'linear-gradient(135deg, #ff9800, #f57c00)',
+                  color: '#fff',
+                  border: 'none',
+                  padding: '0.6rem 1.25rem',
+                  borderRadius: '8px',
+                  cursor: 'pointer',
+                  fontWeight: '600',
+                  fontSize: '0.9rem',
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  gap: '0.5rem',
+                  boxShadow: '0 2px 8px rgba(255, 152, 0, 0.3)',
+                }}
+              >
+                <span>📥</span> Download Patch Summary Excel
+              </button>
             </div>
           )}
 

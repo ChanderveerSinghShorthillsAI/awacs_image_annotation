@@ -388,54 +388,35 @@ def check_promotional_image(ad_img_bytes: bytes, yoda_instance=None, key_queue: 
 
 # Format: "YES" or "NO"
 # """
-    prompt_text = """You are an image validator for truck listings. Your task is to determine if this image shows a REAL truck available for sale, or if it's a promotional/placeholder image that should NOT be annotated.
+    prompt_text = """You are an image validator for a TRUCK classification system. Your task is to determine if the truck type in this image can be identified and classified.
 
-⚠️ CRITICAL: Your DEFAULT answer should be "NO" (real listing). ONLY answer "YES" if you see CLEAR, UNAMBIGUOUS evidence of promotional/placeholder status.
+⚠️ CRITICAL: Your DEFAULT answer should be "NO" (proceed with classification). ONLY answer "YES" if you truly CANNOT identify any truck in the image.
 
-Answer "YES" (this is a promotional/placeholder - DO NOT classify) ONLY if you see ONE of these CLEAR indicators:
+🚨 THE SINGLE MOST IMPORTANT QUESTION: Can you identify what type of truck is in this image?
+- If YES (you can tell it's a pickup truck, box truck, flatbed, etc.) → Answer "NO" (classify it)
+- If NO (you cannot identify any truck) → Answer "YES" (reject it)
 
-**1. EXPLICIT PROMOTIONAL TEXT** (Answer "YES" ONLY if you see these EXACT phrases or very similar):
-- "COMING SOON", "Coming Soon", "Available Soon"
-- "NEW ARRIVAL PHOTOS COMING SOON", "Photos Coming Soon", "New Arrival Photos Coming Soon"
-- "Image Coming Soon", "Photo Not Available", "No Image Available"
-- "IN OUR PERFECTION PROCESS" (when clearly indicating vehicle is not ready)
-- Text that EXPLICITLY states the vehicle/photos are not available yet
+**RULE 1 - TRUCK IDENTIFIABILITY IS ALL THAT MATTERS:**
+If you can identify the TRUCK TYPE in the image, answer "NO" (proceed with classification). This applies regardless of:
+- Whether it's a real photograph OR a manufacturer rendering/configurator image/3D render
+- Whether it has text overlays like "COMING SOON", "Not in Stock", "In Transit"
+- Whether the background looks artificial, stylized, or computer-generated
+- Whether the image is blurry, dark, grainy, or low quality
+- Whether there are dealership logos, watermarks, or branding
 
-⚠️ IMPORTANT: Do NOT confuse promotional text with:
-- Normal dealership names, logos, or branding
-- Price tags, sale banners, or promotional offers for available vehicles
-- Watermarks or copyright notices
-- General dealership signage or advertising
-- Text that describes an available vehicle (e.g., "New Arrival", "Just In", "Special Price")
+⚠️ IMPORTANT: Many dealerships use manufacturer RENDERINGS or CONFIGURATOR IMAGES (like Ford, Chevy, RAM configurator images). These show specific truck models clearly and in detail — they are PERFECTLY VALID for classification. Do NOT reject them just because they look "too clean" or "computer-generated". If you can tell it's a Ford F-150, F-250, RAM 3500, Silverado, etc. → Answer "NO".
 
-**2. COVERED VEHICLE WITH PROMOTIONAL TEXT** (Answer "YES" ONLY if BOTH are true):
-- Vehicle is completely covered by a tarp, sheet, or cover (no identifiable vehicle features visible)
-- AND explicit promotional text (from list above) is clearly present in the image
+**RULE 2 - ONLY TRUCKS COUNT:**
+- If the image shows a CAR, SEDAN, SUV, CROSSOVER, MINIVAN, or any NON-TRUCK vehicle → Answer "YES" (not a truck)
+- Trucks include: pickup trucks, box trucks, dump trucks, flatbed trucks, utility trucks, cab-chassis, stepvans, etc.
 
-⚠️ IMPORTANT: A covered vehicle WITHOUT promotional text is NOT promotional - it's a real listing with a covered vehicle.
+**RULE 3 - ANSWER "YES" (reject) ONLY for these specific cases:**
+- The vehicle is a car/sedan/SUV/non-truck → "YES"
+- NO vehicle visible at all: blank screen, camera icon placeholder, "Image Coming Soon" graphic → "YES"
+- Vehicle is a completely dark/black UNIDENTIFIABLE silhouette where you CANNOT determine the truck type → "YES"
+- Only dealership building/logo with NO vehicle → "YES"
 
-**3. ZERO VEHICLE VISIBLE** (Answer "YES" ONLY if):
-- ZERO vehicle is visible - no truck, cab, wheels, bed, body, or vehicle features whatsoever
-- AND one of these is present:
-  * Pure placeholder graphics: large camera icon with "no image" text, or "Image Coming Soon" graphic
-  * Completely black/white screen with NO vehicle visible
-  * Only a dealership building/logo with NO vehicle anywhere in frame
-
-**Answer "NO" (this is a real listing - proceed with classification) if:**
-- A clearly visible, identifiable truck/vehicle is shown (even if blurry, dark, or partially obscured)
-- The vehicle is visible and identifiable with NO explicit promotional text from the list above
-- The image shows a real vehicle for sale (even if covered, but without promotional text)
-- You see normal dealership branding, watermarks, or signage (these are NOT promotional indicators)
-- The image has text but it's NOT one of the explicit promotional phrases listed above
-- You have ANY doubt - default to "NO" (real listing)
-
-**CRITICAL DECISION RULES:**
-1. If you see explicit promotional text from the list above → Answer "YES" (promotional)
-2. If vehicle is covered AND explicit promotional text is present → Answer "YES" (promotional)
-3. If vehicle is covered BUT NO promotional text → Answer "NO" (real listing)
-4. If vehicle is visible (even partially) AND NO explicit promotional text → Answer "NO" (real listing)
-5. If you're unsure whether text is promotional → Answer "NO" (real listing) - only flag if text is clearly from the promotional list
-6. When in doubt → Answer "NO" (real listing) - be conservative, only flag clear promotional images
+**When in doubt → Answer "NO"** (default to classifying rather than rejecting)
 
 Format your response as: "YES - [reason]" or "NO - [reason]"
 """
