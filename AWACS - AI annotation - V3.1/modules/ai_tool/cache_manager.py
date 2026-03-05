@@ -71,7 +71,9 @@ class ExplicitCacheManager:
     def _get_pricing(self, model_name: str) -> tuple:
         """Returns (price_input_per_m, price_cached_per_m) based on model."""
         model = model_name.lower()
-        if "2.5" in model and "lite" in model:
+        if "3.1" in model and "lite" in model:
+            return 0.25, 0.025  # gemini-3.1-flash-lite
+        elif "2.5" in model and "lite" in model:
             return 0.10, 0.01  # gemini-2.5-flash-lite
         elif "lite" in model or "8b" in model:
             return 0.075, 0.03  # gemini-2.0-flash-lite

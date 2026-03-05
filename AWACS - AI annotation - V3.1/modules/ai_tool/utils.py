@@ -133,10 +133,18 @@ def calculate_cost_cents(input_tokens, output_tokens, model_name, cached_input_t
     # price_input_per_m = 0.10# gemini-2.0-flash
     # price_output_per_m = 0.40# gemini-2.0-flash
 
+    # Gemini 3.1 Flash-Lite Preview
+    # Input: $0.25 (text/image/video) | Output: $1.50 (including thinking tokens)
+    # Context Caching: $0.025 (text/image/video)
+    if "3.1" in model and "lite" in model:
+        price_input_per_m = 0.25   # gemini-3.1-flash-lite
+        price_output_per_m = 1.50  # gemini-3.1-flash-lite (including thinking tokens)
+        price_cached_input_per_m = 0.025  # gemini-3.1-flash-lite context caching price
+
     # Gemini 2.5 Flash-Lite
     # Input: $0.10 (text/image/video) | Output: $0.40 (including thinking tokens)
     # Context Caching: $0.01 (text/image/video)
-    if "2.5" in model and "lite" in model:
+    elif "2.5" in model and "lite" in model:
         price_input_per_m = 0.10   # gemini-2.5-flash-lite
         price_output_per_m = 0.40  # gemini-2.5-flash-lite (including thinking tokens)
         price_cached_input_per_m = 0.01  # gemini-2.5-flash-lite context caching price
