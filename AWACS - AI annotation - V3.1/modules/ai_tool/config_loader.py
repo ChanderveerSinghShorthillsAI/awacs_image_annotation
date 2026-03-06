@@ -57,6 +57,12 @@ def load_config():
         config.db_api_client_secret = config_parser.get('DB_API', 'ClientSecret', fallback='')
         config.db_api_grant_type = config_parser.get('DB_API', 'GrantType', fallback='client_credentials')
 
+        # Turso DB — Ad Annotation Limit
+        config.enable_ad_annotation_limit = config_parser.getboolean('Turso_DB', 'EnableAdAnnotationLimit', fallback=False)
+        config.turso_db_url = config_parser.get('Turso_DB', 'TursoDbUrl', fallback='')
+        config.turso_auth_token = config_parser.get('Turso_DB', 'TursoAuthToken', fallback='')
+        config.max_annotation_runs = config_parser.getint('Turso_DB', 'MaxAnnotationRuns', fallback=3)
+
         # DB Update API Credentials (for updating ad categories in the database)
         config.db_update_token_url = config_parser.get('DB_Update_API', 'TokenUrl', fallback='')
         config.db_update_base_url = config_parser.get('DB_Update_API', 'UpdateBaseUrl', fallback='')

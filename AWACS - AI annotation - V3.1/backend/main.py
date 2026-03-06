@@ -37,11 +37,27 @@ from ai_tool.config_loader import config, load_config
 from ai_tool.rate_limiter import Yoda
 from ai_tool.main_processor import save_checkpoint, merge_all_session_reports
 from ai_tool.data_processing import load_rules, normalize_text
-from ai_tool import web_utils, classification
+from ai_tool import web_utils, classification, ad_tracker
 import ai_module
 
 # Initialize config
 load_config()
+
+# Initialize Ad Annotation Limit Tracker (Turso DB)
+if config.enable_ad_annotation_limit:
+    print("\n" + "="*60)
+    print("📊 AD ANNOTATION LIMIT TRACKER: ✅ ENABLED")
+    print(f"   Max annotation runs per ad: {config.max_annotation_runs}")
+    print(f"   Turso DB URL: {config.turso_db_url[:40]}...")
+    try:
+        ad_tracker.init_tracker(config.turso_db_url, config.turso_auth_token)
+    except Exception as e:
+        print(f"   ❌ Ad Tracker initialization failed: {e}")
+        print(f"   ⚠️ Disabling Ad Annotation Limit for this session")
+        config.enable_ad_annotation_limit = False
+    print("="*60 + "\n")
+else:
+    print("\n📊 AD ANNOTATION LIMIT TRACKER: ❌ DISABLED (bypassed)\n")
 
 app = FastAPI(title="AWACS AI Annotation API", version="1.0.0")
 
@@ -995,6 +1011,18 @@ def run_job_pipeline_sync(job_id: str, file_path: str):
         print(f"Total Ads: {len(df)}")
         print(f"{'='*60}\n")
         
+        # ── Ad Annotation Limit: Pre-filter (before scraping) ──
+        if config.enable_ad_annotation_limit:
+            over_limit = ad_tracker.filter_over_limit_ads(df["Ad ID"].tolist(), config.max_annotation_runs)
+            if over_limit:
+                print(f"   🚫 Ad Tracker: Skipping {len(over_limit)} ads (already annotated {config.max_annotation_runs}+ times)")
+                print(f"   🚫 Skipped Ad IDs: {sorted(over_limit)[:10]}{'...' if len(over_limit) > 10 else ''}")
+                df = df[~df["Ad ID"].isin(over_limit)].reset_index(drop=True)
+                job['total_ads'] = int(len(df))
+                print(f"   ✅ Ad Tracker: {len(df)} ads remaining after filter\n")
+            else:
+                print(f"   ✅ Ad Tracker: All {len(df)} ads are within annotation limit\n")
+        
         # Phase 1: MULTIPROCESSING Scraping with 3 workers (~3x faster)
         df = scrape_ads_parallel(df, job_id, num_workers=5)
         
@@ -1034,6 +1062,16 @@ def run_job_pipeline_sync(job_id: str, file_path: str):
                 print("   Post-processing verification is turned OFF in config.ini")
                 print("   Set 'EnableDuallyLLMVerification = True' to enable")
                 print("="*60)
+        
+        # ── Ad Annotation Limit: Post-increment for successful ads ──
+        if config.enable_ad_annotation_limit and not result_df.empty:
+            if "Status" in result_df.columns:
+                successful_ids = result_df[result_df["Status"] != "AI Error"]["Ad ID"].tolist()
+            else:
+                successful_ids = result_df["Ad ID"].tolist()
+            if successful_ids:
+                ad_tracker.increment_annotation_counts(successful_ids)
+                print(f"   📊 Ad Tracker: Updated annotation counts for {len(successful_ids)} successfully processed ads in Turso DB")
         
         # Save final output
         output_filename = f"output_annotated_{run_ts}.xlsx"
@@ -1111,6 +1149,18 @@ def run_reannotation_pipeline_sync(job_id: str, file_path: str):
         print(f"Skipping scraping - using existing data")
         print(f"{'='*60}\n")
         
+        # ── Ad Annotation Limit: Pre-filter (before AI) ──
+        if config.enable_ad_annotation_limit:
+            over_limit = ad_tracker.filter_over_limit_ads(df["Ad ID"].tolist(), config.max_annotation_runs)
+            if over_limit:
+                print(f"   🚫 Ad Tracker: Skipping {len(over_limit)} ads (already annotated {config.max_annotation_runs}+ times)")
+                print(f"   🚫 Skipped Ad IDs: {sorted(over_limit)[:10]}{'...' if len(over_limit) > 10 else ''}")
+                df = df[~df["Ad ID"].isin(over_limit)].reset_index(drop=True)
+                job['total_ads'] = int(len(df))
+                print(f"   ✅ Ad Tracker: {len(df)} ads remaining after filter\n")
+            else:
+                print(f"   ✅ Ad Tracker: All {len(df)} ads are within annotation limit\n")
+        
         # Phase 1: Parallel AI Processing (no scraping) - ULTRA-OPTIMIZED
         num_workers = min(10, max(1, len(config.gemini_api_keys)))
         print(f"\n🤖 Using {num_workers} parallel workers for faster processing")
@@ -1131,6 +1181,16 @@ def run_reannotation_pipeline_sync(job_id: str, file_path: str):
                 print("\n" + "="*60)
                 print("🔍 DUALLY LLM VERIFICATION: ❌ DISABLED (Skipping)")
                 print("="*60)
+        
+        # ── Ad Annotation Limit: Post-increment for successful ads ──
+        if config.enable_ad_annotation_limit and not result_df.empty:
+            if "Status" in result_df.columns:
+                successful_ids = result_df[result_df["Status"] != "AI Error"]["Ad ID"].tolist()
+            else:
+                successful_ids = result_df["Ad ID"].tolist()
+            if successful_ids:
+                ad_tracker.increment_annotation_counts(successful_ids)
+                print(f"   📊 Ad Tracker: Updated annotation counts for {len(successful_ids)} successfully processed ads in Turso DB")
         
         # Save final output
         output_filename = f"output_reannotated_{run_ts}.xlsx"
@@ -1215,6 +1275,17 @@ def run_db_annotation_pipeline_sync(job_id: str, file_path: str):
             if col not in df.columns:
                 df[col] = ""
         
+        # ── Ad Annotation Limit: Pre-filter (before batch loop) ──
+        if config.enable_ad_annotation_limit:
+            over_limit = ad_tracker.filter_over_limit_ads(df["Ad ID"].tolist(), config.max_annotation_runs)
+            if over_limit:
+                print(f"   🚫 Ad Tracker: Skipping {len(over_limit)} ads (already annotated {config.max_annotation_runs}+ times)")
+                print(f"   🚫 Skipped Ad IDs: {sorted(over_limit)[:10]}{'...' if len(over_limit) > 10 else ''}")
+                df = df[~df["Ad ID"].isin(over_limit)].reset_index(drop=True)
+                print(f"   ✅ Ad Tracker: {len(df)} ads remaining after filter\n")
+            else:
+                print(f"   ✅ Ad Tracker: All {len(df)} ads are within annotation limit\n")
+        
         total_listings = len(df)
         job['total_ads'] = int(total_listings)
         
@@ -1277,6 +1348,16 @@ def run_db_annotation_pipeline_sync(job_id: str, file_path: str):
                 batch_result_df, batch_dually_cost = verify_dually_listings(batch_result_df, job_id, yoda_verify)
             elif not batch_result_df.empty:
                 print(f"\n   🔍 BATCH {batch_num} — Dually verification: ❌ DISABLED (Skipping)")
+            
+            # ── Ad Annotation Limit: Post-increment for successful ads in this batch ──
+            if config.enable_ad_annotation_limit and not batch_result_df.empty:
+                if "Status" in batch_result_df.columns:
+                    successful_ids = batch_result_df[batch_result_df["Status"] != "AI Error"]["Ad ID"].tolist()
+                else:
+                    successful_ids = batch_result_df["Ad ID"].tolist()
+                if successful_ids:
+                    ad_tracker.increment_annotation_counts(successful_ids)
+                    print(f"   📊 Ad Tracker: Updated annotation counts for {len(successful_ids)} ads (batch {batch_num}) in Turso DB")
             
             # --- PHASE C: SAVE BATCH OUTPUT (atomic write) ---
             print(f"\n{'='*80}")
@@ -1537,6 +1618,18 @@ def run_db_fetch_pipeline_sync(
         job['total_ads'] = int(len(df))
         job['status'] = JobStatus.PROCESSING
         
+        # ── Ad Annotation Limit: Pre-filter (before AI annotation) ──
+        if config.enable_ad_annotation_limit:
+            over_limit = ad_tracker.filter_over_limit_ads(df["Ad ID"].tolist(), config.max_annotation_runs)
+            if over_limit:
+                print(f"   🚫 Ad Tracker: Skipping {len(over_limit)} ads (already annotated {config.max_annotation_runs}+ times)")
+                print(f"   🚫 Skipped Ad IDs: {sorted(over_limit)[:10]}{'...' if len(over_limit) > 10 else ''}")
+                df = df[~df["Ad ID"].isin(over_limit)].reset_index(drop=True)
+                job['total_ads'] = int(len(df))
+                print(f"   ✅ Ad Tracker: {len(df)} ads remaining after filter\n")
+            else:
+                print(f"   ✅ Ad Tracker: All {len(df)} ads are within annotation limit\n")
+        
         # ========== PHASE 2: AI ANNOTATION ==========
         print("\n" + "="*80)
         print("🤖 PHASE 2: AI ANNOTATION (Same as existing feature)")
@@ -1564,6 +1657,16 @@ def run_db_fetch_pipeline_sync(
                 print("\n" + "="*60)
                 print("🔍 DUALLY LLM VERIFICATION: ❌ DISABLED (Skipping)")
                 print("="*60)
+        
+        # ── Ad Annotation Limit: Post-increment for successful ads ──
+        if config.enable_ad_annotation_limit and not result_df.empty:
+            if "Status" in result_df.columns:
+                successful_ids = result_df[result_df["Status"] != "AI Error"]["Ad ID"].tolist()
+            else:
+                successful_ids = result_df["Ad ID"].tolist()
+            if successful_ids:
+                ad_tracker.increment_annotation_counts(successful_ids)
+                print(f"   📊 Ad Tracker: Updated annotation counts for {len(successful_ids)} successfully processed ads in Turso DB")
         
         # ========== PHASE 4: SAVE FINAL OUTPUT ==========
         print("\n" + "="*80)
@@ -2542,6 +2645,18 @@ def run_db_fetch_by_ids_sync(job_id: str, file_path: str, client_id: str, client
         print(f"   ✅ Loaded {len(ad_ids)} Ad IDs from Excel")
         print(f"   📊 First 5 Ad IDs: {ad_ids[:5]}")
         print("="*80 + "\n")
+        
+        # ── Ad Annotation Limit: Pre-filter (BEFORE DB API calls — saves API bandwidth) ──
+        if config.enable_ad_annotation_limit:
+            over_limit = ad_tracker.filter_over_limit_ads(ad_ids, config.max_annotation_runs)
+            if over_limit:
+                print(f"   🚫 Ad Tracker: Skipping {len(over_limit)} ads (already annotated {config.max_annotation_runs}+ times)")
+                print(f"   🚫 Skipped Ad IDs: {sorted(over_limit)[:10]}{'...' if len(over_limit) > 10 else ''}")
+                df = df[~df["Ad ID"].isin(over_limit)].reset_index(drop=True)
+                ad_ids = df["Ad ID"].tolist()
+                print(f"   ✅ Ad Tracker: {len(ad_ids)} ads remaining — only these will be fetched from DB API\n")
+            else:
+                print(f"   ✅ Ad Tracker: All {len(ad_ids)} ads are within annotation limit\n")
         
         job['total_ads'] = int(len(ad_ids))
         job['status'] = JobStatus.PROCESSING
