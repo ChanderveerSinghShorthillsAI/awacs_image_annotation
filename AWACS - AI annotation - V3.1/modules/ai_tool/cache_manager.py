@@ -103,8 +103,8 @@ class ExplicitCacheManager:
     
     def generate_with_cache(self, api_key: str, model_name: str,
                             cacheable_content_parts: list,
-                            context_text: str, image_bytes: bytes,
-                            timeout: int = 45):
+                            context_text: str, image_bytes: bytes | list[bytes],
+                            timeout: int = 45, include_thoughts: bool = False):
         """
         Creates/reuses an explicit cache for static content and generates 
         a response with cached + dynamic content.
@@ -136,19 +136,26 @@ class ExplicitCacheManager:
             if cache_name is None:
                 return None, False
             
-            # === BUILD DYNAMIC CONTENT (breadcrumb + image) ===
-            dynamic_parts = [
-                context_text,
-                types.Part.from_bytes(data=image_bytes, mime_type='image/jpeg')
-            ]
+            # === BUILD DYNAMIC CONTENT (breadcrumb + image(s)) ===
+            dynamic_parts = [context_text]
+            if isinstance(image_bytes, list):
+                for img in image_bytes:
+                    dynamic_parts.append(types.Part.from_bytes(data=img, mime_type='image/jpeg'))
+            else:
+                dynamic_parts.append(types.Part.from_bytes(data=image_bytes, mime_type='image/jpeg'))
             
             # === GENERATE WITH CACHED CONTENT ===
+            gen_config = types.GenerateContentConfig(cached_content=cache_name)
+            if include_thoughts:
+                gen_config = types.GenerateContentConfig(
+                    cached_content=cache_name,
+                    thinking_config=types.ThinkingConfig(include_thoughts=True)
+                )
+
             response = client.models.generate_content(
                 model=model_name,
                 contents=dynamic_parts,
-                config=types.GenerateContentConfig(
-                    cached_content=cache_name
-                )
+                config=gen_config
             )
             
             print(f"   ✅ EXPLICIT CACHE USED: Only dynamic content (breadcrumb + image) sent to API")

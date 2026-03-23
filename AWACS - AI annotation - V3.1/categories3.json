@@ -1,0 +1,537 @@
+{
+    "Mixer Truck": {
+        "definition": "A truck used to transport liquid concrete while mixing it so that it doesn't harden in transport.",
+        "image_base64": "",
+        "super_group": "Construction & Road Family"
+    },
+    "Concrete Pump Truck": {
+        "definition": "A truck that uses a boom arm to pump wet concrete into a high or hard to access location",
+        "image_base64": "",
+        "super_group": "Construction & Road Family"
+    },
+    "Truck Mounted Stripers": {
+        "definition": "A truck used to paint lines on streets",
+        "image_base64": "",
+        "super_group": "Construction & Road Family"
+    },
+    "Asphalt Distributor Truck": {
+        "definition": "A truck that pours asphalt on a road",
+        "image_base64": "",
+        "super_group": "Construction & Road Family"
+    },
+    "Stone Spreader Truck": {
+        "definition": "A truck used to distribute rocks, often to create gravel roads/driveways",
+        "image_base64": "",
+        "super_group": "Construction & Road Family"
+    },
+    "Attenuator": {
+        "definition": "A truck used to create temporary roadsigns for construction/emergency situations",
+        "image_base64": "",
+        "super_group": "Construction & Road Family"
+    },
+    "Frac Truck": {
+        "definition": "A truck used for fracking (a method of accessing oil that can’t be brought out of the ground with traditional oil derricks)",
+        "image_base64": "",
+        "super_group": "Tanker & Liquid Family"
+    },
+    "Cable Dispenser": {
+        "definition": "A truck used to install cable",
+        "image_base64": "",
+        "super_group": "Service & Utility Family"
+    },
+    "Cable Scrapper": {
+        "definition": "A truck used to uninstall cable",
+        "image_base64": "",
+        "super_group": "Service & Utility Family"
+    },
+    "Spray Truck": {
+        "definition": "A truck used to spray liquids held in tanks on the back of the truck.  Different variations can be used both in construction and in grounds & lawn care.",
+        "image_base64": "",
+        "super_group": "Construction & Road Family"
+    },
+    "Saw Body": {
+        "definition": "A type of service body specially equipped for cutting concrete.  It’s characterized by being larger than an average service body and usually has a lift gate on the back.",
+        "image_base64": "",
+        "super_group": "Service & Utility Family"
+    },
+    "Water Truck": {
+        "definition": "A truck designed to spray water by various means, often used for construction and mining",
+        "image_base64": "",
+        "super_group": "Construction & Road Family"
+    },
+    "Concrete Barricade Truck": {
+        "definition": "A truck used to shift the lane position of highway barricades",
+        "image_base64": "",
+        "super_group": "Construction & Road Family"
+    },
+    "Farm Truck - Grain Truck": {
+        "definition": "A type of dump truck used for transporting grain or other crops that can be piled in large quantities and handled roughly without damaging them",
+        "image_base64": "",
+        "super_group": "Farm & Forestry Family"
+    },
+    "Logging": {
+        "definition": "A truck used for transporting freshly cut trees",
+        "image_base64": "",
+        "super_group": "Farm & Forestry Family"
+    },
+    "Chipper Truck": {
+        "definition": "A type of dump truck used to transport wood chips.  It’s characterized by an opening in the top of the rear wall that the wood chipper’s chute can be aimed into to fill the dump body",
+        "image_base64": "",
+        "super_group": "Farm & Forestry Family"
+    },
+    "Livestock Truck": {
+        "definition": "A truck used for transporting farm animals",
+        "image_base64": "",
+        "super_group": "Farm & Forestry Family"
+    },
+    "Plow Truck - Spreader Truck": {
+        "definition": "A truck with a plow in front and/or a salt or sand spreader in the back, most often used for clearing snow from roads, but some plows are designed for plowing through different terrains such as sand, dirt, and rocks.  Oftentimes the back end has a dump body, as well.",
+        "image_base64": "",
+        "super_group": "Farm & Forestry Family"
+    },
+    "Grapple Truck": {
+        "definition": "A truck with a boom and claw used most often to pick up large tree trunks and place them in a dump body.",
+        "image_base64": "",
+        "super_group": "Boom & Crane Family"
+    },
+    "Utility Truck - Service Truck": {
+        "definition": "A specialized type of Utility/Service Truck. Its DEFINING feature is a large, prominent ladder or material rack mounted over the service body, designed to carry long items like pipes, lumber, or ladders. The presence of this rack is the key identifier.",
+        "image_base64": "",
+        "super_group": "Service & Utility Family"
+    },
+    "Contractor Truck": {
+        "definition": "Also referred to as a Mason Body or a Concrete Body, this is a service body with a ladder rack that extends over the cab.  One of the defining features is the existence of a section at the back of the bed where the toolboxes stop and there are either stakebed walls or dropside walls.",
+        "image_base64": "",
+        "super_group": "Service & Utility Family"
+    },
+    "Mechanics Truck": {
+        "definition": "A service body with a crane, which can be used to hoist heavy car parts into the bed.  They also often have a flat deck extending out from the rear bumper",
+        "image_base64": "",
+        "super_group": "Service & Utility Family"
+    },
+    "Plumber Service Truck": {
+        "definition": "A van or service truck that is particularly well-suited to the needs of a plumber.  Often these are characterized by PVC tubes mounted to them to facilitate the easy transportation of pieces of pipe or tubing",
+        "image_base64": "",
+        "super_group": "Service & Utility Family"
+    },
+    "Dump Truck": {
+        "definition": "A truck whose bed can be elevated at the front end to allow its contents to be dumped out the back",
+        "image_base64": "",
+        "super_group": "Dump & Flatbed Family"
+    },
+    "Flatbed Dump": {
+        "definition": "A flatbed truck that is also has a hoist allowing the bed to incline",
+        "image_base64": "",
+        "super_group": "Dump & Flatbed Family"
+    },
+    "Transfer Truck": {
+        "definition": "A dump truck towing another dump bed behind it similar to train cars",
+        "image_base64": "",
+        "super_group": "Dump & Flatbed Family"
+    },
+    "Landscape Truck": {
+        "definition": "A versatile category that can encompass a number of different style beds ranging from dove tails to dump bodies",
+        "image_base64": "",
+        "super_group": "Dump & Flatbed Family"
+    },
+    "Stake Bed": {
+        "definition": "A flatbed truck with stake pockets allowing wooden or metal rail-sides to be inserted",
+        "image_base64": "",
+        "super_group": "Dump & Flatbed Family"
+    },
+    "Flatbed Truck": {
+        "definition": "A truck with a flat bed and no sides",
+        "image_base64": "",
+        "super_group": "Dump & Flatbed Family"
+    },
+    "Van": {
+        "definition": "A catchall category that can encompass just about any style of van",
+        "image_base64": "",
+        "super_group": "Van Family"
+    },
+    "Cargo Van": {
+        "definition": "A van with no seats in the back allowing it to be loaded with supplies",
+        "image_base64": "",
+        "super_group": "Van Family"
+    },
+    "Passenger Van": {
+        "definition": "A van completely full of seating rows to transport as many passengers as possible",
+        "image_base64": "",
+        "super_group": "Van Family"
+    },
+    "Crew Van": {
+        "definition": "A van with one row of rear seats, then a cargo area behind those seats, allowing for transportation of a small crew and some limited supplies",
+        "image_base64": "",
+        "super_group": "Van Family"
+    },
+    "Moving Van": {
+        "definition": "A van specifically designed for moving personal belongings from one residence to another.  The defining feature of a Moving Van is the presence of either a slide out ramp or liftgate on the back end.",
+        "image_base64": "",
+        "super_group": "Van Family"
+    },
+    "Stepvan": {
+        "definition": "A Fedex/UPS/Amazon van, characterized by the steps leading to the driver’s seat",
+        "image_base64": "",
+        "super_group": "Van Family"
+    },
+    "Mobility Van": {
+        "definition": "A van that has been specially equipped to accommodate wheelchairs",
+        "image_base64": "",
+        "super_group": "Van Family"
+    },
+    "Glass Truck": {
+        "definition": "A truck or van with special shelves to transport panes of glass",
+        "image_base64": "",
+        "super_group": "Box & Cargo Family"
+    },
+    "Cutaway Cube Van": {
+        "definition": "A cargo van/box truck with a door that goes from the cargo area into the cab",
+        "image_base64": "",
+        "super_group": "Van Family"
+    },
+    "Bus": {
+        "definition": "A full sized bus",
+        "image_base64": "",
+        "super_group": "Bus Family"
+    },
+    "Minibus": {
+        "definition": "A shortened bus.  Typically seats 8-30 people",
+        "image_base64": "",
+        "super_group": "Bus Family"
+    },
+    "Ambulance": {
+        "definition": "A medical emergency vehicle",
+        "image_base64": "",
+        "super_group": "Municipality Family"
+    },
+    "Fire Truck": {
+        "definition": "An emergency vehicle for putting out fires",
+        "image_base64": "",
+        "super_group": "Municipality Family"
+    },
+    "Garbage Truck": {
+        "definition": "A truck used to haul away garbage",
+        "image_base64": "",
+        "super_group": "Waste & Disposal Family"
+    },
+    "Recycle Truck": {
+        "definition": "A truck used to haul away recyclable materials",
+        "image_base64": "",
+        "super_group": "Waste & Disposal Family"
+    },
+    "Railroad Truck": {
+        "definition": "A truck upfitted with railroad wheels in the front and back that fold up and down so that a truck can drive onto railroad tracks, extend the railroad wheels, and drive the tracks while staying on the rails.",
+        "image_base64": "",
+        "super_group": "Municipality Family"
+    },
+    "Military": {
+        "definition": "A catchall category for any type of vehicle previously used for military use",
+        "image_base64": "",
+        "super_group": "Military Family"
+    },
+    "Armored Truck": {
+        "definition": "A truck with armor plating, usually used to transport cash to/from banks",
+        "image_base64": "",
+        "super_group": "Military Family"
+    },
+    "Street Cleaner": {
+        "definition": "A truck used to clean streets, usually characterized by large brushes and vacuums underneath",
+        "image_base64": "",
+        "super_group": "Waste & Disposal Family"
+    },
+    "Sewer Trucks": {
+        "definition": "This truck is used to clean out sewer systems",
+        "image_base64": "",
+        "super_group": "Waste & Disposal Family"
+    },
+    "Animal Services": {
+        "definition": "A truck used by animal control to remove potentially harmful animals in cages",
+        "image_base64": "",
+        "super_group": "Municipality Family"
+    },
+    "Conventional Day Cab": {
+        "definition": "A conventional style tractor without a sleeping compartment",
+        "image_base64": "",
+        "super_group": "Tractor & Cab Family"
+    },
+    "Conventional Sleeper": {
+        "definition": "A conventional style tractor with a sleeping compartment",
+        "image_base64": "",
+        "super_group": "Tractor & Cab Family"
+    },
+    "Cabover Truck - COE": {
+        "definition": "Short for Cab Over Engine, the driver sits above the engine compartment. No sleeping compartment",
+        "image_base64": "",
+        "super_group": "Tractor & Cab Family"
+    },
+    "Cabover Truck - Sleeper": {
+        "definition": "A COE style tractor with a sleeping compartment",
+        "image_base64": "",
+        "super_group": "Tractor & Cab Family"
+    },
+    "Crane Truck": {
+        "definition": "A truck with a crane",
+        "image_base64": "",
+        "super_group": "Boom & Crane Family"
+    },
+    "Digger Derrick": {
+        "definition": "A truck with a boom and a drilling/digging bit",
+        "image_base64": "",
+        "super_group": "Boom & Crane Family"
+    },
+    "Bucket Truck - Boom Truck": {
+        "definition": "A truck with a boom arm with a bucket on the end for hoisting workers to high places",
+        "image_base64": "",
+        "super_group": "Boom & Crane Family"
+    },
+    "Knuckleboom Truck": {
+        "definition": "A boom truck where the boom articulates at the 'knuckle' near the middle, letting it fold back like a finger",
+        "image_base64": "",
+        "super_group": "Boom & Crane Family"
+    },
+    "Insulator Washer": {
+        "definition": "A truck used for cleaning electrical lines",
+        "image_base64": "",
+        "super_group": "Boom & Crane Family"
+    },
+    "Roustabout": {
+        "definition": "Also called a “Gin Pole Truck,” it’s a special kind of crane characterized by two poles coming to a point with a cable and winch running through a pulley where the poles meet.  The poles collapse over the cab when the truck is in transport",
+        "image_base64": "",
+        "super_group": "Boom & Crane Family"
+    },
+    "De-Icer": {
+        "definition": "A truck used to remove ice from airplanes",
+        "image_base64": "",
+        "super_group": "Boom & Crane Family"
+    },
+    "Hauler": {
+        "definition": "Any truck that has a Gooseneck hitch for attaching a Gooseneck Trailer.  While there are many different types of trucks that can have a Gooseneck hitch, they are seen most frequently on Flatbed Trucks.  Oftentimes the ball hitch is recessed into the bed with a trap door over it so that the entire bed can still be a true flatbed when the hitch isn't in use.",
+        "image_base64": "",
+        "super_group": "Tow & Recovery Family"
+    },
+    "Western Hauler": {
+        "definition": "A style of hauler where the gooseneck hitch is in the middle of a recessed channel in the middle of the flatbed.  It’s often used for hauling large trailers (like a livestock trailer) or large RV trailers.  It is normal to see this body attached to both pickup chassis and tractors.",
+        "image_base64": "",
+        "super_group": "Tow & Recovery Family"
+    },
+    "Sweeper": {
+        "definition": "A truck with brushes underneath for sweeping surfaces and gutters",
+        "image_base64": "",
+        "super_group": "Waste & Disposal Family"
+    },
+    "Vacuum Truck": {
+        "definition": "A truck used to suck liquids, sludges, and slurries into a tank and transport them elsewhere",
+        "image_base64": "",
+        "super_group": "Tanker & Liquid Family"
+    },
+    "Septic": {
+        "definition": "A style of vacuum truck used exclusively for emptying septic systems",
+        "image_base64": "",
+        "super_group": "Tanker & Liquid Family"
+    },
+    "Water Tank": {
+        "definition": "A tanker truck that is only used to haul water",
+        "image_base64": "",
+        "super_group": "Tanker & Liquid Family"
+    },
+    "Tanker Truck": {
+        "definition": "A truck used to haul liquids such as gasoline or chemicals",
+        "image_base64": "",
+        "super_group": "Tanker & Liquid Family"
+    },
+    "Oil Tank Truck": {
+        "definition": "A tanker that is only used to haul oil",
+        "image_base64": "",
+        "super_group": "Tanker & Liquid Family"
+    },
+    "Beverage Truck": {
+        "definition": "A truck used for transporting bottled drinks",
+        "image_base64": "",
+        "super_group": "Food & Beverage Family"
+    },
+    "Milk Truck": {
+        "definition": "A truck used for delivering milk directly to households",
+        "image_base64": "",
+        "super_group": "Food & Beverage Family"
+    },
+    "Hot Oil Truck": {
+        "definition": "Often used in the oil fields, these trucks inject hot oil into pipes to clear blockages and melt buildups in the pipes, such as wax",
+        "image_base64": "",
+        "super_group": "Tanker & Liquid Family"
+    },
+    "Waste Oil Truck": {
+        "definition": "Waste oil trucks are used in the pickup of used motor oils, yellow grease, and brown grease",
+        "image_base64": "",
+        "super_group": "Tanker & Liquid Family"
+    },
+    "Fuel Truck - Lube Truck": {
+        "definition": "A truck designed to deliver fuel and/or lubrication to vehicles while they’re still out in the field",
+        "image_base64": "",
+        "super_group": "Tanker & Liquid Family"
+    },
+    "LPG Tank Truck": {
+        "definition": "A truck used to transport Liquid Propane Gas",
+        "image_base64": "",
+        "super_group": "Tanker & Liquid Family"
+    },
+    "Shredder Truck": {
+        "definition": "A truck used to shred, transport, and dispose of sensitive documents.  Often used by banks",
+        "image_base64": "",
+        "super_group": "Waste & Disposal Family"
+    },
+    "Roll Off Truck": {
+        "definition": "A truck that drops off an empty dumpster, then comes back to pick it up when it’s full",
+        "image_base64": "",
+        "super_group": "Waste & Disposal Family"
+    },
+    "Winch Truck": {
+        "definition": "A style of Roll Off Truck that uses a winch to get the dumpster on/off the back of the truck",
+        "image_base64": "",
+        "super_group": "Waste & Disposal Family"
+    },
+    "Hooklift Truck": {
+        "definition": "A style of Roll Off Truck that uses a hook arm to get the dumpster on/off the back of the truck",
+        "image_base64": "",
+        "super_group": "Waste & Disposal Family"
+    },
+    "Food Truck": {
+        "definition": "A truck (usually a stepvan) that has been converted for the purpose of cooking and serving food",
+        "image_base64": "",
+        "super_group": "Food & Beverage Family"
+    },
+    "Catering Truck - Food Truck": {
+        "definition": "Very similar to a Food Truck, this is a truck to facilitate and augment catering companies.  The primary difference is that the food isn’t necessarily cooked inside the catering truck Milk Truck A truck used for delivering milk direct to households",
+        "image_base64": "",
+        "super_group": "Food & Beverage Family"
+    },
+    "Refrigerated Trucks": {
+        "definition": "Also referred to as “Reefer Trucks,” these trucks are refrigerated for the transportation of perishable goods.  The refrigerator unit can usually be seen above the cab",
+        "image_base64": "",
+        "super_group": "Box & Cargo Family"
+    },
+    "Rollback Tow Truck": {
+        "definition": "A flatbed-style tow truck where the entire body inclines and slides back to pull the damaged vehicle up onto the bed.  No part of the car being towed is in contact with the road while transporting",
+        "image_base64": "",
+        "super_group": "Tow & Recovery Family"
+    },
+    "Wrecker Tow Truck": {
+        "definition": "A tow truck that hoists two wheels of the tow-vehicle into the air, then drags it behind the tow truck.  Two wheels of the tow-vehicle roll on the road while transporting",
+        "image_base64": "",
+        "super_group": "Tow & Recovery Family"
+    },
+    "Selfloader": {
+        "definition": "The modern version of a Wrecker Tow Truck wherein mechanical claws extend under the car and grab the two tires.  It is a very fast and convenient method to hoist the car that doesn’t require the tow truck driver to climb underneath the tow-vehicle",
+        "image_base64": "",
+        "super_group": "Tow & Recovery Family"
+    },
+    "Sling Truck": {
+        "definition": "The old version of a Wrecker Tow Truck.  It is characterized by the two big straps (the sling) that can be seen hanging down from the back of the town truck",
+        "image_base64": "",
+        "super_group": "Tow & Recovery Family"
+    },
+    "Car Carrier": {
+        "definition": "A vehicle used for transporting cars.  Different variations exist that will tow one car or many cars",
+        "image_base64": "",
+        "super_group": "Tow & Recovery Family"
+    },
+    "Expeditor - Hotshot": {
+        "definition": "A truck used to deliver goods directly from the manufacturer to the consumer, eliminating the the middle-man of shipping the goods to a distribution center or storefront first.  As their name implies, they are used to get the goods to the end user quickly.  Traditionally, Expeditors were large box trucks, as seen below, but recently the definition has expanded to include Cargo Vans and Flatbeds, depending on the type of cargo that needs to be transported.",
+        "image_base64": "",
+        "super_group": "Box & Cargo Family"
+    },
+    "Curtain Side": {
+        "definition": "A truck with cloth sides allowing for easy loading/unloading",
+        "image_base64": "",
+        "super_group": "Box & Cargo Family"
+    },
+    "Yard Spotter Truck": {
+        "definition": "A truck used to move trailers around a shipping yard",
+        "image_base64": "",
+        "super_group": "Tractor & Cab Family"
+    },
+    "Toter": {
+        "definition": "A conventional cab that has been specifically modified for transporting mobile homes",
+        "image_base64": "",
+        "super_group": "Tractor & Cab Family"
+    },
+    "Mini Truck": {
+        "definition": "Used for transporting light loads, often within urban environments",
+        "image_base64": "",
+        "super_group": "Pickup & Light Duty"
+    },
+    "Box Truck - Straight Truck": {
+        "definition": "A truck with a large, rectangular cargo area for shipping",
+        "image_base64": "",
+        "super_group": "Box & Cargo Family"
+    },
+    "Dry Van": {
+        "definition": "Almost identical to a Box Truck, but should only be assigned to larger models where the box is 20’+",
+        "image_base64": "",
+        "super_group": "Box & Cargo Family"
+    },
+    "Pickup Truck": {
+        "definition": "A standard truck with its normal, stock bed",
+        "image_base64": "",
+        "super_group": "Pickup & Light Duty"
+    },
+    "Cab-Chassis": {
+        "definition": "Also called a Chassis-Cab, this is a truck with no bed attached to the frame",
+        "image_base64": "",
+        "super_group": "Tractor & Cab Family"
+    },
+    "Salvage": {
+        "definition": "A truck that has been severely damaged (either by an accident or by excessive wear and tear) and is being sold “as is” or for parts",
+        "image_base64": "",
+        "super_group": "Miscellaneous"
+    },
+    "Other": {
+        "definition": "A catch-all category for any truck that doesn’t appear to fit in any of the above categories.  If a truck is truly deserving of an Other designation, then we may need to examine it to see if a new category needs to be created.  Ideally, there shouldn’t be any Other categories in use on the site",
+        "image_base64": "",
+        "super_group": "Miscellaneous"
+    },
+    "Dually": {
+        "definition": "A truck with two wheels visible on each side of the rear axle (four wheels total on the rear). This feature MUST be clearly visible in the image. Do NOT classify as 'Dually' based on the model name (e.g., F-350) from the text; the visual evidence is the only factor.",
+        "image_base64": "",
+        "super_group": "Pickup & Light Duty"
+    },
+    "Refuse": {
+        "definition": "A truck with a refuse title (NOT a garbage truck).  Refuse title is where a truck is totalled by an insurance company and seized from its owner; however, the damage was usually just cosmetic and the vehicle is still safely operable.  The insurance company then obtains a special title from the DMV (Refuse Title) and the vehicle can be sold back to a new owner for normal operation",
+        "image_base64": "",
+        "super_group": "Miscellaneous"
+    },
+    "Glider Kit": {
+        "definition": "A tractor that still has the original engine and transmission, but has had a new cab shell put on the chassis.  Characterized by an immaculate, new body on a truck with high mileage",
+        "image_base64": "",
+        "super_group": "Tractor & Cab Family"
+    },
+    "Tractor": {
+        "definition": "A heavy-duty truck designed primarily to pull semi-trailers. Distinguished from Day Cab/Sleeper by having no specific sleeping or day-cab designation. Includes glider kits and standard tractor units.",
+        "image_base64": "",
+        "super_group": "Tractor & Cab Family"
+    },
+    "Auger": {
+        "definition": "A truck equipped with a large drilling auger/bit mounted on a boom, used for drilling holes in the ground for utility poles, fence posts, or foundations.",
+        "image_base64": "",
+        "super_group": "Boom & Crane Family"
+    },
+    "Lugger": {
+        "definition": "A type of roll-off truck that uses a lugger mechanism to lift and transport dumpsters or containers. Similar to roll-off trucks but uses a different lifting mechanism.",
+        "image_base64": "",
+        "super_group": "Waste & Disposal Family"
+    },
+    "Conveyor Truck": {
+        "definition": "A truck equipped with a conveyor belt system used for moving materials such as grain, sand, or aggregate. Often used in construction and agricultural applications.",
+        "image_base64": "",
+        "super_group": "Construction & Road Family"
+    },
+    "Emergency Vehicle": {
+        "definition": "A general category for emergency response vehicles including police vehicles, emergency medical services, and other first responder vehicles that are not specifically ambulances or fire trucks.",
+        "image_base64": "",
+        "super_group": "Municipality Family"
+    },
+    "Specialty Tank Truck": {
+        "definition": "A specialized tanker truck designed for specific applications beyond standard liquid transport, such as chemical transport, specialized industrial uses, or unique tank configurations.",
+        "image_base64": "",
+        "super_group": "Tanker & Liquid Family"
+    }
+}

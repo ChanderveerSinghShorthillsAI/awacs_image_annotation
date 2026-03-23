@@ -24,8 +24,27 @@ def load_category_data(json_path: str) -> dict:
             image_base64 = details.get("image_base64")
             categories[cat_name] = {
                 "definition": details.get("definition", ""),
-                "image_bytes": base64.b64decode(image_base64) if image_base64 else None
+                "image_bytes": base64.b64decode(image_base64) if image_base64 else None,
+                "super_group": details.get("super_group", "Miscellaneous")
             }
+        
+        # Log category expansion information
+        total_categories = len(categories)
+        super_group_counts = {}
+        for cat_name, cat_data in categories.items():
+            super_group = cat_data.get("super_group", "Miscellaneous")
+            super_group_counts[super_group] = super_group_counts.get(super_group, 0) + 1
+        
+        log_msg(f"✅ Loaded {total_categories} categories across {len(super_group_counts)} Super-Groups", -1)
+        for super_group, count in sorted(super_group_counts.items()):
+            log_msg(f"   - {super_group}: {count} categories", -1)
+        
+        # Track newly added categories (Tractor, Auger, Lugger, Conveyor Truck, Emergency Vehicle, Specialty Tank Truck)
+        new_categories = ["Tractor", "Auger", "Lugger", "Conveyor Truck", "Emergency Vehicle", "Specialty Tank Truck"]
+        found_new = [cat for cat in new_categories if cat in categories]
+        if found_new:
+            log_msg(f"✅ New categories detected: {', '.join(found_new)}", -1)
+            
     except Exception as e:
         log_msg(f"❌ Error loading categories: {e}", -1)
     return categories

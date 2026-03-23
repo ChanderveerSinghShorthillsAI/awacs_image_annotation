@@ -232,6 +232,28 @@ def _process_single_ad(ad_row: dict, category_data: dict, rules: dict,
     
     print(f"[W-{worker_id}] Ad {ad_id}: Initial AI classification result: {[(c, round(s, 1)) for c, s in annotated[:3]]}")
     
+    # Log Super-Group usage and cross-group results
+    new_categories = ["Tractor", "Auger", "Lugger", "Conveyor Truck", "Emergency Vehicle", "Specialty Tank Truck"]
+    result_super_groups = {}
+    new_categories_used = []
+    for cat_name, score in annotated[:3]:
+        if cat_name in category_data:
+            super_group = category_data[cat_name].get('super_group', 'Miscellaneous')
+            if super_group not in result_super_groups:
+                result_super_groups[super_group] = []
+            result_super_groups[super_group].append(cat_name)
+            if cat_name in new_categories:
+                new_categories_used.append(cat_name)
+    
+    if len(result_super_groups) > 1:
+        utils.log_msg(f" [W-{worker_id}] Ad {ad_id}: Cross-group result: {', '.join([f'{cat} [{sg}]' for sg, cats in result_super_groups.items() for cat in cats])}", worker_id)
+    elif result_super_groups:
+        sg_name = list(result_super_groups.keys())[0]
+        utils.log_msg(f" [W-{worker_id}] Ad {ad_id}: Result Super-Group: {sg_name}", worker_id)
+    
+    if new_categories_used:
+        utils.log_msg(f" [W-{worker_id}] Ad {ad_id}: New category used: {', '.join(new_categories_used)}", worker_id)
+    
     # 🛡️ PLACEHOLDER/COMING SOON SAFEGUARD 🛡️
     # If AI detected "Image Not Clear" (which includes placeholder/coming soon images), 
     # skip all further processing and set status appropriately
@@ -342,6 +364,15 @@ def _process_single_ad(ad_row: dict, category_data: dict, rules: dict,
         print(f"[W-{worker_id}] Ad {ad_id}: ✅ Dually detected in main classification: {[c[0] for c in filtered if 'dually' in c[0].lower()]}")
     else:
         print(f"[W-{worker_id}] Ad {ad_id}: ❌ No Dually detected in main classification")
+
+    # AUTO-DUALLY RULE: Landscape + Cabover (COE) = always Dually
+    # Landscape trucks with nets/cages on cabover chassis are always dually
+    has_landscape = any("landscape" in c[0].lower() for c in filtered)
+    has_cabover_coe = any("cabover" in c[0].lower() and "coe" in c[0].lower() for c in filtered)
+    if has_landscape and has_cabover_coe and not has_dually:
+        print(f"[W-{worker_id}] Ad {ad_id}: 🔧 Auto-Dually: Landscape + Cabover COE detected → adding Dually")
+        filtered.append(("Dually", 95.0))
+        has_dually = True
     
     # =================================================================================
     # COMMENTED OUT: Enhanced Two-Stage Dually Detection
@@ -438,8 +469,10 @@ def run_worker_process(worker_id, run_ts, job_queue: Queue, results_queue: Queue
                        status_queue: Queue, key_queue: Queue,
                        high_accuracy: bool = False, use_vision_v2: bool = False, yoda_instance=None):
     from . import config_loader
-    config_loader.load_config()   
+    config_loader.load_config()
     utils.initialize_logging(run_ts, worker_id)
+    if config.enable_thought_summaries:
+        utils.initialize_thought_log(run_ts, worker_id)
     classification.initialize_all_trackers()
 
     category_data = data_processing.load_category_data(config.category_json)
@@ -519,6 +552,8 @@ def run_single_process(input_file, fast_mode=False):
     """
     run_ts = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
     utils.initialize_logging(run_ts, 0)
+    if config.enable_thought_summaries:
+        utils.initialize_thought_log(run_ts, 0)
     classification.initialize_all_trackers()
     
     print(f"Starting Single Process Mode on: {os.path.basename(input_file)}")

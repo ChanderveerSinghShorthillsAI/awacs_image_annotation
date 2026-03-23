@@ -540,7 +540,7 @@ Format your response as: "YES - [reason]" or "NO - [reason]"
     return False, 0, 0, 0
 
 
-def classify_with_gemini(breadcrumb: str, category_data: dict, ad_img_bytes: bytes | None = None, 
+def classify_with_gemini(breadcrumb: str, category_data: dict, ad_img_bytes: bytes | list[bytes] | None = None,
                          yoda_instance=None, key_queue: Queue = None, worker_id: int = 0, status_queue: Queue = None, ad_id: str = "", skip_promo_check: bool = False) -> tuple:
     """
     Returns: (list_of_results, input_tokens, output_tokens)
@@ -583,9 +583,9 @@ def classify_with_gemini(breadcrumb: str, category_data: dict, ad_img_bytes: byt
     
     # Step 1: Large cacheable static prefix (ALL rules - same across all requests)
     # This entire block becomes cacheable because it has the same prefix across requests
-    cacheable_rules_prefix = """You are an expert vehicle classifier.
+    cacheable_rules_prefix = f"""You are an expert vehicle classifier.
 Identify the vehicle in the provided 'Ad Image'.
-Note: The image may be a 'Mosaic' containing two different angles.
+Note: You may receive one or more 'Mosaic' images, each containing up to {config.mosaic_batch_size} different angles of the same vehicle. Examine ALL mosaic images and ALL views within them carefully.
 
 ⚠️ IMPORTANT EXECUTION RULE:
 You MUST fully read and internalize ALL classification rules below.
@@ -599,9 +599,12 @@ CRITICAL CLASSIFICATION RULES:
 
 2. **FLATBED PRIORITY CHECK (HIGH PRIORITY):**
    - If the cargo area is a FLAT, OPEN PLATFORM with NO side walls (you can see the bed surface from the side), the primary category MUST be **Flatbed Truck** unless a LARGE curved bulkhead is present (then **Flatbed Dump**).
-   - Do NOTlabel it as **Utility Truck**, **Contractor Truck**, **Cab-Chassis**, or **Pickup Truck** if a flat open bed is clearly present.
-   - **Utility Truck** requires side tool cabinets/compartments.
-   - **Contractor Truck** requires a service body with toolboxes PLUS a rear stakebed/dropside section.
+   - Do NOT label it as **Utility Truck**, **Contractor Truck**, **Cab-Chassis**, or **Pickup Truck** if a flat open bed is clearly present.
+   - **🚨🚨🚨 TOOL BOXES ON A FLATBED ≠ SERVICE TRUCK / UTILITY TRUCK / CONTRACTOR TRUCK (VERY COMMON ERROR):** 🚨🚨🚨
+     * **THE DEFINITIVE TEST:** Can you see a **flat bed surface** (diamond plate, steel, or wood) between or underneath the tool boxes? → If YES → it is **Flatbed Truck** with accessories/customizations. Tool boxes mounted on the sides or edges of a flatbed are just aftermarket additions — they do NOT change the truck type.
+     * **Utility Truck - Service Truck** requires a **purpose-built service body** where the compartments ARE the truck body itself — the compartments fully replace the bed and form the structural sides/walls. There is NO visible flat bed surface because the entire bed area is compartments.
+     * **Contractor Truck** requires a service body (not just tool boxes on a flatbed) PLUS a rear stakebed/dropside section. A flatbed with stake-like customizations added by the dealer is NOT a Contractor Truck.
+     * **REMEMBER:** Flatbed + tool boxes = just **Flatbed Truck** (NEVER Utility/Service/Contractor). To determine if Hauler also applies, use the **Two-Step Hitch Test** in Section F below.
    - **Cab-Chassis** has NO bed/body at all (exposed frame rails).
    - **Pickup Truck** has a factory box with closed sides and a tailgate.
 
@@ -620,6 +623,7 @@ CRITICAL CLASSIFICATION RULES:
      * May have safety rails around it
      * Common on utility/electric company trucks
    - **DO NOT confuse with Crane Truck or Mechanics Truck** - those have a HOOK at the end, not a bucket.
+   - **DO NOT confuse with Selfloader or Wrecker Tow Truck** — a selfloader has a wheel-lift mechanism (plus sign/cross shape) at the rear, NOT a bucket. A wrecker has a vehicle-recovery boom, NOT a utility bucket. If the truck's purpose is towing vehicles → use Tow & Recovery categories, NOT Bucket Truck.
 
 4. **MECHANICS TRUCK DETECTION (CHECK FOR CRANE WITH HOOK + UTILITY BODY):**
    - **What is a Mechanics Truck?** A Mechanics Truck is a COMBINATION of a Utility/Service Truck body WITH a mounted crane that has a HOOK.
@@ -960,8 +964,21 @@ CRITICAL CLASSIFICATION RULES:
    - **Flatbed Dump**: Flat open bed, NO side walls, LARGE CURVED bulkhead behind cab ← LOOK FOR THIS!
    
    **CATEGORY B - HAS SIDE WALLS (Enclosed Box) → NEVER classify as Flatbed Dump!**
-   - **Dump Truck**: Enclosed cargo box WITH side walls, walls are TALL (≥ cab height)
-   - **Landscape Truck**: Enclosed cargo box WITH side walls, walls are SHORT (< cab height)
+   - **Dump Truck**: Enclosed cargo box WITH side walls, walls are TALL (≥ cab height). **If no side walls visible → it CANNOT be Dump Truck.**
+   - **Landscape Truck**: Cargo area WITH side walls that are SHORT (< cab height). If the bed is a flat open platform with NO side walls → it is Flatbed Truck, NOT Landscape Truck. BUT if you can see even SHORT side walls (low metal or wood panels running along the sides of the bed, even if only 6-12 inches tall) → it IS Landscape Truck. **Add Dump Truck ONLY IF a hydraulic dump/tilt mechanism is visible** (hydraulic cylinders under the bed, the bed is raised/tilted, or a tilt frame is present). If the landscape body has side walls but NO visible dump mechanism → just Landscape Truck (without Dump Truck).
+
+   🚨🚨🚨 **LANDSCAPE TRUCK — MESH/CAGE/NET STRUCTURE OVERRIDE (CRITICAL):** 🚨🚨🚨
+   **If you see MESH panels, CAGE structures, EXPANDED METAL screens, or NET-like wire fencing forming the side walls or rear gate of the cargo area → this is a LANDSCAPE TRUCK regardless of wall height!**
+   - Mesh/cage/net structures are the SIGNATURE feature of landscape trucks used in the landscaping industry for hauling debris, branches, and yard waste.
+   - **When mesh/cage/net structures are present:** classify as **Landscape Truck ONLY** (do NOT add Dump Truck). The mesh/cage overrides the wall-height test.
+   - **Why this override exists:** Landscape trucks with mesh/cage sides often have tall mesh panels, but they are NOT dump trucks. The mesh/cage structure is purpose-built for landscape work, not for hauling heavy aggregate like dump trucks.
+   - **Visual cues for mesh/cage landscape truck:**
+     * Wire mesh or expanded metal panels on the sides (you can see THROUGH the walls)
+     * Cage-like structure with openings/holes in the side panels
+     * Net or screen material instead of solid metal walls
+     * Often has a rear gate/ramp that folds down, also made of mesh
+   - **RULE: Mesh/cage/net walls → Landscape Truck (without Dump Truck), regardless of height**
+   - **RULE: SOLID metal walls → use the normal wall-height test (short = Dump + Landscape, tall = Dump only)**
    
    **🚨 VISUAL TEST - HOW TO IDENTIFY SIDE WALLS:**
    - Look at the SIDES of the cargo area (not the front bulkhead!)
@@ -999,6 +1016,13 @@ CRITICAL CLASSIFICATION RULES:
    - A truck can have a curved front bulkhead but NO side walls = Flatbed Dump
    - A truck can have a curved front bulkhead AND side walls = Dump Truck or Landscape Truck
    
+   **🚨 SELF-CHECK BEFORE ANSWERING "YES SIDE WALLS" (MANDATORY):**
+   Before you conclude that side walls are present, you MUST pass ALL three of these checks:
+   1. **BOTH SIDES TEST:** Can you see solid panels on BOTH the left AND right sides of the cargo area? (A front bulkhead alone does NOT count as side walls!)
+   2. **LENGTH TEST:** Do these panels run along the FULL LENGTH of the bed (not just at the front behind the cab)?
+   3. **VISIBILITY TEST:** Is the bed surface HIDDEN from the side view? If you can still see the flat bed surface from the side → there are NO side walls, even if there is a large structure behind the cab.
+   **If ANY of these checks fail → the answer is NO SIDE WALLS. A curved front bulkhead that arcs over the cab is NOT side walls!**
+
    **🚨 CRITICAL DECISION POINT:**
    - **NO side walls** (bed is FLAT, OPEN, EXPOSED - you can see the bed surface from the side) → **STOP! Dump Truck and Landscape Truck are IMPOSSIBLE. Go to STEP 2 - choose between Flatbed Truck or Flatbed Dump ONLY.**
    - **YES side walls** (solid vertical panels on left/right sides forming an enclosed box) → Go to STEP 3
@@ -1063,30 +1087,40 @@ CRITICAL CLASSIFICATION RULES:
    Both Dump Truck and Landscape Truck have side walls AND a curved front bulkhead.
    The ONLY difference is the HEIGHT of the side walls compared to the cab.
    
-   **Visual Height Test:**
-   - Look at the side of the truck
-   - Compare the height of the cargo box/carrier walls to the driver's cab height
-   
-   - **Side walls are TALL** (equal to or taller than cab height):
-     * The cargo box looks deep and fully enclosed
-     * Walls reach up to or above the cab roof line
-     * → **"Dump Truck"**
-   
-   - **Side walls are SHORT** (clearly lower than cab height):
-     * The cargo box walls are noticeably shorter than the cab
-     * You can see over the walls when viewing from the side
-     * Carrier height is visibly less than where the driver sits
+   **Visual Height Test (PRECISE METHOD):**
+   - Look at the side of the truck in profile view
+   - Draw an imaginary horizontal line at the TOP of the side walls
+   - Draw another imaginary horizontal line at the TOP of the driver's cab (roofline)
+   - Compare these two lines:
+
+   - **Side walls are TALL** (wall tops reach AT LEAST the cab roofline):
+     * The cargo box walls reach up to OR above the cab roof line
+     * You CANNOT see over the walls — the cargo area is fully enclosed and deep
+     * The walls and the cab form a roughly continuous profile when viewed from the side
+     * → **"Dump Truck"** only
+
+   - **Side walls are SHORT** (wall tops are BELOW the cab roofline — ANY amount below):
+     * The cargo box walls are lower than the cab roofline — even slightly
+     * You CAN see over the walls from a side view (the cab sticks up above the wall line)
+     * The bed/carrier is visibly shallower than the cab height
+     * **NOTE:** If the wall height is roughly HALF the cab height or less, this is DEFINITELY short walls
+     * **NOTE:** If you can see the contents/interior of the bed from the side → walls are SHORT
      * → Output as TWO SEPARATE categories:
        - "Dump Truck" (primary)
        - "Landscape Truck" (secondary)
+
+   **🚨 WALL HEIGHT SELF-CHECK:** If you are about to classify as "Dump Truck" only (no Landscape), ask yourself: "Can I see over the side walls from a side view? Are the walls clearly as tall as the cab?" If the walls are even SLIGHTLY shorter than the cab roofline → you MUST add Landscape Truck.
+
+   **🚨 MESH/CAGE OVERRIDE:** If the side walls are made of mesh, cage, expanded metal, or net-like material → classify as **Landscape Truck ONLY** (no Dump Truck), regardless of wall height. See the Mesh/Cage Override rule above.
    
    **==== QUICK REFERENCE TABLE ====**
-   | Side Walls? | Front Bulkhead? | Wall Height vs Cab | Classification | Notes |
-   |------------|-----------------|-------------------|----------------|-------|
-   | **NO** | NO (flat/rack)  | N/A               | **Flatbed Truck** | Flat bed, open sides, simple rack or nothing |
-   | **NO** | YES (LARGE CURVED) | N/A            | **Flatbed Dump** | Flat bed, open sides, LARGE curved bulkhead |
-   | **YES** | YES (curved)    | SHORT (< cab)     | 1. Dump Truck, 2. Landscape Truck | Enclosed box with short walls |
-   | **YES** | YES (curved)    | TALL (≥ cab)      | Dump Truck | Enclosed box with tall walls |
+   | Side Walls? | Wall Material | Front Bulkhead? | Wall Height vs Cab | Classification | Notes |
+   |------------|--------------|-----------------|-------------------|----------------|-------|
+   | **NO** | N/A | NO (flat/rack)  | N/A               | **Flatbed Truck** | Flat bed, open sides, simple rack or nothing |
+   | **NO** | N/A | YES (LARGE CURVED) | N/A            | **Flatbed Dump** | Flat bed, open sides, LARGE curved bulkhead |
+   | **YES** | **MESH/CAGE/NET** | Any | Any height | **Landscape Truck** only | Mesh/cage = landscape, NO Dump Truck |
+   | **YES** | **SOLID metal** | YES (curved) | SHORT (< cab) | 1. Dump Truck, 2. Landscape Truck | Enclosed box with short SOLID walls |
+   | **YES** | **SOLID metal** | YES (curved) | TALL (≥ cab) | **Dump Truck** | Enclosed box with tall SOLID walls |
    
    **🚨 CRITICAL RULE: NO SIDE WALLS = IMPOSSIBLE to be Dump Truck or Landscape Truck!**
    
@@ -1108,10 +1142,24 @@ CRITICAL CLASSIFICATION RULES:
    - **NO side walls + NO curved bulkhead = FLATBED TRUCK**
    - **NO side walls + YES curved bulkhead = FLATBED DUMP**
    - **YES side walls (enclosed box) = DUMP TRUCK** (or add Landscape if walls are short)
-   
+
    **⚠️ KEY INSIGHT:** The curved bulkhead ONLY matters when there are NO side walls!
+
+   **🚨 STAKE BED vs FLATBED TRUCK (COMMON FALSE POSITIVE):**
+   - **Stake Bed** requires TALL vertical stake posts forming removable side walls around the entire perimeter of the bed
+   - **DO NOT classify as Stake Bed** if you only see: short stub rails, stake pockets (small holes/brackets along the edge), low side rails, or a flatbed with accessories
+   - A flatbed truck with short low rails or stake pockets is still a **FLATBED TRUCK**, NOT a Stake Bed
+   - The stakes/posts must be clearly tall and form a visible fence-like structure on all sides to be Stake Bed
    - If there ARE side walls → It's Dump Truck (the bulkhead doesn't change this)
    - If there are NO side walls → Check for curved bulkhead to distinguish Flatbed Truck vs Flatbed Dump
+
+   🚨 **STAKE BED MANDATORY PAIRING RULE (CRITICAL):**
+   - **ALL Stake Beds ARE Flatbed Trucks.** Stake Bed is an advancement/specialization of the Flatbed Truck category.
+   - **Whenever you output "Stake Bed", you MUST ALSO output "Flatbed Truck" as a separate category.**
+   - This is the same logic as Hauler (which always pairs with Flatbed Truck).
+   - **CORRECT:** 1. Flatbed Truck (95%), 2. Stake Bed (90%)
+   - **INCORRECT:** 1. Stake Bed (95%) ← WRONG! Missing Flatbed Truck!
+   - **Remember:** All Stake Beds are Flatbed Trucks, but not all Flatbed Trucks are Stake Beds.
 
 10. **CABOVER TRUCK - COE DETECTION (CAB OVER ENGINE):**
    - **What is a Cabover Truck (COE)?** A truck where the driver's cab is positioned directly ABOVE the engine compartment, creating a distinctive FLAT-FRONT profile.
@@ -1135,15 +1183,256 @@ CRITICAL CLASSIFICATION RULES:
    - **DO NOT confuse with:**
      * Conventional trucks with hoods (engine is in front of the cab)
      * Sleeper cab trucks (have a sleeping compartment behind the cab)
+   - **⚠️ CHECK CAB STYLE FIRST:** Before classifying body type, look at the FRONT of the truck. If the windshield starts at the very front with NO hood extending forward → it is ALWAYS a Cabover Truck - COE. Add "Cabover Truck - COE" as an additional category alongside whatever body type is behind it (e.g., Landscape Truck + Cabover Truck - COE).
+
+11. **TOW & RECOVERY FAMILY CLASSIFICATION (CRITICAL - HIGH PRIORITY):**
+   - **⚠️ CRITICAL: A truck can only be ONE primary tow type: Rollback, Wrecker, Selfloader, or Sling. ONE EXCEPTION: Selfloader + Wrecker Tow Truck BOTH apply when sling chains are clearly visible on the wheel-lift claw.**
+   - **⚠️ IMPORTANT: Dually can be added as a SECONDARY category to any tow truck if dual rear wheels are visible.**
+   - **⚠️ DEFAULT RULE: PLUS SIGN at rear = Selfloader. Do NOT add Wrecker unless sling chains are visible on the claw.**
+   
+   **STEP 1: DETECT BED TYPE (This determines the primary category)**
+   
+   **A. ROLLBACK TOW TRUCK (Flatbed Tow Truck) - CHECK FIRST:**
+   - **Definition:** A towing vehicle with a long flat platform bed that tilts backward and slides to the ground, allowing vehicles to be driven or winched onto the bed. The transported vehicle sits completely on the flatbed with all wheels off the ground.
+   - **Key Visual Features:**
+     * **Long flat rectangular bed** - LONGER than a regular flatbed truck bed (this is the PRIMARY identifier)
+     * **Liftgate mechanism at the rear end** - the back end has a hydraulic liftgate or ramp mechanism that extends downward to the ground
+     * **Rear end is pointed or angled downward** - the back end of the bed tapers or has an angled/pointed section (unlike a regular flatbed which has a flat blunt end)
+     * **Bed tilts or slides backward** like a ramp (hydraulic mechanism visible)
+     * **Vehicle being transported is fully on the bed** with all wheels off the ground
+     * **No boom arm or crane** - just a flat platform with liftgate
+     * **Side rails along the bed** - metal rails/stakes running along both sides of the long bed
+   - **Common Uses:** Transporting damaged cars, moving luxury vehicles, long-distance towing
+   - **⚠️ ROLLBACK vs SELFLOADER (CRITICAL DISTINCTION):** Rollback has a LONG FLAT BED stretching from the cab to the rear. The liftgate at the rear end may look like a cross/plus shape when folded up — do NOT mistake this for a Selfloader. **If there is a LONG FLAT BED → it is Rollback, NOT Selfloader.** Selfloader has NO long bed — only a compact wheel-lift mechanism directly behind a short truck bed.
+   - **DO NOT confuse with:**
+     * **Car Carrier** → Car Carrier carries MULTIPLE cars on racks/levels, Rollback carries ONE vehicle on a flatbed
+     * **Wrecker Tow Truck** → Wrecker has a boom/crane, Rollback has a flatbed platform
+     * **Selfloader** → Selfloader has NO long flat bed. If you see a long flat bed → Rollback, not Selfloader.
+     * **Flatbed Truck** → Flatbed Truck has a shorter flat bed with a blunt/flat rear end and NO liftgate; Rollback has a LONGER bed with a pointed/angled rear end and a liftgate mechanism
+     * **Hauler** → Hauler has a gooseneck ball or fifth-wheel plate mounted ON the flatbed bed surface (passes the Two-Step Hitch Test)
+   - **When to use:** If you see a LONG flat platform bed with a liftgate/ramp mechanism at the rear and a pointed or angled rear end, designed for towing vehicles
+   
+   **B. WRECKER TOW TRUCK vs SELFLOADER — SIMPLIFIED RULE:**
+
+   🚨🚨🚨 **THE SIMPLE RULE (MEMORIZE THIS):** 🚨🚨🚨
+   Look at the REAR of the truck and identify what structure is present:
+   - **HOOK at the rear** (a large hook hanging from a boom/crane) → **Wrecker Tow Truck**
+   - **PLUS SIGN (+) / CROSS at the rear** (horizontal arms crossing a vertical post) → **Selfloader**
+   - **BOTH a plus sign AND hooks/slings/chains visible on the same structure** → **BOTH Selfloader + Wrecker Tow Truck**
+
+   **B. WRECKER TOW TRUCK:**
+   - **Definition:** A recovery vehicle with a hydraulic boom that has a HOOK at the end for lifting/pulling vehicles.
+   - **Key Visual Features:**
+     * **ONE single boom arm** that REACHES UPWARD or DIAGONALLY from a central mount on the truck body
+     * **A large J-hook or T-hook HANGING DOWN** from a chain or cable at the TIP of the boom
+     * **The hook hangs freely** — it dangles at the end of the boom, pointing downward
+     * **Winch cables** running through the boom to the hook
+     * **NO horizontal arms extending left and right** — the boom is a single upward arm, NOT a T or plus shape
+   - **KEY SHAPE: ONE arm pointing UP with a HANGING hook at the tip** (vertical/diagonal, not horizontal)
+   - **When to use:** You see ONE upward arm with a HANGING HOOK at the tip. No horizontal arms extending left/right.
+   - **⚠️ DO NOT add "Conventional - Day Cab" or "Conventional - Sleeper Truck" to Wrecker Tow Truck** — tow trucks are standalone categories regardless of cab style.
+
+   **C. SELFLOADER (Autoloader Tow Truck):**
+   - **Definition:** A tow truck with a wheel-lift mechanism that forms a PLUS SIGN (+) or CROSS shape at the rear.
+   - **Key Visual Features:**
+     * **⚠️ THE IDENTIFIER: TWO arms extending HORIZONTALLY OUTWARD (LEFT and RIGHT)** from a central post — like airplane wings, a T-shape, or plus sign (+)
+     * The arms point LEFT and RIGHT, NOT upward — they are designed to slide UNDER vehicle tires/axles
+     * **Compact mechanism** — sits directly behind the cab, NOT on a long flat bed
+     * **SHORT truck bed or NO flatbed** — just the wheel-lift mechanism
+     * **KEY DIFFERENCE FROM WRECKER:** Selfloader arms go SIDEWAYS (horizontal, left+right). Wrecker boom goes UPWARD (vertical/diagonal) with a hanging hook at the tip.
+   - **Common Uses:** Parking enforcement towing, vehicle repossession, quick roadside towing
+   - **⚠️ BEFORE CALLING IT SELFLOADER — CHECK:** Is there a LONG FLAT BED behind the cab? → If YES, it is **Rollback Tow Truck**, NOT Selfloader. A rollback's folded liftgate may look like a cross shape — but the long bed gives it away.
+   - **⚠️ COMBINED CASE (Selfloader + Wrecker):** If you see the PLUS SIGN wheel-lift AND **hooks, slings, or chains are ALSO visible** attached to the structure → tag BOTH Selfloader AND Wrecker Tow Truck.
+     * **Slings** look like thick straps or cables with hooks at the ends, wrapped around or dangling from the wheel-lift arms
+     * **Chains** look like metal chain links connected to the claw or arms
+     * If you see the plus-sign/T-shape structure PLUS any of these dangling/attached elements → output BOTH Selfloader AND Wrecker Tow Truck
+   - **⚠️ DO NOT add "Pickup Truck"** — a selfloader on a compact base is still just Selfloader + Dually.
+   - **⚠️ DO NOT add ANY of these alongside Selfloader:** "Mechanics Truck", "Bucket Truck", "Conventional - Sleeper Truck", "Conventional - Day Cab". ONLY valid companions: **Dually** and **Wrecker Tow Truck** (when hooks/slings visible).
+   - **When to use:** PLUS SIGN (+) or cross shape at rear, with NO long flat bed behind cab.
+   
+   **D. SLING TOW TRUCK - CHECK FOURTH:**
+   - **Definition:** An older towing vehicle that uses chains and hooks attached to a boom to lift one end of a vehicle while the other wheels remain on the road.
+   - **Key Visual Features:**
+     * **Chains or hooks** connected to a boom (this is the PRIMARY identifier)
+     * **Vehicle lifted from frame or axle** using chains
+     * **Front wheels lifted, rear wheels rolling** on the road
+     * **No flatbed, no wheel-lift arms** - just chains/hooks
+   - **Common Uses:** Towing damaged vehicles, short-distance towing
+   - **DO NOT confuse with:**
+     * **Selfloader** → Selfloader uses wheel-lifting arms, Sling uses chains/hooks
+     * **Wrecker Tow Truck** → Wrecker has a large hydraulic boom, Sling has a simpler chain/hook system
+   - **When to use:** If you see chains/hooks for towing (older style, not modern wheel-lift or flatbed)
+   
+   **STEP 2: COUNT VEHICLES (For Car Carrier detection)**
+   
+   **E. CAR CARRIER:**
+   - **Definition:** A transport truck designed to carry multiple vehicles at the same time, typically using a two-level or multi-level trailer structure.
+   - **Key Visual Features:**
+     * **Multiple cars loaded** on the truck (this is the PRIMARY identifier)
+     * **Two or more levels of racks** for stacking vehicles
+     * **Long trailer structure** with multiple vehicle positions
+     * **Often a semi-truck** with a car transport trailer
+   - **Common Uses:** Transporting vehicles from factories to dealerships, long-distance vehicle logistics
+   - **DO NOT confuse with:**
+     * **Rollback Tow Truck** → Rollback carries ONE vehicle on a flatbed, Car Carrier carries MULTIPLE vehicles on racks
+     * **Hauler** → Hauler is generic transport, Car Carrier is specifically for multiple vehicles on racks
+   - **⚠️ CRITICAL — Conventional Cab Rules for Car Carrier:** A Car Carrier may have a sleeper cab or day cab at the front — this does NOT make it "Conventional - Sleeper Truck" or "Conventional - Day Cab". **Conventional - Day Cab and Conventional - Sleeper Truck are MUTUALLY EXCLUSIVE with Car Carrier.** If the truck is a Car Carrier, output ONLY Car Carrier. Do NOT add any Conventional cab type category.
+   - **When to use:** If you see MULTIPLE vehicles stacked on racks/levels (not just one vehicle on a flatbed)
+   
+   **STEP 3: CHECK TOWING STYLE (For Hauler detection)**
+
+   **F. HAULER (Car Hauler / Vehicle Hauler):**
+   - **Definition:** A flatbed truck with a gooseneck ball or fifth-wheel hitch mounted ON the flatbed bed surface, used for towing trailers.
+   - **MANDATORY PAIRING:** Hauler ALWAYS appears with Flatbed Truck.
+
+   **🔍 THE PLAIN BED TEST (fundamental difference between Flatbed and Hauler):**
+
+   **THE CORE DISTINCTION:**
+   - **Plain Flatbed Truck:** The bed surface is COMPLETELY UNINTERRUPTED — diamond plate, steel, or wood deck with nothing specifically mounted IN THE CENTER. The surface is continuous from side to side.
+   - **Hauler:** The bed has a SPECIFIC coupling device mounted IN THE CENTER of the bed. This is the ONLY thing that makes it a Hauler. The center of the bed is NOT plain — there is a deliberate metallic mounting there.
+
+   **Step 1 — LOOK AT THE CENTER OF THE BED:** Focus specifically on the CENTER area of the flat bed surface (not the edges, not the sides, not the rear bumper). Ask: Is there a specific metallic coupling/mounting device IN THE CENTER of the bed?
+   - The center of the bed in a plain Flatbed Truck has NO dedicated hardware — it is just flat continuous deck
+   - A Hauler has a specific hitch device INSTALLED IN THE CENTER of the bed — it may be small, low-profile, or subtle but it is PURPOSELY mounted there
+   → If you see a specific device in the center → proceed to Step 2.
+   → If the center of the bed is plain, continuous, uninterrupted deck → STOP → Flatbed Truck only (no Hauler).
+
+   **Step 2 — IDENTIFY the center-mounted device:**
+   - **Gooseneck ball:** A round metallic ball on a vertical post/tube rising from the bed center. Looks like a ball on a stick.
+   - **Fifth-wheel / square plate:** A square or rectangular low-profile metal plate or coupling device mounted flat in the center of the bed. May appear as a raised square or rectangular metallic piece sitting on the bed surface.
+   → If YES (matches one of these) → output [Flatbed Truck, Hauler].
+   → If NO (does not match) → STOP → Flatbed Truck only (no Hauler).
+
+   **What FAILS the test (NOT center-mounted hitches):**
+   - Bolts, rivets, tie-down D-rings, stake pockets at the EDGES of the bed (not center-mounted coupling devices)
+   - Tool boxes, storage compartments on the sides or ends of the bed (not the center)
+   - Diamond-plate texture or surface patterns (bed material, not a device)
+   - Bumper-mounted trailer ball or receiver hitch (at rear bumper BELOW bed level, not on the bed surface)
+   - Shadows, reflections, or ambiguous marks on the bed surface
+   - Headache rack or cab guard (structure behind the cab, not on the bed surface)
+   - 🚨 **Any hardware on the SIDES or EDGES of the bed** — hitch must be IN THE CENTER
+
+   **⚠️ HAULER vs WESTERN HAULER:** If the rear sides are SLANTED inward with a gap → **Western Hauler** (not Hauler). If the rear is flat/straight with a hitch that passes the test → **Hauler + Flatbed Truck**.
+
+   **G. WESTERN HAULER:**
+   - **Definition:** A hauler truck (typically a pickup truck or medium-duty chassis) with a specialized hauler bed where the REAR sides are SLANTED inward, creating a gap in the middle containing a hitch.
+   - **Key Visual Features:**
+     * **⚠️ THE DEFINING FEATURE: SLANTED/ANGLED REAR SIDES.** When you look at the back of the truck, the left and right sides of the rear bed ANGLE INWARD (like a V or trapezoid shape). There is a VISIBLE GAP between the two slanted sides. This slant/angle is what makes it a WESTERN Hauler vs a regular Hauler.
+     * **Gap in the center of the slanted rear** — this gap contains a hitch (gooseneck or fifth-wheel)
+     * **Custom hauler bed** — the flat bed area has storage boxes or panels on the sides
+     * **If the rear is FLAT/STRAIGHT across (not slanted)** → it is regular **Hauler + Flatbed Truck**, NOT Western Hauler
+     * **Often dual rear wheels** (Dually)
+   - **Common Uses:** Pulling race car trailers, horse trailer towing, heavy trailer transport
+   - **🚨 THE KEY TEST — SLANTED or FLAT rear?**
+     * **Rear sides SLANT/ANGLE INWARD with a gap** → **Western Hauler** (do NOT add Flatbed Truck)
+     * **Rear is FLAT/STRAIGHT across** (no slant, no angled sides) → **Hauler + Flatbed Truck** (NOT Western Hauler)
+   - **DO NOT confuse with:**
+     * **Hauler** → The ONLY difference: Hauler has a FLAT/STRAIGHT rear end; Western Hauler has SLANTED rear sides with a center gap. If there is NO slant → Hauler + Flatbed Truck.
+     * **Flatbed Truck** → Flatbed has no hitch. Short stake sides or rails on a flatbed do NOT make it a Western Hauler.
+   - **⚠️ DO NOT classify as Western Hauler** if the rear is flat/straight across — even if there is a hitch, that makes it Hauler + Flatbed Truck, NOT Western Hauler.
+   - **When to use:** If you see SLANTED/ANGLED rear sides with a visible gap/hitch in the center. Do NOT add Flatbed Truck alongside Western Hauler — Western Hauler is standalone.
+   
+   **CRITICAL DECISION TREE FOR TOW & RECOVERY:**
+   1. **First, check for a LONG FLAT BED:**
+      - **Is there a LONG flat bed stretching from cab to rear?** → If YES → **Rollback Tow Truck** (the rear liftgate may look like a cross shape when folded — do NOT mistake for Selfloader)
+      - If NO long flat bed, continue to step 1b.
+
+   1b. **Look at the REAR of the truck — what structure is there?**
+      - **PLUS SIGN (+) or cross-shaped wheel-lift arms** → **Selfloader**
+        * Are hooks/slings/chains ALSO visible on the structure? → If YES, also add **Wrecker Tow Truck**
+        * DO NOT add "Pickup Truck", "Mechanics Truck", "Bucket Truck", or any "Conventional" type
+      - **HOOK on a boom/crane, NO plus sign** → **Wrecker Tow Truck** only
+      - **Chains/hooks** on a simple boom, no wheel-lift arms → **Sling Truck**
+
+   2. **Then, count vehicles:**
+      - Multiple vehicles on racks → **Car Carrier** (this OVERRIDES all other checks; do NOT add any Conventional cab type)
+
+   3. **Then, check for hitch type (only if it's a flatbed truck base):**
+      - **FIRST CHECK: Are the rear sides SLANTED/ANGLED inward with a gap in the center?**
+        * If YES → **Western Hauler** (standalone — do NOT add Flatbed Truck or Hauler)
+        * If NO (rear is flat/straight) → Apply the **Plain Bed Test** from Section F:
+          - Look at the CENTER of the bed. Is the center plain/uninterrupted deck? → **Flatbed Truck only**.
+          - Is there a specific coupling device (square plate or gooseneck ball) IN THE CENTER? → **Flatbed Truck + Hauler**.
+
+   4. **Check for Conventional cab type (STRICT RULE):**
+      - ONLY add "Conventional - Day Cab" or "Conventional - Sleeper Truck" when the vehicle is a **pure semi-style cab-chassis truck** AND has a **hauler or trail body** behind it
+      - A regular cab on a Car Carrier, Rollback, or other body truck does NOT qualify
+
+   5. **Finally, check for Dually:**
+      - If dual rear wheels are visible → Add **Dually** as SECONDARY category
+      - Dually can pair with ANY tow truck type
+
+   **COMMON MISTAKES TO AVOID:**
+   - ❌ **DO NOT add "Wrecker Tow Truck" when you see a PLUS SIGN (+) at the rear** — PLUS SIGN = Selfloader. Wrecker is ONLY for large boom/crane trucks with NO wheel-lift arms.
+   - ❌ **DO NOT add "Pickup Truck" alongside Selfloader** — a compact selfloader base is still just Selfloader (+ Dually if applicable), NOT Selfloader + Pickup Truck
+   - ❌ **DO NOT add "Car Carrier" if you see only ONE vehicle on a flatbed** — that's Rollback, not Car Carrier
+   - ❌ **DO NOT classify as "Western Hauler" if the base is NOT a pickup truck** — large flatbed trucks with a gooseneck/square hitch are Hauler, not Western Hauler
+   - ❌ **DO NOT classify as "Western Hauler" if you cannot see the distinctive slanted rear sides with center gap** — when in doubt, do NOT use Western Hauler
+   - ❌ **DO NOT classify as "Western Hauler" for short stake sides or flat rail edges on a flatbed** — those are just Flatbed Truck
+   - ❌ **DO NOT classify as "Selfloader" if there is a LONG FLAT BED behind the cab** — that is Rollback Tow Truck. The folded liftgate at the rear may look like a cross/plus shape but it is NOT a selfloader.
+   - ❌ **DO NOT add "Mechanics Truck" or "Bucket Truck" to tow/recovery vehicles** — selfloader wheel-lift ≠ crane or bucket
+   - ❌ **DO NOT add "Dump Truck" or "Landscape Truck" if there are NO side walls** — flat open bed = Flatbed Truck. Side walls are MANDATORY for Dump/Landscape.
+   - ❌ **DO NOT add "Contractor Truck" if the bed is a flat open platform** — Contractor Truck requires a service body
+   - ❌ **DO NOT add "Hauler" unless a specific coupling device (gooseneck ball or square/rectangular plate) is visible IN THE CENTER of the bed.** A plain Flatbed Truck has NO dedicated hardware in the center of the bed — the center is continuous uninterrupted deck. Hardware at the EDGES/SIDES, bumper hitches, tool boxes, tie-downs, bolts, and diamond-plate texture are NOT hauler hitches.
+   - ❌ **DO NOT add "Expeditor-Hotshot" to a regular flatbed truck** — Expeditor-Hotshot is a box/enclosed cargo body, not a flatbed
+   - ❌ **DO NOT add "Utility Truck - Service Truck" if you can see a FLAT OPEN BED SURFACE** — regardless of tool boxes, ladders, or equipment mounted on it. If the bed deck is visible → it is **Flatbed Truck**, NEVER Service Truck. Service Truck has NO visible flat bed — the entire body area is enclosed compartments forming the walls.
+   - ❌ **DO NOT add "Conventional - Day Cab" or "Conventional - Sleeper Truck" to flatbed trucks, tow trucks, selfloaders, or any body truck.** Conventional cab types are ONLY valid on pure semi-style cab-chassis trucks that have a hauler/trail structure behind them. A flatbed truck with a day cab is just a Flatbed Truck — NOT Conventional - Day Cab.
+   - ❌ **DO NOT add "Conventional - Sleeper Truck" or "Conventional - Day Cab" to a Car Carrier or Selfloader** — these are standalone categories regardless of cab type
+   - ❌ **DO NOT miss "Dually" if dual rear wheels are clearly visible** — Dually is an attribute that can pair with any tow truck
+
+   **OUTPUT FORMAT FOR TOW & RECOVERY:**
+   - Primary category: ONE tow truck type (Rollback, Wrecker, Selfloader, Sling, Car Carrier, Hauler, or Western Hauler)
+   - Secondary category (if applicable): Dually (if dual rear wheels visible); Flatbed Truck (MANDATORY if Hauler)
+   - Example: "1. Selfloader (95%)" followed by "2. Dually (90%)" if dual wheels are visible
+   - Example: "1. Rollback Tow Truck (95%)" - no Dually if single wheels
+   - Example: "1. Car Carrier (95%)" - carries multiple vehicles, no need for other tow categories
+   - Example: "1. Flatbed Truck (95%)" + "2. Hauler (90%)" - flatbed with gooseneck/square hitch attachment
+
+12. **SUPER-GROUP REFERENCE (Navigation Aid):**
+   - **IMPORTANT:** Super-Groups are organizational hints to help you navigate the 107 categories. They are NOT hard constraints.
+   - **A vehicle CAN and SHOULD receive categories from MULTIPLE Super-Groups when applicable.**
+   - **Examples of valid cross-group combinations:**
+     * Flatbed Truck (Dump & Flatbed Family) + Hauler (Tow & Recovery Family) - truck has gooseneck hitch on flatbed
+     * Dump Truck (Dump & Flatbed Family) + Dually (Pickup & Light Duty) - heavy dump with dual wheels
+     * Cab-Chassis (Tractor & Cab Family) + any body type from another family
+   - **Super-Group Families:**
+     * **Dump & Flatbed Family:** Dump Truck, Flatbed Truck, Flatbed Dump, Landscape Truck, Stake Bed, Transfer Truck
+     * **Service & Utility Family:** Contractor Truck, Utility Truck - Service Truck, Mechanics Truck, Plumber Service Truck, Saw Body, Cable Scrapper - Cable Puller
+     * **Van Family:** Van, Cargo Van, Passenger Van, Crew Van, Moving Van, Stepvan, Mobility Van, Cutaway Cube Van
+     * **Box & Cargo Family:** Box Truck - Straight Truck, Dry Van, Reefer/Refrigerated Truck, Curtain Side, Expeditor-Hotshot, Glass Truck
+     * **Tractor & Cab Family:** Cab-Chassis, Cabover Truck - COE, Cabover Truck - Sleeper, Conventional - Day Cab, Conventional - Sleeper Truck, Toter, Tractor, Yard Spotter Truck, Glider Kit
+     * **Boom & Crane Family:** Bucket Truck - Boom Truck, Crane Truck, Digger Derrick, Knuckleboom, Roustabout, Grapple Truck, De-Icer, Auger
+     * **Tow & Recovery Family:** Rollback Tow Truck, Wrecker Tow Truck, Selfloader, Sling Truck, Car Carrier, Hauler, Western Hauler
+     * **Tanker & Liquid Family:** Tanker Truck, Water Tank, Oil Tank, Vacuum Truck, Septic, LPG Tank Truck, Hot Oil Truck, Waste Oil Truck, Fuel Truck - Lube Truck, Water Truck, Frac Truck, Specialty Tank Truck
+     * **Construction & Road Family:** Mixer Truck, Concrete Pump Truck, Asphalt Distributor Truck, Stone Spreader Truck, Attenuator, Water Truck, Concrete Barricade Truck, Truck Mounted Stripers, Spray Truck, Auger, Conveyor Truck
+     * **Municipality Family:** Garbage Truck, Recycle Truck, Street Cleaner, Sewer Truck, Animal Services, Railroad Truck, Sweeper, Spray Truck, Fire Truck, Ambulance, Water Truck, Water Tank, Emergency Vehicle
+     * **Farm & Forestry Family:** Farm Truck, Logging, Chipper Truck, Livestock Truck, Plow Truck - Spreader Truck, Cable Scrapper - Cable Puller
+     * **Food & Beverage Family:** Food Truck, Catering Truck, Beverage Truck, Milk Truck
+     * **Waste & Disposal Family:** Roll Off Truck, Winch Truck, Hooklift Truck, Shredder Truck, Lugger, Garbage Truck, Recycle Truck, Street Cleaner, Sewer Truck, Sweeper
+     * **Pickup & Light Duty:** Pickup Truck, Mini Truck, Dually
+     * **Bus Family:** Bus, Minibus
+     * **Military Family:** Armored Truck, Military
+     * **Miscellaneous:** Salvage Truck, Other Truck, Specialty Truck
+   - **STEP 1:** Identify which Super-Group(s) the vehicle may belong to (can be multiple).
+   - **STEP 2:** Within those groups, classify to the specific categories.
+   - **REMEMBER:** Output the best matching categories regardless of which Super-Group they belong to. Cross-group combinations are valid and expected.
 
 
 OUTPUT FORMAT INSTRUCTIONS:
 - **ONLY** return the numbered list of categories with confidence scores.
 - Each category must be on its OWN LINE with its OWN NUMBER.
-- For short-walled dump trucks, output BOTH categories separately:
- Example: 
+- For short-walled dump trucks with SOLID metal walls, output BOTH categories separately:
+ Example:
   1. Dump Truck (95%)
   2. Landscape Truck (90%)
+- For mesh/cage/net walled trucks, output Landscape Truck ONLY (no Dump Truck):
+ Example:
+  1. Landscape Truck (95%)
+  2. Cabover Truck - COE (90%)
+- For Stake Bed, ALWAYS include Flatbed Truck (stake bed is a type of flatbed):
+ Example:
+  1. Flatbed Truck (95%)
+  2. Stake Bed (90%)
 - Example Output:
   1. Pickup Truck (98%)
   2. Flatbed Truck (15%)
@@ -1171,21 +1460,43 @@ Breadcrumb: "{breadcrumb}"
     
     # Build the STATIC cacheable content (rules + category definitions)
     cacheable_content_parts = [cacheable_rules_prefix]
-    cacheable_content_parts.append("\n---\n**Category Reference:**\n")
-    for name, data in category_data.items():
-        cacheable_content_parts.append(f"\n**Category: {name}**\nDefinition: {data.get('definition', 'No definition.')}")
-        if config.include_example_images:
-            cacheable_content_parts.append("Example Image:")
-            if data.get("image_bytes"):
-                cacheable_content_parts.append({"inline_data": {"mime_type": "image/jpeg", "data": base64.b64encode(data['image_bytes']).decode("utf-8")}})
-            else:
-                cacheable_content_parts.append("(No example image)")
+    cacheable_content_parts.append("\n---\n**Category Reference (Grouped by Super-Group):**\n")
     
-    # Build the DYNAMIC content (unique per ad — breadcrumb + image)
-    dynamic_parts = [
-        context_section,
-        {"inline_data": {"mime_type": "image/jpeg", "data": base64.b64encode(ad_img_bytes).decode("utf-8")}}
-    ]
+    # Group categories by super_group
+    categories_by_super_group = {}
+    for name, data in category_data.items():
+        super_group = data.get('super_group', 'Miscellaneous')
+        if super_group not in categories_by_super_group:
+            categories_by_super_group[super_group] = []
+        categories_by_super_group[super_group].append((name, data))
+    
+    # Sort super groups for consistent ordering
+    sorted_super_groups = sorted(categories_by_super_group.keys())
+    
+    # Build category reference grouped by Super-Group
+    for super_group in sorted_super_groups:
+        cacheable_content_parts.append(f"\n### {super_group}\n")
+        # Sort categories within each super group
+        sorted_categories = sorted(categories_by_super_group[super_group], key=lambda x: x[0])
+        for name, data in sorted_categories:
+            cacheable_content_parts.append(f"\n**Category: {name}**\nDefinition: {data.get('definition', 'No definition.')}")
+            if config.include_example_images:
+                cacheable_content_parts.append("Example Image:")
+                if data.get("image_bytes"):
+                    cacheable_content_parts.append({"inline_data": {"mime_type": "image/jpeg", "data": base64.b64encode(data['image_bytes']).decode("utf-8")}})
+                else:
+                    cacheable_content_parts.append("(No example image)")
+    
+    # Build the DYNAMIC content (unique per ad — breadcrumb + image(s))
+    if isinstance(ad_img_bytes, list):
+        dynamic_parts = [context_section]
+        for img_bytes in ad_img_bytes:
+            dynamic_parts.append({"inline_data": {"mime_type": "image/jpeg", "data": base64.b64encode(img_bytes).decode("utf-8")}})
+    else:
+        dynamic_parts = [
+            context_section,
+            {"inline_data": {"mime_type": "image/jpeg", "data": base64.b64encode(ad_img_bytes).decode("utf-8")}}
+        ]
     
     # Log prompt structure
     cacheable_tokens_approx = len(cacheable_rules_prefix.split()) * 1.3
@@ -1235,7 +1546,8 @@ Breadcrumb: "{breadcrumb}"
                 cacheable_content_parts=cacheable_content_parts,
                 context_text=context_section,
                 image_bytes=ad_img_bytes,
-                timeout=45
+                timeout=45,
+                include_thoughts=config.enable_thought_summaries
             )
             
             if not using_explicit_cache:
@@ -1269,19 +1581,49 @@ Breadcrumb: "{breadcrumb}"
                 is_explicit_cache=using_explicit_cache
             )
             
+            # Extract thought parts vs answer parts (for thought summary feature)
+            thought_text = ""
+            answer_text = ""
+            try:
+                for part in response.candidates[0].content.parts:
+                    if not getattr(part, 'text', None):
+                        continue
+                    if getattr(part, 'thought', False):
+                        thought_text += part.text
+                    else:
+                        answer_text += part.text
+            except Exception:
+                answer_text = response.text  # fallback if parts unavailable
+
             # Print LLM response to terminal
             print(f"\n{'='*80}")
             print(f"[CLASSIFICATION - Ad {ad_id}] LLM Response:")
             print(f"{'='*80}")
-            print(response.text)
+            if thought_text:
+                print(f"[THOUGHTS]\n{thought_text}")
+                print(f"{'─'*40}")
+            print(f"[ANSWER]\n{answer_text}")
             print(f"{'='*80}\n")
-            
+
+            # Save thought summary to dedicated log file
+            if config.enable_thought_summaries and thought_text:
+                from .utils import save_thought_entry
+                save_thought_entry(
+                    ad_id=ad_id,
+                    breadcrumb=breadcrumb,
+                    thought_text=thought_text,
+                    answer_text=answer_text,
+                    model_name=config.gemini_model_classification,
+                    worker_id=worker_id
+                )
+                log_msg(f"💭 Thought summary saved ({len(thought_text)} chars)", worker_id)
+
             log_msg(f"📥 Response ({duration:.1f}s): Tokens In:{in_tok}/Out:{out_tok} (Cached:{cached_tok}) [Explicit Cache: {'YES' if using_explicit_cache else 'NO'}]", worker_id)
-            
+
             # Note: No time.sleep() needed here because Yoda handles the pacing!
             # Return: (results, classify_in, classify_out, classify_cached, promo_in, promo_out, promo_cached)
             # Tokens are kept SEPARATE so callers can cost each at the correct model rate
-            return parse_gemini_response(response.text), in_tok, out_tok, cached_tok, promo_check_tokens_in, promo_check_tokens_out, promo_check_tokens_cached
+            return parse_gemini_response(answer_text), in_tok, out_tok, cached_tok, promo_check_tokens_in, promo_check_tokens_out, promo_check_tokens_cached
 
         except Exception as e:
             error_msg = str(e).lower()
@@ -1492,17 +1834,30 @@ def classify_with_gemini_multi(breadcrumb: str, category_data: dict, img_bytes_l
             # Continue with classification if check fails
     
     # --- MOSAIC STRATEGY START ---
-    # If we have 2+ images, combine them and send 1 Request.
+    # If we have 2+ images, batch into smaller mosaics and send as multiple image parts.
     if len(img_bytes_list) >= 2 and OPENCV_AVAILABLE:
         try:
-            log_msg(f"🧩 Stitching 2 Images into Mosaic (Cost Saving)...", worker_id)
-            # Use Index 0 and 1 (Usually sorted by Vision V2 as best)
-            mosaic_bytes = create_image_mosaic(img_bytes_list[0], img_bytes_list[1])
-            
-            # Save mosaic if enabled in config
-            save_mosaic_image(mosaic_bytes, ad_id, "classification")
-            
-            res, cls_in, cls_out, cls_cached, p_in, p_out, p_cached = classify_with_gemini(breadcrumb, category_data, mosaic_bytes, yoda_instance, key_queue, worker_id, status_queue, ad_id, skip_promo_check=True)
+            # Take up to 9 images (3 mosaics × 3 images each)
+            images_for_mosaic = img_bytes_list[:9]
+            batch_size = config.mosaic_batch_size
+
+            # Batch images into groups of batch_size (e.g., 9 images → 3-3-3, 8 → 3-3-2)
+            batches = [images_for_mosaic[i:i + batch_size] for i in range(0, len(images_for_mosaic), batch_size)]
+
+            mosaic_list = []
+            for batch_idx, batch in enumerate(batches):
+                if len(batch) == 1:
+                    # Single image in this batch — no mosaic needed, use raw image
+                    mosaic_list.append(batch[0])
+                    save_mosaic_image(batch[0], ad_id, f"classification_batch{batch_idx+1}")
+                else:
+                    mosaic_bytes = create_image_mosaic_multi(batch)
+                    save_mosaic_image(mosaic_bytes, ad_id, f"classification_batch{batch_idx+1}")
+                    mosaic_list.append(mosaic_bytes)
+
+            log_msg(f"🧩 Stitching {len(images_for_mosaic)} images into {len(mosaic_list)} mosaic(s) (batch size {batch_size})...", worker_id)
+
+            res, cls_in, cls_out, cls_cached, p_in, p_out, p_cached = classify_with_gemini(breadcrumb, category_data, mosaic_list, yoda_instance, key_queue, worker_id, status_queue, ad_id, skip_promo_check=True)
             total_classify_in += cls_in
             total_classify_out += cls_out
             total_classify_cached += cls_cached

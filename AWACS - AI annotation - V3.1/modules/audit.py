@@ -141,6 +141,10 @@ def run_audit():
         return
 
     # 5. MERGE DATA
+    # Deduplicate both dataframes before merging to prevent row multiplication
+    master_ai = master_ai.drop_duplicates(subset=["Ad ID"], keep='last')
+    human_df = human_df.drop_duplicates(subset=["Ad ID"], keep='last')
+
     print("\n3️⃣  Comparing Data...")
     merged = pd.merge(master_ai, human_df, on="Ad ID", how="inner", suffixes=('', '_manual'))
     
@@ -182,8 +186,11 @@ def run_audit():
             "Manual Categories": ", ".join(sorted(human_set))
         })
 
+    # Assign Feedback Status directly — do NOT merge on Ad ID, as duplicate
+    # Ad IDs cause a cartesian product (N rows × N rows = N² rows)
+    merged["Feedback Status"] = [r["Feedback Status"] for r in audit_results]
     audit_df = pd.DataFrame(audit_results)
-    final_output = pd.merge(merged, audit_df[["Ad ID", "Feedback Status"]], on="Ad ID", how="left")
+    final_output = merged
 
     # 7. GENERATE SUMMARY (UPDATED)
     total = len(final_output)

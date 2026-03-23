@@ -75,6 +75,7 @@
     "rolloff": "Roll Off Truck",
     "hooklift": "Hooklift Truck",
     "lugger": "Lugger",
+    "lugger truck": "Lugger",
     "plow": "Plow Truck - Spreader Truck",
     "plow truck": "Plow Truck - Spreader Truck",
     "snow plow": "Plow Truck - Spreader Truck",
@@ -137,6 +138,7 @@
     "minibus": "Minibus",
     "ambulance": "Ambulance",
     "emergency": "Emergency Vehicle",
+    "emergency vehicle": "Emergency Vehicle",
     "fire": "Fire Truck",
     "animal control": "Animal Services",
     "armored": "Armored Truck",
@@ -144,11 +146,14 @@
     "yard spotter": "Yard Spotter Truck",
     "terminal tractor": "Yard Spotter Truck",
     "tractor": "Tractor",
+    "tractor unit": "Tractor",
     "glider": "Glider Kit",
     "livestock": "Livestock Truck",
     "western hauler": "Western Hauler",
     "curtain": "Curtain Side",
     "conveyor": "Conveyor Truck",
+    "conveyor truck": "Conveyor Truck",
+    "conveyor belt truck": "Conveyor Truck",
     "attenuator": "Attenuator",
     "concrete barricade": "Concrete Barricade Truck",
     "striper": "Truck Mounted Stripers",
@@ -171,6 +176,8 @@
     "toter": "Toter",
     "transfer": "Transfer Truck",
     "specialty": "Specialty Truck",
+    "specialty tank": "Specialty Tank Truck",
+    "specialty tank truck": "Specialty Tank Truck",
     "other": "Other Truck",
     "expeditor": "Expeditor-Hotshot",
     "spray": "Spray Truck",
@@ -362,6 +369,106 @@
       "not_with": [
         "Pickup Truck"
       ]
+    },
+    {
+      "comment": "Tractor is a frame-only unit designed to pull trailers. It cannot be combined with most body types.",
+      "category": "Tractor",
+      "not_with": [
+        "Dump Truck",
+        "Flatbed Truck",
+        "Box Truck - Straight Truck",
+        "Utility Truck - Service Truck",
+        "Bucket Truck - Boom Truck",
+        "Crane Truck",
+        "Mixer Truck",
+        "Garbage Truck",
+        "Tanker Truck"
+      ]
+    },
+    {
+      "comment": "Emergency Vehicle is a general category. It should not be combined with specific emergency vehicle types.",
+      "category": "Emergency Vehicle",
+      "not_with": [
+        "Ambulance",
+        "Fire Truck"
+      ]
+    },
+    {
+      "comment": "Specialty Tank Truck is a specific tanker type. It should not be combined with generic Tanker Truck.",
+      "category": "Specialty Tank Truck",
+      "not_with": [
+        "Tanker Truck"
+      ]
+    },
+    {
+      "comment": "Rollback Tow Truck is a specific tow truck type with a flatbed. It cannot be combined with other tow truck types.",
+      "category": "Rollback Tow Truck",
+      "not_with": [
+        "Wrecker Tow Truck",
+        "Selfloader",
+        "Sling Truck"
+      ]
+    },
+    {
+      "comment": "Wrecker Tow Truck is a specific tow truck type with a boom. It cannot be combined with other tow truck types.",
+      "category": "Wrecker Tow Truck",
+      "not_with": [
+        "Rollback Tow Truck",
+        "Selfloader",
+        "Sling Truck"
+      ]
+    },
+    {
+      "comment": "Selfloader is a specific tow truck type with wheel-lift arms. It cannot be combined with other tow truck types.",
+      "category": "Selfloader",
+      "not_with": [
+        "Rollback Tow Truck",
+        "Wrecker Tow Truck",
+        "Sling Truck"
+      ]
+    },
+    {
+      "comment": "Sling Truck is a specific tow truck type with chains. It cannot be combined with other tow truck types.",
+      "category": "Sling Truck",
+      "not_with": [
+        "Rollback Tow Truck",
+        "Wrecker Tow Truck",
+        "Selfloader"
+      ]
+    },
+    {
+      "comment": "Car Carrier is a specialized multi-vehicle transporter. It cannot be combined with single-vehicle tow trucks.",
+      "category": "Car Carrier",
+      "not_with": [
+        "Rollback Tow Truck",
+        "Wrecker Tow Truck",
+        "Selfloader",
+        "Sling Truck"
+      ]
+    },
+    {
+      "comment": "Stake Bed (rigid fencing/railing), Landscape Truck (nets/cages), and Hauler (decorative deck with hitch) are mutually exclusive bed types.",
+      "category": "Stake Bed",
+      "not_with": [
+        "Landscape Truck",
+        "Hauler"
+      ]
+    },
+    {
+      "comment": "Landscape Truck (nets/cages) cannot coexist with Stake Bed (fencing) or Hauler (deck with hitch) - mutually exclusive bed types.",
+      "category": "Landscape Truck",
+      "not_with": [
+        "Stake Bed",
+        "Hauler"
+      ]
+    },
+    {
+      "comment": "Hauler (decorative deck with hitch) cannot coexist with Stake Bed (fencing) or Landscape Truck (nets/cages) - mutually exclusive bed types.",
+      "category": "Hauler",
+      "not_with": [
+        "Stake Bed",
+        "Landscape Truck"
+      ]
     }
   ],
   "truck_overlaps": [
@@ -493,6 +600,118 @@
       ],
       "decision_rule": "HIERARCHY RULE: 'Box Truck - Straight Truck' is ALWAYS the PRIMARY category for any truck with a rectangular cargo box. 'Cutaway Cube Van' is a SECONDARY modifier describing chassis type ONLY. 1. Output 'Box Truck - Straight Truck' FIRST as primary. 2. ONLY add 'Cutaway Cube Van' as second category IF you can clearly see a pass-through door/opening from cab to cargo box. 3. NEVER output 'Cutaway Cube Van' alone or as the primary category. 4. If pass-through is not visible, output ONLY 'Box Truck - Straight Truck'.",
       "keep_both_if_cutaway": true
+    },
+    {
+      "pair": [
+        "Tractor",
+        "Conventional Day Cab"
+      ],
+      "decision_rule": "CHECK FOR SLEEPING COMPARTMENT: 1. **Tractor**: A heavy-duty truck designed to pull semi-trailers with no specific day-cab or sleeper designation. May have a basic cab or extended cab but no distinct sleeping compartment. 2. **Conventional Day Cab**: A conventional style tractor WITHOUT a sleeping compartment. If you see a conventional cab with NO sleeper extension, it is 'Conventional Day Cab'. If the cab style is unclear or it's a basic tractor unit, classify as 'Tractor'.",
+      "keep_both_if_dually": false
+    },
+    {
+      "pair": [
+        "Tractor",
+        "Toter"
+      ],
+      "decision_rule": "CHECK FOR MOBILE HOME MODIFICATIONS: 1. **Toter**: A conventional cab specifically modified for transporting mobile homes. Look for specialized hitches, extended wheelbase, or mobile home transport equipment. 2. **Tractor**: A standard heavy-duty truck for pulling semi-trailers. If you see mobile home transport modifications, it is 'Toter'. Otherwise, classify as 'Tractor'.",
+      "keep_both_if_dually": false
+    },
+    {
+      "pair": [
+        "Emergency Vehicle",
+        "Ambulance"
+      ],
+      "decision_rule": "HIERARCHY RULE: 'Ambulance' is a SPECIFIC type of emergency vehicle. 1. If you see a medical emergency vehicle with medical equipment, stretcher, or ambulance markings, classify as 'Ambulance'. 2. Only use 'Emergency Vehicle' for general emergency response vehicles that are NOT specifically ambulances or fire trucks. 3. Do NOT use both categories - choose the most specific one.",
+      "keep_both_if_dually": false
+    },
+    {
+      "pair": [
+        "Emergency Vehicle",
+        "Fire Truck"
+      ],
+      "decision_rule": "HIERARCHY RULE: 'Fire Truck' is a SPECIFIC type of emergency vehicle. 1. If you see a firefighting vehicle with hoses, ladders, or fire department markings, classify as 'Fire Truck'. 2. Only use 'Emergency Vehicle' for general emergency response vehicles that are NOT specifically fire trucks or ambulances. 3. Do NOT use both categories - choose the most specific one.",
+      "keep_both_if_dually": false
+    },
+    {
+      "pair": [
+        "Auger",
+        "Digger Derrick"
+      ],
+      "decision_rule": "CHECK THE DRILLING MECHANISM: 1. **Auger**: A truck with a large drilling auger/bit mounted on a boom, used for drilling holes in the ground. The auger is typically a large spiral bit. 2. **Digger Derrick**: A truck with a boom and a drilling/digging bit, typically used for utility work. The bit may be more specialized for utility pole installation. If the drilling mechanism is clearly a large spiral auger, classify as 'Auger'. If it's a utility-focused digger, classify as 'Digger Derrick'.",
+      "keep_both_if_dually": false
+    },
+    {
+      "pair": [
+        "Lugger",
+        "Roll Off Truck"
+      ],
+      "decision_rule": "CHECK THE LIFTING MECHANISM: 1. **Lugger**: A roll-off truck that uses a lugger mechanism (typically a chain or cable system) to lift dumpsters. 2. **Roll Off Truck**: A general category for trucks that drop off and pick up dumpsters. If you can see a specific lugger mechanism (chain/cable system), classify as 'Lugger'. If the mechanism is unclear or it's a standard roll-off, classify as 'Roll Off Truck'.",
+      "keep_both_if_dually": false
+    },
+    {
+      "pair": [
+        "Lugger",
+        "Hooklift Truck"
+      ],
+      "decision_rule": "CHECK THE LIFTING MECHANISM: 1. **Lugger**: Uses a lugger mechanism (chain/cable) to lift dumpsters. 2. **Hooklift Truck**: Uses a hook arm mechanism to lift containers. Look at the lifting mechanism - if you see a hook arm, it's 'Hooklift Truck'. If you see a chain/cable lugger system, it's 'Lugger'.",
+      "keep_both_if_dually": false
+    },
+    {
+      "pair": [
+        "Sweeper",
+        "Street Cleaner"
+      ],
+      "decision_rule": "CHECK FOR BRUSHES AND VACUUMS: Both are very similar. 1. **Street Cleaner**: A truck used to clean streets, usually characterized by large brushes and vacuums underneath. 2. **Sweeper**: A truck with brushes underneath for sweeping surfaces and gutters. They are essentially the same - if you see street cleaning equipment with brushes/vacuums, either category is acceptable. Prefer 'Street Cleaner' for municipal street cleaning vehicles.",
+      "keep_both_if_dually": false
+    },
+    {
+      "pair": [
+        "Rollback Tow Truck",
+        "Wrecker Tow Truck"
+      ],
+      "decision_rule": "CHECK FOR BED TYPE: 1. **Rollback Tow Truck**: Has a LARGE FLAT RECTANGULAR BED that tilts backward like a ramp. The bed covers most of the truck body. Vehicle sits fully on the flatbed. 2. **Wrecker Tow Truck**: Has a LARGE BOOM ARM OR CRANE mounted behind the cab. No flatbed platform - just a boom with winch cables/hooks. If you see a flat platform bed → Rollback. If you see a boom/crane → Wrecker.",
+      "keep_both_if_dually": false
+    },
+    {
+      "pair": [
+        "Selfloader",
+        "Wrecker Tow Truck"
+      ],
+      "decision_rule": "CHECK THE LIFTING MECHANISM: 1. **Selfloader**: Has HYDRAULIC WHEEL-LIFT ARMS at the rear that grab the vehicle's wheels. Compact mechanism, no large boom. 2. **Wrecker Tow Truck**: Has a LARGE BOOM ARM OR CRANE with winch cables/hooks. Much larger mechanism than wheel-lift arms. If you see wheel-lift arms → Selfloader. If you see a large boom/crane → Wrecker.",
+      "keep_both_if_dually": false
+    },
+    {
+      "pair": [
+        "Selfloader",
+        "Sling Truck"
+      ],
+      "decision_rule": "CHECK THE LIFTING METHOD: 1. **Selfloader**: Uses HYDRAULIC WHEEL-LIFT ARMS that grab the vehicle's wheels automatically. Modern mechanism, no chains visible. 2. **Sling Truck**: Uses CHAINS AND HOOKS attached to a boom. Older style, chains/hooks are visible. If you see wheel-lift arms → Selfloader. If you see chains/hooks → Sling Truck.",
+      "keep_both_if_dually": false
+    },
+    {
+      "pair": [
+        "Rollback Tow Truck",
+        "Car Carrier"
+      ],
+      "decision_rule": "COUNT THE VEHICLES: 1. **Rollback Tow Truck**: Carries ONE vehicle on a flat platform bed. The bed tilts backward like a ramp. Single vehicle fully on the flatbed. 2. **Car Carrier**: Carries MULTIPLE vehicles on racks/levels. Two or more levels of vehicle racks. Long trailer structure with multiple vehicle positions. If you see ONE vehicle on a flatbed → Rollback. If you see MULTIPLE vehicles on racks → Car Carrier.",
+      "keep_both_if_dually": false
+    },
+    {
+      "pair": [
+        "Hauler",
+        "Western Hauler"
+      ],
+      "decision_rule": "CHECK THE BASE VEHICLE: 1. **Hauler**: A generic transport truck (can be semi-truck, medium-duty, etc.) pulling a trailer. Not specifically a pickup truck. 2. **Western Hauler**: A CUSTOM PICKUP TRUCK with an extended hauler bed. Has pickup truck cab and body style. Custom hauler bed with side storage boxes. Gooseneck hitch in middle of bed. If it's a PICKUP TRUCK with custom hauler bed → Western Hauler. If it's a regular truck pulling a trailer → Hauler.",
+      "keep_both_if_dually": false
+    },
+    {
+      "pair": [
+        "Hauler",
+        "Car Carrier"
+      ],
+      "decision_rule": "CHECK THE TRANSPORT METHOD: 1. **Hauler**: A truck pulling a TRAILER with vehicles/cargo. Generic transport truck with trailer attachment. 2. **Car Carrier**: A specialized transporter with MULTIPLE VEHICLES ON RACKS/LEVELS. Two or more levels of vehicle racks. Long trailer structure designed specifically for multiple vehicles. If you see a truck pulling a generic trailer → Hauler. If you see multiple vehicles stacked on specialized racks → Car Carrier.",
+      "keep_both_if_dually": false
     }
   ],
   "feature_checklist": {

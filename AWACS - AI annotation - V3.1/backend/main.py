@@ -693,8 +693,8 @@ def verify_dually_listings(result_df: pd.DataFrame, job_id: str, yoda_instance):
         if image_urls_str:
             image_urls = [url.strip() for url in image_urls_str.split(",") if url.strip()]
             if image_urls:
-                # Get only first 3 images (same as scrapping feature for consistency)
-                img_bytes_list = web_utils.get_images_with_caching(image_urls[:3])
+                # Get only first 10 images (same as scrapping feature for consistency)
+                img_bytes_list = web_utils.get_images_with_caching(image_urls[:9])
                 # Filter out None/empty images
                 valid_images = [img for img in img_bytes_list if img]
                 if valid_images:
@@ -735,9 +735,23 @@ def verify_dually_listings(result_df: pd.DataFrame, job_id: str, yoda_instance):
         key_q.put(k)
     print(f"   🔑 Loaded {len(config.gemini_api_keys_info)} API keys into queue")
     
-    # Load verification jobs into queue
-    print(f"   📋 Loading {len(prefetched_images)} verification jobs into queue...")
+    # Load verification jobs into queue (skip rule-based dually that shouldn't be verified)
+    print(f"   📋 Loading verification jobs into queue...")
+    skipped_rule_based = 0
     for idx, (ad_id, img_bytes_list, row) in prefetched_images.items():
+        # Skip verification for Landscape + Cabover COE — always dually by rule
+        annotations = [
+            str(row.get("Annotated_Top1", "")).lower(),
+            str(row.get("Annotated_Top2", "")).lower(),
+            str(row.get("Annotated_Top3", "")).lower()
+        ]
+        has_landscape = any("landscape" in a for a in annotations)
+        has_cabover_coe = any("cabover" in a and "coe" in a for a in annotations)
+        if has_landscape and has_cabover_coe:
+            skipped_rule_based += 1
+            print(f"   ⏭️ Ad {ad_id}: Skipping verification — Landscape + Cabover COE (always dually by rule)")
+            continue
+
         verification_job = {
             'idx': idx,
             'ad_id': ad_id,
@@ -746,9 +760,17 @@ def verify_dually_listings(result_df: pd.DataFrame, job_id: str, yoda_instance):
         }
         job_q.put(verification_job)
         print(f"   ➕ Added verification job for Ad {ad_id} to queue")
+
+    if skipped_rule_based > 0:
+        print(f"   ⏭️ Skipped {skipped_rule_based} listings (rule-based dually, no verification needed)")
     
-    print(f"   ✅ All {len(prefetched_images)} jobs loaded into queue")
-    
+    jobs_loaded = len(prefetched_images) - skipped_rule_based
+    print(f"   ✅ {jobs_loaded} jobs loaded into queue ({skipped_rule_based} skipped as rule-based dually)")
+
+    if jobs_loaded == 0:
+        print("   ⚠️ No listings need dually verification after rule-based filtering. Skipping.")
+        return result_df, 0
+
     # STEP 3: Start worker processes
     print(f"\n   🚀 STEP 3: Starting {num_workers} worker processes...")
     procs = []
@@ -997,6 +1019,15 @@ def run_job_pipeline_sync(job_id: str, file_path: str):
         df = pd.read_excel(file_path, dtype={"Ad ID": str})
         df["Ad ID"] = df["Ad ID"].astype(str).str.replace(r'\.0$', '', regex=True).str.strip()
         
+        # ✅ FIX: Deduplicate Ad IDs BEFORE processing to prevent exponential growth
+        duplicates_before = df[df.duplicated(subset=["Ad ID"], keep=False)]
+        if not duplicates_before.empty:
+            print(f"   ⚠️ WARNING: Found {len(duplicates_before)} duplicate rows in input Excel!")
+            print(f"   ⚠️ Duplicate Ad IDs: {duplicates_before['Ad ID'].unique().tolist()}")
+            print(f"   ✅ Removing duplicates, keeping first occurrence...")
+            df = df.drop_duplicates(subset=["Ad ID"], keep='first').reset_index(drop=True)
+            print(f"   ✅ After deduplication: {len(df)} unique Ad IDs")
+        
         # Add required columns
         for col in ["Breadcrumb_Top1", "Breadcrumb_Top2", "Breadcrumb_Top3", "Image_URLs"]:
             if col not in df.columns:
@@ -1072,6 +1103,16 @@ def run_job_pipeline_sync(job_id: str, file_path: str):
             if successful_ids:
                 ad_tracker.increment_annotation_counts(successful_ids)
                 print(f"   📊 Ad Tracker: Updated annotation counts for {len(successful_ids)} successfully processed ads in Turso DB")
+        
+        # ✅ FIX: Deduplicate result DataFrame before saving to prevent duplicate entries
+        if not result_df.empty:
+            duplicates_final = result_df[result_df.duplicated(subset=["Ad ID"], keep=False)]
+            if not duplicates_final.empty:
+                print(f"   ⚠️ WARNING: Found {len(duplicates_final)} duplicate rows in final result!")
+                print(f"   ⚠️ Duplicate Ad IDs: {duplicates_final['Ad ID'].unique().tolist()}")
+                print(f"   ✅ Removing duplicates, keeping first occurrence...")
+                result_df = result_df.drop_duplicates(subset=["Ad ID"], keep='first').reset_index(drop=True)
+                print(f"   ✅ After deduplication: {len(result_df)} unique rows")
         
         # Save final output
         output_filename = f"output_annotated_{run_ts}.xlsx"
@@ -1422,6 +1463,17 @@ def run_db_annotation_pipeline_sync(job_id: str, file_path: str):
             batch_dfs = [pd.read_excel(f, dtype={"Ad ID": str}) for f in batch_files]
             final_result_df = pd.concat(batch_dfs, ignore_index=True)
             del batch_dfs  # Free memory
+            
+            # ✅ FIX: Deduplicate when combining batches to prevent duplicate entries
+            if not final_result_df.empty:
+                final_result_df["Ad ID"] = final_result_df["Ad ID"].astype(str).str.replace(r'\.0$', '', regex=True).str.strip()
+                duplicates_combined = final_result_df[final_result_df.duplicated(subset=["Ad ID"], keep=False)]
+                if not duplicates_combined.empty:
+                    print(f"   ⚠️ WARNING: Found {len(duplicates_combined)} duplicate rows when combining batches!")
+                    print(f"   ⚠️ Duplicate Ad IDs: {duplicates_combined['Ad ID'].unique().tolist()}")
+                    print(f"   ✅ Removing duplicates, keeping first occurrence...")
+                    final_result_df = final_result_df.drop_duplicates(subset=["Ad ID"], keep='first').reset_index(drop=True)
+                    print(f"   ✅ After deduplication: {len(final_result_df)} unique rows")
         else:
             final_result_df = pd.DataFrame()
         
@@ -2108,7 +2160,11 @@ def run_audit_comparison(ai_df: pd.DataFrame, manual_df: pd.DataFrame, audit_id:
         return {"error": "Manual feedback file must have an 'Ad ID' column"}
     
     manual_df["Ad ID"] = manual_df["Ad ID"].astype(str).str.replace(r'\.0$', '', regex=True).str.strip()
-    
+
+    # Deduplicate both dataframes before merging to prevent row multiplication
+    ai_df = ai_df.drop_duplicates(subset=["Ad ID"], keep='last')
+    manual_df = manual_df.drop_duplicates(subset=["Ad ID"], keep='last')
+
     # Merge data
     merged = pd.merge(ai_df, manual_df, on="Ad ID", how="inner", suffixes=('', '_manual'))
     
@@ -2156,8 +2212,11 @@ def run_audit_comparison(ai_df: pd.DataFrame, manual_df: pd.DataFrame, audit_id:
             "Manual Categories": ", ".join(sorted(human_set))
         })
     
+    # Assign Feedback Status directly — do NOT merge on Ad ID, as duplicate
+    # Ad IDs cause a cartesian product (N rows × N rows = N² rows)
+    merged["Feedback Status"] = [r["Feedback Status"] for r in audit_results]
     audit_df = pd.DataFrame(audit_results)
-    final_output = pd.merge(merged, audit_df[["Ad ID", "Feedback Status"]], on="Ad ID", how="left")
+    final_output = merged
     
     # Generate Summary
     total = len(final_output)
@@ -2640,9 +2699,19 @@ def run_db_fetch_by_ids_sync(job_id: str, file_path: str, client_id: str, client
             raise ValueError("Excel file must have an 'Ad ID' column")
         
         df["Ad ID"] = df["Ad ID"].astype(str).str.replace(r'\.0$', '', regex=True).str.strip()
+        
+        # ✅ FIX: Deduplicate Ad IDs BEFORE processing to prevent exponential growth
+        duplicates_before = df[df.duplicated(subset=["Ad ID"], keep=False)]
+        if not duplicates_before.empty:
+            print(f"   ⚠️ WARNING: Found {len(duplicates_before)} duplicate rows in input Excel!")
+            print(f"   ⚠️ Duplicate Ad IDs: {duplicates_before['Ad ID'].unique().tolist()}")
+            print(f"   ✅ Removing duplicates, keeping first occurrence...")
+            df = df.drop_duplicates(subset=["Ad ID"], keep='first').reset_index(drop=True)
+            print(f"   ✅ After deduplication: {len(df)} unique Ad IDs")
+        
         ad_ids = df["Ad ID"].tolist()
         
-        print(f"   ✅ Loaded {len(ad_ids)} Ad IDs from Excel")
+        print(f"   ✅ Loaded {len(ad_ids)} unique Ad IDs from Excel")
         print(f"   📊 First 5 Ad IDs: {ad_ids[:5]}")
         print("="*80 + "\n")
         
@@ -2765,6 +2834,15 @@ def run_db_fetch_by_ids_sync(job_id: str, file_path: str, client_id: str, client
         
         result_df = pd.DataFrame(processed_trucks)
         result_df["Ad ID"] = result_df["Ad ID"].astype(str).str.replace(r'\.0$', '', regex=True).str.strip()
+        
+        # ✅ FIX: Deduplicate result DataFrame to prevent duplicate entries
+        duplicates_after = result_df[result_df.duplicated(subset=["Ad ID"], keep=False)]
+        if not duplicates_after.empty:
+            print(f"   ⚠️ WARNING: Found {len(duplicates_after)} duplicate rows in processed data!")
+            print(f"   ⚠️ Duplicate Ad IDs: {duplicates_after['Ad ID'].unique().tolist()}")
+            print(f"   ✅ Removing duplicates, keeping first occurrence...")
+            result_df = result_df.drop_duplicates(subset=["Ad ID"], keep='first').reset_index(drop=True)
+            print(f"   ✅ After deduplication: {len(result_df)} unique rows")
         
         # ✅ FIX: Preserve input order by merging with original df
         # Create a copy of the input df with just Ad ID to preserve the original order
@@ -3243,12 +3321,12 @@ async def fetch_by_ad_ids(
         if "Ad ID" not in df.columns:
             os.remove(file_path)
             raise HTTPException(status_code=400, detail="Excel file must have an 'Ad ID' column")
-        ad_count = len(df)
+        ad_count = df["Ad ID"].nunique()  # Count unique IDs, not raw rows (input may have duplicates)
     except Exception as e:
         if os.path.exists(file_path):
             os.remove(file_path)
         raise HTTPException(status_code=400, detail=f"Invalid Excel file: {str(e)}")
-    
+
     # Use credentials from config.ini (strip whitespace)
     client_id = config.db_api_client_id.strip()
     client_secret = config.db_api_client_secret.strip()

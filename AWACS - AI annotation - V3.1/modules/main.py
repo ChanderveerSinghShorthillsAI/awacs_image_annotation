@@ -232,6 +232,7 @@ def run_parallel_ai(workers=10, high_accuracy=False, use_vision_v2=False):
     # Merge Logs
     from ai_tool import utils
     utils.merge_worker_logs(run_ts)
+    utils.merge_thought_logs(run_ts)
     
     print("\nRUN COMPLETED!")
     input("Press Enter...")

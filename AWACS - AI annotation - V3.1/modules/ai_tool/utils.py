@@ -6,6 +6,7 @@ from datetime import datetime, timedelta
 from .config_loader import config
 
 LOG_FILE = ""
+THOUGHT_LOG_FILE = ""
 
 def initialize_logging(run_ts: str, worker_id: int = 0):
     """
@@ -247,3 +248,89 @@ def generate_session_reports(key_usage_stats_data, token_usage_stats, run_ts, wo
 
     except Exception as e:
         log_msg(f"⚠️ Could not save Excel session report. Error: {e}", worker_id)
+
+
+# ============================================================
+# THOUGHT SUMMARY LOGGING
+# ============================================================
+
+def initialize_thought_log(run_ts: str, worker_id: int = 0):
+    """
+    Creates the per-worker thought summary log file.
+    Call this right after initialize_logging() in each worker.
+    """
+    global THOUGHT_LOG_FILE
+    try:
+        os.makedirs(config.log_dir, exist_ok=True)
+        filename = f"thoughts_{run_ts}_worker_{worker_id:02d}.txt"
+        THOUGHT_LOG_FILE = os.path.join(config.log_dir, filename)
+        with open(THOUGHT_LOG_FILE, 'w', encoding='utf-8') as f:
+            f.write(f"================================================================\n")
+            f.write(f"THOUGHT SUMMARIES LOG - Worker {worker_id}\n")
+            f.write(f"Run ID: {run_ts}\n")
+            f.write(f"Start Time: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
+            f.write(f"================================================================\n\n")
+    except Exception as e:
+        print(f"WARNING: Failed to initialize thought log. Error: {e}")
+
+def save_thought_entry(ad_id: str, breadcrumb: str, thought_text: str,
+                       answer_text: str, model_name: str, worker_id: int = 0):
+    """
+    Appends one thought summary block to the worker's thought log file.
+    Each entry contains the ad ID, breadcrumb, model's reasoning, and final answer.
+    """
+    if not THOUGHT_LOG_FILE or not thought_text:
+        return
+    try:
+        timestamp = datetime.now().strftime("%H:%M:%S")
+        with open(THOUGHT_LOG_FILE, "a", encoding="utf-8") as f:
+            f.write(f"[{timestamp}] [W-{worker_id:02d}] Ad ID: {ad_id}\n")
+            f.write(f"Model     : {model_name}\n")
+            f.write(f"Breadcrumb: {breadcrumb}\n")
+            f.write(f"{'─'*60}\n")
+            f.write(f"THOUGHT SUMMARY:\n{thought_text}\n")
+            f.write(f"{'─'*60}\n")
+            f.write(f"FINAL ANSWER:\n{answer_text}\n")
+            f.write(f"{'='*60}\n\n")
+    except Exception:
+        pass  # Fail silently like log_msg
+
+def merge_thought_logs(run_ts: str):
+    """
+    Combines all per-worker 'thoughts_{run_ts}_worker_*.txt' files
+    into a single 'MASTER_THOUGHTS_{run_ts}.txt'.
+    """
+    master_path = os.path.join(config.log_dir, f"MASTER_THOUGHTS_{run_ts}.txt")
+    pattern = os.path.join(config.log_dir, f"thoughts_{run_ts}_worker_*.txt")
+    worker_files = sorted(glob.glob(pattern))
+
+    if not worker_files:
+        return
+
+    print(f"\n💭 Merging {len(worker_files)} thought log(s) into Master Thought Log...")
+
+    try:
+        with open(master_path, 'w', encoding='utf-8') as master:
+            master.write(f"================================================================\n")
+            master.write(f"MASTER THOUGHT SUMMARIES - RUN ID: {run_ts}\n")
+            master.write(f"Merged at: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
+            master.write(f"================================================================\n\n")
+
+            for wf in worker_files:
+                w_name = os.path.basename(wf).replace(f"thoughts_{run_ts}_", "").replace(".txt", "")
+                master.write(f"\n{'='*20} {w_name.upper()} {'='*20}\n")
+                try:
+                    with open(wf, 'r', encoding='utf-8') as f:
+                        master.write(f.read())
+                except Exception as e:
+                    master.write(f"\n[ERROR READING FILE: {wf} - {e}]\n")
+                master.write("\n")
+
+        for wf in worker_files:
+            try: os.remove(wf)
+            except: pass
+
+        print(f"✅ Master Thought Log saved: {os.path.basename(master_path)}")
+
+    except Exception as e:
+        print(f"❌ Error merging thought logs: {e}")

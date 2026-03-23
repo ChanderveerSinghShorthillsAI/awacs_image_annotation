@@ -51,6 +51,10 @@ def load_config():
         
         # Mosaic Image Saving
         config.save_mosaic_images = config_parser.getboolean('Settings', 'SaveMosaicImages', fallback=False)
+        config.mosaic_batch_size = config_parser.getint('Settings', 'MosaicBatchSize', fallback=3)
+
+        # Thought Summaries
+        config.enable_thought_summaries = config_parser.getboolean('Settings', 'EnableThoughtSummaries', fallback=False)
 
         # DB API Credentials
         config.db_api_client_id = config_parser.get('DB_API', 'ClientId', fallback='')
