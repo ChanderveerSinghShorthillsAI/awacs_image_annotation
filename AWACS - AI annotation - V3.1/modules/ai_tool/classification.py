@@ -638,6 +638,74 @@ CRITICAL CLASSIFICATION RULES:
      * Bucket Truck (has a bucket/basket at the end, NOT a hook)
      * Pure Crane Truck (has crane but NO service body compartments)
      * Pure Utility Truck (has service body compartments but NO crane)
+
+4a. **CONTRACTOR TRUCK DETECTION (SERVICE BODY + STAKES + LADDER RACK):**
+   - **What is a Contractor Truck?** A Contractor Truck combines THREE elements from the Service & Utility family:
+     * **Tool box compartments** on the sides (like a Utility/Service Truck body)
+     * **Stakes/slats** — vertical removable posts or rails along the rear section of the bed (like a Stake Bed)
+     * **Ladder rack structure** — an overhead rack/frame above the rear bed area, forming a roof-like structure over the stake section
+   - **Formula: Service Body (tool compartments) + Stake Sides + Overhead Ladder Rack = Contractor Truck**
+   - **Key Visual Cues:**
+     * Front portion of the body has enclosed tool compartments/cabinets on both sides (service body)
+     * Rear portion has an OPEN bed section with vertical stakes/slats forming the side walls
+     * Above the rear open section, a ladder-style rack/frame spans overhead (looks like a roof structure made of bars/rails)
+     * The combination of enclosed front + open-staked rear + overhead rack is the hallmark
+   - **IMPORTANT:** ALL THREE elements must be present. If you see:
+     * Tool compartments + crane with hook (NO stakes) → Mechanics Truck
+     * Tool compartments ONLY (NO stakes, NO overhead rack) → Utility Truck - Service Truck
+     * Stakes ONLY on a flatbed (NO service body compartments) → Stake Bed / Flatbed Truck
+     * Ladder rack on a utility body (NO stakes) → still Utility Truck - Service Truck (ladder racks alone don't make it a Contractor Truck)
+   - **DO NOT confuse with:**
+     * Utility Truck - Service Truck (has compartments but NO stake section at rear)
+     * Stake Bed (has stakes on a flatbed but NO service body compartments)
+     * Flatbed Truck with accessories (visible flat bed surface → Flatbed Truck, not Contractor)
+
+4b. **SAW BODY TRUCK DETECTION (ELONGATED UTILITY BODY + REAR LIFTGATE):**
+   - **What is a Saw Body?** A Saw Body is an ELONGATED version of a Utility/Service Truck that ALWAYS has a liftgate at the rear.
+   - **Formula: Extended-Length Service Body (tool compartments on sides) + Rear Liftgate = Saw Body**
+   - **Key Visual Cues:**
+     * Tool box compartments/cabinets on both sides of the body (like a Utility Truck)
+     * The body is NOTICEABLY LONGER than a standard utility truck — the compartmented section extends significantly further back
+     * A **liftgate** (hydraulic fold-down platform) is ALWAYS present at the rear — this is MANDATORY for Saw Body classification
+     * The overall truck appears longer and has a larger service body compared to a standard Utility Truck
+   - **Size Comparison:** A standard Utility Truck body is typically 8-11 feet. A Saw Body is typically 12-16+ feet long — visually the compartment section extends much further behind the cab.
+   - **MANDATORY REQUIREMENTS (BOTH must be present):**
+     * ✅ Elongated/extended service body with tool compartments (longer than typical utility truck)
+     * ✅ Liftgate at the rear (hydraulic fold-down platform visible at the back)
+   - **If liftgate is NOT present → it is NOT a Saw Body** (classify as Utility Truck - Service Truck instead)
+   - **If body length is standard/short → it is NOT a Saw Body** (classify as Utility Truck - Service Truck instead)
+   - **DO NOT confuse with:**
+     * Standard Utility Truck - Service Truck (shorter body, no liftgate)
+     * Contractor Truck (has stakes at rear, not a liftgate)
+     * Box Truck (enclosed cargo box, not open-top service body with compartments)
+
+4c. **PLUMBER SERVICE TRUCK DETECTION (VAN/TRUCK WITH PLUMBING IDENTIFIERS):**
+   - **What is a Plumber Service Truck?** A van or service truck specifically equipped for plumbing work. This is a RARE category.
+   - **Key Visual Cues (ANY of these qualify):**
+     * **PVC pipe tubes/racks** mounted externally on the vehicle (roof, sides, or rear) — cylindrical tubes designed to carry pipes/tubing
+     * **"Plumber" or "Plumbing" text/branding** visible on the vehicle body (e.g., "Jim The Plumber", "ABC Plumbing Services")
+     * The vehicle is typically a cargo van (Ford E-Series, Chevrolet Express, etc.) or a service truck body with plumbing-specific branding
+   - **IMPORTANT:** The PRIMARY identifier is visible plumbing-related text/branding on the vehicle OR PVC pipe carrier tubes. Without at least one of these, do NOT classify as Plumber Service Truck.
+   - **Base vehicle types:** Can be a Van, Cargo Van, or Utility Truck - Service Truck with plumbing branding/equipment
+   - **Classification:** If plumbing identifiers are present, classify as 'Plumber Service Truck' as the primary category. Do NOT additionally add the base vehicle type (Van, Cargo Van, etc.) — Plumber Service Truck already implies the base type.
+   - **DO NOT confuse with:**
+     * Regular Cargo Van or Van (no plumbing branding or PVC pipe racks)
+     * Utility Truck - Service Truck (general service body without plumbing-specific identifiers)
+
+4d. **CABLE SCRAPPER - CABLE PULLER DETECTION (CABLE UNINSTALLATION TRUCK):**
+   - **What is a Cable Scrapper - Cable Puller?** A specialized truck used to uninstall/pull cable. This is a RARE category.
+   - **Key Visual Cues:**
+     * A **large cable reel/spool** mounted on the truck (either on the bed or on a dedicated frame) — this is the primary identifier
+     * Cable pulling/winding equipment — mechanical devices for spooling/unspooling cable
+     * May have a boom or guide arm to direct cable onto the reel
+     * The truck is purpose-built for cable removal/recovery operations
+   - **IMPORTANT:** The cable reel/spool is the PRIMARY visual identifier. Without visible cable handling equipment (reels, spools, pulling mechanisms), do NOT classify as Cable Scrapper - Cable Puller.
+   - **DO NOT confuse with:**
+     * Bucket Truck - Boom Truck (has a personnel bucket, used for overhead line WORK, not cable pulling/removal)
+     * Digger Derrick (has a digging auger, used for pole installation)
+     * Utility Truck - Service Truck (general service body without cable equipment)
+     * Winch Truck (general winching, not specifically cable pulling with reels)
+
 5. **BOX TRUCK vs DRY VAN DETECTION (SIZE-BASED DISTINCTION):**
    - **The ONLY difference between Box Truck and Dry Van is the SIZE of the cargo box:**
      * **Box Truck - Straight Truck**: Cargo box is SMALLER than 20 feet (under 6 meters)
@@ -651,46 +719,48 @@ CRITICAL CLASSIFICATION RULES:
    - **Quick Visual Test:** If the box looks like it could fit in a residential driveway or be used for local deliveries → likely Box Truck. If it looks like a long-haul commercial vehicle → likely Dry Van.
    - **WHEN IN DOUBT:** Use the cab-to-box ratio. If box is noticeably more than 2.5x cab length, classify as Dry Van.
 
-5a. **🚨 BOX TRUCK vs CUTAWAY CUBE VAN (CRITICAL - HIERARCHY RULE):**
-   - **⚠️ THIS IS A CRITICAL CLASSIFICATION PRIORITY RULE!**
-   - **"Box Truck - Straight Truck" is the PRIMARY body type category**
-   - **"Cutaway Cube Van" is a SECONDARY/MODIFIER category that describes the CHASSIS TYPE only**
-   
-   **🚨 HIERARCHY RULE (MUST FOLLOW):**
-   - If you see a truck with a rectangular cargo box attached to a cab → The PRIMARY category is **ALWAYS "Box Truck - Straight Truck"**
-   - "Cutaway Cube Van" should ONLY be added as a SECONDARY category IF you can clearly see a pass-through door/opening from the cab to the cargo box
-   
+5a. **🚨 CUTAWAY CUBE VAN (SECONDARY/MODIFIER CATEGORY):**
+   - **⚠️ "Cutaway Cube Van" is ALWAYS a SECONDARY/MODIFIER category — NEVER standalone!**
+   - **It describes a CHASSIS TYPE where there is a pass-through door/opening from the cab to the cargo area.**
+
    **What is a Cutaway Cube Van?**
-   - It is a Box Truck built on a VAN CHASSIS (like Ford E-Series, Chevrolet Express, etc.)
-   - The KEY FEATURE is a visible PASS-THROUGH DOOR/OPENING from the cab to the cargo area
+   - A vehicle built on a VAN CHASSIS (like Ford E-Series, Chevrolet Express, etc.) with a pass-through door/opening from the cab to the cargo area
    - The driver can walk from the cab into the cargo box without exiting the vehicle
-   
-   **🚨 CRITICAL CLASSIFICATION RULES:**
-   1. **NEVER output "Cutaway Cube Van" as the ONLY category** - it is NOT a standalone primary category
-   2. **ALWAYS output "Box Truck - Straight Truck" FIRST as the primary category**
-   3. **ONLY add "Cutaway Cube Van" as a SECOND category IF you can see the pass-through feature**
-   4. **If you cannot see the pass-through door clearly → Default to "Box Truck - Straight Truck" ONLY**
-   
-   **CORRECT OUTPUT FORMAT:**
-   - If pass-through IS visible: 
-     1. Box Truck - Straight Truck (95%)
-     2. Cutaway Cube Van (90%)
-   - If pass-through is NOT visible or unclear:
-     1. Box Truck - Straight Truck (95%)
-   
+   - The KEY FEATURE is a visible PASS-THROUGH DOOR/OPENING between cab and cargo area
+
+   **🚨 HIERARCHY RULE (MUST FOLLOW):**
+   - "Cutaway Cube Van" can pair with **Box Truck**, **Cargo Van**, or **Stepvan** as the PRIMARY category
+   - **NEVER output "Cutaway Cube Van" as the ONLY category** — it MUST always accompany a primary body type
+   - **ONLY add "Cutaway Cube Van" IF you can clearly see the pass-through door/opening**
+
+   **When Cutaway Cube Van applies:**
+   - **With Box Truck:** ~80% of Box Trucks on van chassis have the cutaway feature
+     * 1. Box Truck - Straight Truck (95%)
+     * 2. Cutaway Cube Van (90%)
+     * ⚠️ **DO NOT add "Van" here** — Box Truck is the primary category, NOT a van subtype. "Van" only pairs with Van Family subtypes (Cargo Van, Passenger Van, etc.)
+   - **With Cargo Van:** ~80% of Cargo Vans are cutaway cube vans (door between cab and cargo area)
+     * 1. Cargo Van (95%)
+     * 2. Van (95%)
+     * 3. Cutaway Cube Van (90%)
+   - **With Stepvan:** ~95% of Step Vans are cutaway cube vans AND 99% are Duallys
+     * **🚨 HARD RULE: ALWAYS output Dually (never Van) for Stepvan + Cutaway Cube Van**
+     * 1. Stepvan (95%) → 2. Cutaway Cube Van (90%) → 3. Dually (90%)
+     * ❌ NEVER output Van as third category for Stepvan + Cutaway Cube Van
+
    **INCORRECT OUTPUT (NEVER DO THIS):**
-   ❌ 1. Cutaway Cube Van (95%)  ← WRONG! Must always have Box Truck first!
-   ❌ 1. Cutaway Cube Van (95%)
-      2. Box Truck - Straight Truck (85%)  ← WRONG ORDER! Box Truck must be PRIMARY!
-   
+   ❌ 1. Cutaway Cube Van (95%)  ← WRONG! Must always have a primary category first!
+   ❌ 1. Box Truck - Straight Truck (95%)
+      2. Cutaway Cube Van (90%)
+      3. Van (95%)  ← WRONG! Box Truck is NOT a van — do NOT add Van here!
+
    **Visual Cues for Pass-Through (Cutaway feature):**
    - A door or opening visible between the cab and cargo box
    - The cab and box appear more "integrated" rather than separate
    - The driver can access the cargo area from inside the cab
    - Common on delivery trucks where drivers need quick access to packages
-   
+
    **When in Doubt:**
-   - If you're unsure whether it's a Cutaway → Output ONLY "Box Truck - Straight Truck"
+   - If you're unsure whether it's a Cutaway → Do NOT add "Cutaway Cube Van"
    - The pass-through feature must be CLEARLY VISIBLE to add "Cutaway Cube Van"
 
 6. **DUALLY DETECTION (CRITICAL - ALWAYS CHECK):**
@@ -1417,6 +1487,111 @@ CRITICAL CLASSIFICATION RULES:
    - **STEP 2:** Within those groups, classify to the specific categories.
    - **REMEMBER:** Output the best matching categories regardless of which Super-Group they belong to. Cross-group combinations are valid and expected.
 
+13. **VAN FAMILY CLASSIFICATION (CRITICAL - FOLLOW THESE RULES):**
+
+   **⚠️ MANDATORY BASE CATEGORY RULE:** For ALL Van Family subtypes (Cargo Van, Passenger Van, Crew Van, Step Van, Mobility Van), you MUST ALWAYS also output "Van" as an additional category. "Van" is the base/parent category that accompanies every Van Family classification.
+
+   **Van Family Members & Identification:**
+
+   **A. Cargo Van:**
+   - A van with NO rear passenger seats — the rear compartment behind the front two seats is EMPTY cargo space, used for transporting goods/supplies.
+   - **Key Visual Cues:**
+     * Empty rear compartment with flat cargo floor (no seats behind the front row)
+     * Bare metal walls/panels visible in the cargo area
+     * Often has no rear side windows (solid panel sides) — but some have small windows
+     * May have shelving, racking, or partitions installed for commercial use
+   - **~80% of Cargo Vans are also Cutaway Cube Vans** — if you see a pass-through door/opening between the cab and the rear cargo area, add "Cutaway Cube Van" as an additional category.
+   - **ALWAYS output "Van" alongside "Cargo Van".**
+   - **Example output (Cargo Van with cutaway feature):**
+     1. Cargo Van (95%)
+     2. Van (95%)
+     3. Cutaway Cube Van (90%)
+   - **Example output (Cargo Van without cutaway):**
+     1. Cargo Van (95%)
+     2. Van (95%)
+
+   **B. Passenger Van:**
+   - A van with MULTIPLE rows of passenger seating in the rear compartment (typically 7-15 seats total).
+   - **Key Visual Cues:**
+     * Multiple rows of seats visible in the rear compartment
+     * **Side windows on the rear section** — passenger vans have windows along the sides for passengers (this is a KEY differentiator from Cargo Van which has solid panels)
+     * If interior is not visible, the presence of rear side windows strongly suggests Passenger Van
+   - **ALWAYS output "Van" alongside "Passenger Van".**
+   - **Example output:**
+     1. Passenger Van (95%)
+     2. Van (95%)
+
+   **C. Step Van:**
+   - A FedEx/UPS/Amazon-style delivery van, characterized by STEPS leading up to the driver's seat at the front.
+   - **Key Visual Cues:**
+     * Steps/stairs visible at the driver's entry point (PRIMARY identifier)
+     * Larger boxy body compared to a standard cargo van
+     * Walk-in cargo area — the driver can stand up and walk inside
+     * Often has a roll-up rear door
+     * Flat-front or cab-forward design
+   - **~95% of Step Vans are also Cutaway Cube Vans** — almost always add "Cutaway Cube Van" as an additional category.
+   - **🚨🚨🚨 HARD RULE — STEPVAN + CUTAWAY CUBE VAN → ALWAYS OUTPUT DUALLY (NOT VAN) 🚨🚨🚨**
+     * **This is a NON-NEGOTIABLE rule: When you classify a vehicle as Stepvan + Cutaway Cube Van, the third category is ALWAYS "Dually" — NEVER "Van".**
+     * 99% of Stepvan + Cutaway Cube Van combinations are Duallys. This is a statistical certainty confirmed by manual QA.
+     * **DO NOT attempt to verify Dually visually for Stepvans** — just output Dually automatically whenever Stepvan + Cutaway Cube Van are present.
+     * **DO NOT output "Van" for Stepvan + Cutaway Cube Van under ANY circumstance** — even if you think you see single rear tires, the data shows 99% are Duallys.
+     * "Van" and "Dually" are MUTUALLY EXCLUSIVE for this combo. The answer is ALWAYS Dually.
+   - **THE ONLY CORRECT OUTPUT for Stepvan + Cutaway Cube Van:**
+     1. Stepvan (95%)
+     2. Cutaway Cube Van (90%)
+     3. Dually (90%)
+   - **❌ WRONG — NEVER DO THIS:**
+     ❌ 1. Stepvan (95%)
+     ❌ 2. Cutaway Cube Van (90%)
+     ❌ 3. Van (95%)  ← WRONG! Must be Dually, not Van!
+
+   **D. Crew Van (RARE):**
+   - A combination of Passenger Van + Cargo Van: has ONE row of rear seats PLUS remaining empty cargo space behind those seats.
+   - **Key Visual Cues:**
+     * One row of passenger seats behind the front seats (NOT multiple rows like Passenger Van)
+     * Empty cargo space visible BEHIND the single rear seat row
+     * Essentially a "half passenger, half cargo" configuration
+   - **ALWAYS output "Van" alongside "Crew Van".**
+   - **Example output:**
+     1. Crew Van (95%)
+     2. Van (95%)
+
+   **E. Moving Van:**
+   - **NOT a standalone van body type** — Moving Van is a SECONDARY category that applies to **Box Truck** or **Dry Van** ONLY.
+   - **The defining feature:** Presence of a slide-out ramp OR liftgate on the back end, designed for loading/unloading household belongings.
+   - **🚨 DO NOT confuse a rear step bumper/footstand with a liftgate:**
+     * A **liftgate** is a LARGE hydraulic platform that folds up/down to lift heavy items to truck bed height. It is wide (nearly full width of the truck) and has a flat lifting surface.
+     * A **rear step bumper/footstand** is a SMALL narrow metal step or platform at the very bottom of the rear — it is just for a person to step on when opening doors. It does NOT lift anything.
+     * A **slide-out ramp** is a long ramp that slides out from under the cargo floor for wheeling items in/out.
+     * ❌ A small rear step bumper or footstand is NOT a liftgate — do NOT classify as Moving Van just because of a step bumper.
+   - **ONLY output "Moving Van" alongside "Box Truck - Straight Truck" or "Dry Van" — NEVER as a standalone category or with other van types.**
+   - **Example output:**
+     1. Box Truck - Straight Truck (95%)
+     2. Moving Van (90%)
+
+   **F. Mobility Van (RARE):**
+   - A van specially equipped to accommodate wheelchairs.
+   - **Key Visual Cues:**
+     * Wheelchair ramp or lift visible (PRIMARY identifier)
+     * Lowered floor or modified entry for wheelchair access
+     * Accessibility equipment or modifications visible
+   - **🚨 Mobility Van is MUTUALLY EXCLUSIVE with Passenger Van and Cargo Van.** A Mobility Van may have seats or windows, but the wheelchair accommodation is the defining feature — do NOT additionally output Passenger Van or Cargo Van.
+   - **ALWAYS output "Van" alongside "Mobility Van". ONLY "Van" — no other Van subtypes.**
+   - **Example output:**
+     1. Mobility Van (95%)
+     2. Van (95%)
+
+   **🚨 VAN FAMILY DO-NOT RULES:**
+   - ❌ **DO NOT output any Van Family subtype WITHOUT also outputting "Van"** (except Moving Van which pairs with Box Truck/Dry Van instead, and except Stepvan+Cutaway which gets Dually instead of Van)
+   - ❌ **DO NOT EVER output "Van" for Stepvan + Cutaway Cube Van** — ALWAYS output "Dually" instead. This is a hard rule with zero exceptions.
+   - ❌ **DO NOT output "Passenger Van" or "Cargo Van" alongside "Mobility Van"** — Mobility Van already implies the base van type; wheelchair accommodation overrides passenger/cargo classification
+   - ❌ **DO NOT confuse Cargo Van (empty rear) with Passenger Van (seats in rear)** — check for rear side windows if interior is not visible
+   - ❌ **DO NOT classify a Crew Van as Passenger Van** — Crew Van has only ONE rear seat row plus cargo space; Passenger Van has MULTIPLE rear seat rows filling the compartment
+   - ❌ **DO NOT output "Moving Van" as a standalone category** — it ONLY pairs with Box Truck or Dry Van
+   - ❌ **DO NOT classify a regular Box Truck as a Step Van** — Step Van has visible entry steps at the front; a regular Box Truck does not
+   - ❌ **DO NOT output "Van" alongside "Box Truck - Straight Truck" + "Cutaway Cube Van"** — Box Truck is NOT a Van Family subtype. "Van" only accompanies Van Family subtypes (Cargo Van, Passenger Van, Crew Van, Mobility Van). Box Truck + Cutaway Cube Van = just those two categories, no Van.
+   - ❌ **DO NOT classify a rear step bumper/footstand as a liftgate** — a small metal step at the bottom rear is NOT a liftgate. Only a large hydraulic lifting platform or slide-out ramp qualifies for Moving Van.
+
 
 OUTPUT FORMAT INSTRUCTIONS:
 - **ONLY** return the numbered list of categories with confidence scores.
@@ -1433,6 +1608,24 @@ OUTPUT FORMAT INSTRUCTIONS:
  Example:
   1. Flatbed Truck (95%)
   2. Stake Bed (90%)
+- For Van Family subtypes, ALWAYS include "Van" as an additional category:
+ Example (Cargo Van):
+  1. Cargo Van (95%)
+  2. Van (95%)
+ Example (Cargo Van + Cutaway):
+  1. Cargo Van (95%)
+  2. Van (95%)
+  3. Cutaway Cube Van (90%)
+ Example (Passenger Van):
+  1. Passenger Van (95%)
+  2. Van (95%)
+ Example (Stepvan + Cutaway — ALWAYS Dually, never Van):
+  1. Stepvan (95%)
+  2. Cutaway Cube Van (90%)
+  3. Dually (90%)
+ Example (Moving Van - pairs with Box Truck, NOT Van):
+  1. Box Truck - Straight Truck (95%)
+  2. Moving Van (90%)
 - Example Output:
   1. Pickup Truck (98%)
   2. Flatbed Truck (15%)

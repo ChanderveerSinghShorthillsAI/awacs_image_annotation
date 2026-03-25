@@ -145,37 +145,37 @@
         "super_group": "Dump & Flatbed Family"
     },
     "Van": {
-        "definition": "A catchall category that can encompass just about any style of van",
+        "definition": "A catchall base category for any style of van. This category should ALWAYS be output alongside any Van Family subtype (Cargo Van, Passenger Van, Crew Van, Stepvan, Mobility Van).",
         "image_base64": "",
         "super_group": "Van Family"
     },
     "Cargo Van": {
-        "definition": "A van with no seats in the back allowing it to be loaded with supplies",
+        "definition": "A van with no rear passenger seats — the rear compartment behind the front two seats is empty cargo space used for transporting goods/supplies. Often has solid panel sides (no rear windows). ~80% of cargo vans are also cutaway cube vans with a pass-through door between cab and cargo area. Always output Van alongside Cargo Van.",
         "image_base64": "",
         "super_group": "Van Family"
     },
     "Passenger Van": {
-        "definition": "A van completely full of seating rows to transport as many passengers as possible",
+        "definition": "A van with multiple rows of passenger seating in the rear compartment (typically 7-15 seats total). Key identifier: side windows on the rear section for passengers (differentiates from Cargo Van which has solid panels). If interior is not visible, rear side windows strongly suggest Passenger Van. Always output Van alongside Passenger Van.",
         "image_base64": "",
         "super_group": "Van Family"
     },
     "Crew Van": {
-        "definition": "A van with one row of rear seats, then a cargo area behind those seats, allowing for transportation of a small crew and some limited supplies",
+        "definition": "A rare van combining passenger and cargo: has ONE row of rear seats plus remaining empty cargo space behind those seats. Essentially half passenger, half cargo configuration. Not to be confused with Passenger Van which has multiple full rows of seats. Always output Van alongside Crew Van.",
         "image_base64": "",
         "super_group": "Van Family"
     },
     "Moving Van": {
-        "definition": "A van specifically designed for moving personal belongings from one residence to another.  The defining feature of a Moving Van is the presence of either a slide out ramp or liftgate on the back end.",
+        "definition": "A secondary category that applies ONLY to Box Truck or Dry Van. The defining feature is the presence of either a slide-out ramp or liftgate on the back end, designed for moving personal belongings. NEVER output as standalone — always pairs with Box Truck - Straight Truck or Dry Van as the primary category.",
         "image_base64": "",
         "super_group": "Van Family"
     },
     "Stepvan": {
-        "definition": "A Fedex/UPS/Amazon van, characterized by the steps leading to the driver’s seat",
+        "definition": "A FedEx/UPS/Amazon-style delivery van characterized by steps/stairs leading up to the driver seat at the front. Has a larger boxy body than standard cargo vans with walk-in cargo area. ~95% are also cutaway cube vans. Always output Van alongside Stepvan.",
         "image_base64": "",
         "super_group": "Van Family"
     },
     "Mobility Van": {
-        "definition": "A van that has been specially equipped to accommodate wheelchairs",
+        "definition": "A rare van specially equipped to accommodate wheelchairs. Key identifier: wheelchair ramp or lift visible, lowered floor or modified entry for wheelchair access. Always output Van alongside Mobility Van.",
         "image_base64": "",
         "super_group": "Van Family"
     },
@@ -185,7 +185,7 @@
         "super_group": "Box & Cargo Family"
     },
     "Cutaway Cube Van": {
-        "definition": "A cargo van/box truck with a door that goes from the cargo area into the cab",
+        "definition": "A secondary/modifier category describing a van chassis with a pass-through door/opening from the cab to the cargo area. NEVER standalone — always pairs with a primary category (Box Truck, Cargo Van, or Stepvan). The key feature is the visible door/opening allowing the driver to walk from cab into cargo area.",
         "image_base64": "",
         "super_group": "Van Family"
     },
