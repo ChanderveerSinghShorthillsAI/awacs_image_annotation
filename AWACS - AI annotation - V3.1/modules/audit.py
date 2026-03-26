@@ -231,6 +231,10 @@ def run_audit():
         failures["Mismatch Pattern"] = "AI: [" + failures["AI Categories"] + "] vs Manual: [" + failures["Manual Categories"] + "]"
         hall_of_shame = failures["Mismatch Pattern"].value_counts().reset_index()
         hall_of_shame.columns = ["Mismatch Scenario", "Count"]
+        # Add Ad IDs column showing which ads caused each mismatch
+        ad_ids_per_pattern = failures.groupby("Mismatch Pattern")["Ad ID"].apply(lambda x: ", ".join(x)).reset_index()
+        ad_ids_per_pattern.columns = ["Mismatch Scenario", "Ad IDs"]
+        hall_of_shame = hall_of_shame.merge(ad_ids_per_pattern, on="Mismatch Scenario", how="left")
     else:
         hall_of_shame = pd.DataFrame([{"Message": "No Rejections!"}])
 
