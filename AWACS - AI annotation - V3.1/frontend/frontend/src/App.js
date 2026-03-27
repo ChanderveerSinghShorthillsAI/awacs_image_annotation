@@ -1483,6 +1483,10 @@ const AuditSection = () => {
 
 // DB Update Section Component
 const DBUpdateSection = () => {
+  // Sub-tab state
+  const [subTab, setSubTab] = useState('ai');
+
+  // ── AI Annotated tab state (existing, unchanged) ──
   const [updateFile, setUpdateFile] = useState(null);
   const [clientSecret, setClientSecret] = useState('');
   const [isUpdating, setIsUpdating] = useState(false);
@@ -1493,7 +1497,17 @@ const DBUpdateSection = () => {
   const [showDetails, setShowDetails] = useState(false);
   const fileInputRef = useRef(null);
 
-  // Load DB Update config on mount
+  // ── Manual QA tab state (independent) ──
+  const [mqFile, setMqFile] = useState(null);
+  const [mqClientSecret, setMqClientSecret] = useState('');
+  const [mqIsUpdating, setMqIsUpdating] = useState(false);
+  const [mqUpdateResult, setMqUpdateResult] = useState(null);
+  const [mqError, setMqError] = useState(null);
+  const [mqDragActive, setMqDragActive] = useState(false);
+  const [mqShowDetails, setMqShowDetails] = useState(false);
+  const mqFileInputRef = useRef(null);
+
+  // Load DB Update config on mount (shared by both tabs)
   useEffect(() => {
     fetch(`${API_BASE}/api/db-update-config`)
       .then(res => res.json())
@@ -1501,6 +1515,7 @@ const DBUpdateSection = () => {
       .catch(err => console.error('Failed to fetch DB Update config:', err));
   }, []);
 
+  // ── AI Annotated tab handlers (existing, unchanged) ──
   const canUpdate = updateFile && !isUpdating;
 
   const handleDrag = (e) => {
@@ -1580,216 +1595,541 @@ const DBUpdateSection = () => {
     setShowDetails(false);
   };
 
+  // ── Manual QA tab handlers ──
+  const mqCanUpdate = mqFile && !mqIsUpdating;
+
+  const handleMqDrag = (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    if (e.type === 'dragenter' || e.type === 'dragover') {
+      setMqDragActive(true);
+    } else if (e.type === 'dragleave') {
+      setMqDragActive(false);
+    }
+  };
+
+  const handleMqDrop = (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setMqDragActive(false);
+    if (e.dataTransfer.files && e.dataTransfer.files[0]) {
+      setMqFile(e.dataTransfer.files[0]);
+      setMqUpdateResult(null);
+      setMqError(null);
+    }
+  };
+
+  const handleMqFileChange = (e) => {
+    if (e.target.files && e.target.files[0]) {
+      setMqFile(e.target.files[0]);
+      setMqUpdateResult(null);
+      setMqError(null);
+    }
+  };
+
+  const handleMqUpdate = async () => {
+    if (!mqCanUpdate) return;
+
+    setMqIsUpdating(true);
+    setMqError(null);
+    setMqUpdateResult(null);
+
+    try {
+      const formData = new FormData();
+      formData.append('file', mqFile);
+      if (mqClientSecret) {
+        formData.append('client_secret', mqClientSecret);
+      }
+
+      const res = await fetch(`${API_BASE}/api/manual-qa-update`, {
+        method: 'POST',
+        body: formData
+      });
+
+      if (!res.ok) {
+        let errorMessage = `Manual QA Update failed with status ${res.status}`;
+        try {
+          const errData = await res.json();
+          if (errData.detail) errorMessage = errData.detail;
+        } catch (_) {
+          // Response was not JSON (e.g. proxy error page) — use default message
+        }
+        throw new Error(errorMessage);
+      }
+
+      const data = await res.json();
+      setMqUpdateResult(data);
+
+    } catch (err) {
+      setMqError(err.message);
+    } finally {
+      setMqIsUpdating(false);
+    }
+  };
+
+  const handleMqReset = () => {
+    setMqFile(null);
+    setMqUpdateResult(null);
+    setMqError(null);
+    setMqClientSecret('');
+    setMqShowDetails(false);
+  };
+
   return (
     <div className="db-update-section">
-      {!updateResult && (
+      {/* Sub-tab switcher */}
+      <div className="db-update-subtabs">
+        <button
+          className={`db-update-subtab-btn ${subTab === 'ai' ? 'active' : ''}`}
+          onClick={() => setSubTab('ai')}
+        >
+          AI Annotated
+        </button>
+        <button
+          className={`db-update-subtab-btn ${subTab === 'manualqa' ? 'active' : ''}`}
+          onClick={() => setSubTab('manualqa')}
+        >
+          Manual QA
+        </button>
+      </div>
+
+      {/* ══════════════════════════════════════════════════════════════ */}
+      {/* AI ANNOTATED TAB (existing content, unchanged) */}
+      {/* ══════════════════════════════════════════════════════════════ */}
+      {subTab === 'ai' && (
         <>
-          {/* File upload area */}
-          <div
-            className={`db-update-upload-zone ${dragActive ? 'drag-active' : ''} ${updateFile ? 'has-file' : ''}`}
-            onDragEnter={handleDrag}
-            onDragLeave={handleDrag}
-            onDragOver={handleDrag}
-            onDrop={handleDrop}
-            onClick={() => fileInputRef.current?.click()}
-          >
-            <input
-              ref={fileInputRef}
-              type="file"
-              accept=".xlsx,.xls"
-              onChange={handleFileChange}
-              style={{ display: 'none' }}
-            />
-            {updateFile ? (
-              <div className="db-update-file-info">
-                <span className="file-icon">📄</span>
-                <div>
-                  <p className="file-name">{updateFile.name}</p>
-                  <p className="file-size">{(updateFile.size / 1024).toFixed(1)} KB</p>
+          {!updateResult && (
+            <>
+              {/* File upload area */}
+              <div
+                className={`db-update-upload-zone ${dragActive ? 'drag-active' : ''} ${updateFile ? 'has-file' : ''}`}
+                onDragEnter={handleDrag}
+                onDragLeave={handleDrag}
+                onDragOver={handleDrag}
+                onDrop={handleDrop}
+                onClick={() => fileInputRef.current?.click()}
+              >
+                <input
+                  ref={fileInputRef}
+                  type="file"
+                  accept=".xlsx,.xls"
+                  onChange={handleFileChange}
+                  style={{ display: 'none' }}
+                />
+                {updateFile ? (
+                  <div className="db-update-file-info">
+                    <span className="file-icon">📄</span>
+                    <div>
+                      <p className="file-name">{updateFile.name}</p>
+                      <p className="file-size">{(updateFile.size / 1024).toFixed(1)} KB</p>
+                    </div>
+                    <button
+                      className="file-remove-btn"
+                      onClick={(e) => { e.stopPropagation(); setUpdateFile(null); }}
+                    >
+                      ✕
+                    </button>
+                  </div>
+                ) : (
+                  <div className="db-update-upload-prompt">
+                    <span className="upload-icon">📤</span>
+                    <p className="upload-text">
+                      {dragActive ? 'Drop your Excel file here' : 'Drag & drop AI Output Excel file here'}
+                    </p>
+                    <p className="upload-hint">or click to browse (.xlsx, .xls)</p>
+                  </div>
+                )}
+              </div>
+
+              {/* Client Secret input */}
+              <div className="db-update-credentials">
+                <div className="form-group">
+                  <label>
+                    Client Secret
+                    {dbUpdateConfig?.has_secret && (
+                      <span className="config-hint"> (configured in config.ini)</span>
+                    )}
+                  </label>
+                  <input
+                    type="password"
+                    value={clientSecret}
+                    onChange={(e) => setClientSecret(e.target.value)}
+                    placeholder={dbUpdateConfig?.has_secret ? 'Using config.ini value (override here if needed)' : 'Enter client secret'}
+                    className="form-input"
+                  />
                 </div>
+                {dbUpdateConfig && (
+                  <div className="db-update-config-info">
+                    <p><strong>Token URL:</strong> {dbUpdateConfig.token_url || 'Not configured'}</p>
+                    <p><strong>Client ID:</strong> {dbUpdateConfig.client_id || 'Not configured'}</p>
+                  </div>
+                )}
+              </div>
+
+              {/* Update button */}
+              <div className="db-update-actions">
                 <button
-                  className="file-remove-btn"
-                  onClick={(e) => { e.stopPropagation(); setUpdateFile(null); }}
+                  className={`btn btn-db-update ${canUpdate ? '' : 'disabled'}`}
+                  onClick={handleUpdate}
+                  disabled={!canUpdate}
                 >
-                  ✕
+                  {isUpdating ? (
+                    <>
+                      <div className="btn-spinner"></div>
+                      Updating Database...
+                    </>
+                  ) : (
+                    <>
+                      <span>🔄</span> Update Database Categories
+                    </>
+                  )}
                 </button>
               </div>
-            ) : (
-              <div className="db-update-upload-prompt">
-                <span className="upload-icon">📤</span>
-                <p className="upload-text">
-                  {dragActive ? 'Drop your Excel file here' : 'Drag & drop AI Output Excel file here'}
-                </p>
-                <p className="upload-hint">or click to browse (.xlsx, .xls)</p>
-              </div>
-            )}
-          </div>
 
-          {/* Client Secret input */}
-          <div className="db-update-credentials">
-            <div className="form-group">
-              <label>
-                Client Secret
-                {dbUpdateConfig?.has_secret && (
-                  <span className="config-hint"> (configured in config.ini)</span>
-                )}
-              </label>
-              <input
-                type="password"
-                value={clientSecret}
-                onChange={(e) => setClientSecret(e.target.value)}
-                placeholder={dbUpdateConfig?.has_secret ? 'Using config.ini value (override here if needed)' : 'Enter client secret'}
-                className="form-input"
-              />
-            </div>
-            {dbUpdateConfig && (
-              <div className="db-update-config-info">
-                <p><strong>Token URL:</strong> {dbUpdateConfig.token_url || 'Not configured'}</p>
-                <p><strong>Client ID:</strong> {dbUpdateConfig.client_id || 'Not configured'}</p>
-              </div>
-            )}
-          </div>
-
-          {/* Update button */}
-          <div className="db-update-actions">
-            <button
-              className={`btn btn-db-update ${canUpdate ? '' : 'disabled'}`}
-              onClick={handleUpdate}
-              disabled={!canUpdate}
-            >
-              {isUpdating ? (
-                <>
-                  <div className="btn-spinner"></div>
-                  Updating Database...
-                </>
-              ) : (
-                <>
-                  <span>🔄</span> Update Database Categories
-                </>
+              {/* Error message */}
+              {error && (
+                <div className="audit-error">
+                  <span className="error-icon">❌</span>
+                  <span>{error}</span>
+                </div>
               )}
-            </button>
-          </div>
+            </>
+          )}
 
-          {/* Error message */}
-          {error && (
-            <div className="audit-error">
-              <span className="error-icon">❌</span>
-              <span>{error}</span>
+          {/* Results */}
+          {updateResult && (
+            <div className="db-update-results">
+              <div className="db-update-result-header">
+                <div className="result-icon">
+                  {updateResult.failed_count === 0 ? '✅' : '⚠️'}
+                </div>
+                <h3>DB Update Complete!</h3>
+              </div>
+
+              {/* Summary Stats */}
+              <div className="db-update-stats">
+                <div className="db-update-stat-card main">
+                  <div className="stat-value">{updateResult.success_count}</div>
+                  <div className="stat-label-text">Successfully Updated</div>
+                </div>
+                <div className="db-update-stat-card">
+                  <div className="stat-value red">{updateResult.failed_count}</div>
+                  <div className="stat-label-text">Failed</div>
+                </div>
+                <div className="db-update-stat-card">
+                  <div className="stat-value gray">{updateResult.skipped_count}</div>
+                  <div className="stat-label-text">Skipped</div>
+                </div>
+                <div className="db-update-stat-card">
+                  <div className="stat-value">{updateResult.total_rows}</div>
+                  <div className="stat-label-text">Total Rows</div>
+                </div>
+                {updateResult.patched_count > 0 && (
+                  <div className="db-update-stat-card" style={{ borderLeft: '3px solid #ff9800' }}>
+                    <div className="stat-value" style={{ color: '#ff9800' }}>{updateResult.patched_count}</div>
+                    <div className="stat-label-text">Patched Ads</div>
+                  </div>
+                )}
+              </div>
+
+              {/* Message */}
+              <div className="db-update-message">
+                <p>{updateResult.message}</p>
+              </div>
+
+              {/* Details toggle */}
+              {updateResult.results && updateResult.results.length > 0 && (
+                <div className="db-update-details-section">
+                  <button
+                    className="btn btn-secondary db-update-toggle-btn"
+                    onClick={() => setShowDetails(!showDetails)}
+                  >
+                    {showDetails ? '▼ Hide Details' : '▶ Show Details'} ({updateResult.results.length} ads)
+                  </button>
+
+                  {showDetails && (
+                    <div className="db-update-details-list">
+                      {updateResult.results.map((result, idx) => (
+                        <div key={idx} className={`db-update-detail-item ${result.success ? 'success' : 'failed'}`}>
+                          <span className="detail-status">{result.success ? '✅' : '❌'}</span>
+                          <span className="detail-ad-id">Ad {result.ad_id}</span>
+                          <span className="detail-categories">
+                            {result.categories && result.categories.length > 0
+                              ? result.categories.join(', ')
+                              : 'No categories'}
+                          </span>
+                          {result.error && (
+                            <span className="detail-error">{result.error}</span>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {/* Patch Summary Download */}
+              {((updateResult.patched_count > 0) || (updateResult.patches_created > 0) || (updateResult.patches_updated > 0)) && updateResult.patch_report_id && (
+                <div className="db-update-patch-download" style={{ margin: '1rem 0', padding: '1rem', background: 'rgba(255, 152, 0, 0.08)', borderRadius: '10px', border: '1px solid rgba(255, 152, 0, 0.25)' }}>
+                  <p style={{ margin: '0 0 0.75rem 0', fontSize: '0.9rem', color: '#ff9800' }}>
+                    🩹 <strong>{updateResult.patches_created} patch(es) created, {updateResult.patches_updated} updated{updateResult.patches_failed > 0 ? `, ${updateResult.patches_failed} failed` : ''}.</strong> Download the patch summary for the data team to review.
+                  </p>
+                  <button
+                    className="btn"
+                    onClick={() => {
+                      window.open(`${API_BASE}/api/db-update/patch-report/${updateResult.patch_report_id}/download`, '_blank');
+                    }}
+                    style={{
+                      background: 'linear-gradient(135deg, #ff9800, #f57c00)',
+                      color: '#fff',
+                      border: 'none',
+                      padding: '0.6rem 1.25rem',
+                      borderRadius: '8px',
+                      cursor: 'pointer',
+                      fontWeight: '600',
+                      fontSize: '0.9rem',
+                      display: 'inline-flex',
+                      alignItems: 'center',
+                      gap: '0.5rem',
+                      boxShadow: '0 2px 8px rgba(255, 152, 0, 0.3)',
+                    }}
+                  >
+                    <span>📥</span> Download Patch Summary Excel
+                  </button>
+                </div>
+              )}
+
+              {/* Action buttons */}
+              <div className="db-update-result-actions">
+                <button className="btn btn-secondary" onClick={handleReset}>
+                  <span>🔄</span> New Update
+                </button>
+              </div>
             </div>
           )}
         </>
       )}
 
-      {/* Results */}
-      {updateResult && (
-        <div className="db-update-results">
-          <div className="db-update-result-header">
-            <div className="result-icon">
-              {updateResult.failed_count === 0 ? '✅' : '⚠️'}
-            </div>
-            <h3>DB Update Complete!</h3>
-          </div>
-
-          {/* Summary Stats */}
-          <div className="db-update-stats">
-            <div className="db-update-stat-card main">
-              <div className="stat-value">{updateResult.success_count}</div>
-              <div className="stat-label-text">Successfully Updated</div>
-            </div>
-            <div className="db-update-stat-card">
-              <div className="stat-value red">{updateResult.failed_count}</div>
-              <div className="stat-label-text">Failed</div>
-            </div>
-            <div className="db-update-stat-card">
-              <div className="stat-value gray">{updateResult.skipped_count}</div>
-              <div className="stat-label-text">Skipped</div>
-            </div>
-            <div className="db-update-stat-card">
-              <div className="stat-value">{updateResult.total_rows}</div>
-              <div className="stat-label-text">Total Rows</div>
-            </div>
-            {updateResult.patched_count > 0 && (
-              <div className="db-update-stat-card" style={{ borderLeft: '3px solid #ff9800' }}>
-                <div className="stat-value" style={{ color: '#ff9800' }}>{updateResult.patched_count}</div>
-                <div className="stat-label-text">Patched Ads</div>
-              </div>
-            )}
-          </div>
-
-          {/* Message */}
-          <div className="db-update-message">
-            <p>{updateResult.message}</p>
-          </div>
-
-          {/* Details toggle */}
-          {updateResult.results && updateResult.results.length > 0 && (
-            <div className="db-update-details-section">
-              <button
-                className="btn btn-secondary db-update-toggle-btn"
-                onClick={() => setShowDetails(!showDetails)}
+      {/* ══════════════════════════════════════════════════════════════ */}
+      {/* MANUAL QA TAB (new) */}
+      {/* ══════════════════════════════════════════════════════════════ */}
+      {subTab === 'manualqa' && (
+        <>
+          {!mqUpdateResult && (
+            <>
+              {/* File upload area */}
+              <div
+                className={`db-update-upload-zone ${mqDragActive ? 'drag-active' : ''} ${mqFile ? 'has-file' : ''}`}
+                onDragEnter={handleMqDrag}
+                onDragLeave={handleMqDrag}
+                onDragOver={handleMqDrag}
+                onDrop={handleMqDrop}
+                onClick={() => mqFileInputRef.current?.click()}
               >
-                {showDetails ? '▼ Hide Details' : '▶ Show Details'} ({updateResult.results.length} ads)
-              </button>
-
-              {showDetails && (
-                <div className="db-update-details-list">
-                  {updateResult.results.map((result, idx) => (
-                    <div key={idx} className={`db-update-detail-item ${result.success ? 'success' : 'failed'}`}>
-                      <span className="detail-status">{result.success ? '✅' : '❌'}</span>
-                      <span className="detail-ad-id">Ad {result.ad_id}</span>
-                      <span className="detail-categories">
-                        {result.categories && result.categories.length > 0
-                          ? result.categories.join(', ')
-                          : 'No categories'}
-                      </span>
-                      {result.error && (
-                        <span className="detail-error">{result.error}</span>
-                      )}
+                <input
+                  ref={mqFileInputRef}
+                  type="file"
+                  accept=".xlsx,.xls"
+                  onChange={handleMqFileChange}
+                  style={{ display: 'none' }}
+                />
+                {mqFile ? (
+                  <div className="db-update-file-info">
+                    <span className="file-icon">📄</span>
+                    <div>
+                      <p className="file-name">{mqFile.name}</p>
+                      <p className="file-size">{(mqFile.size / 1024).toFixed(1)} KB</p>
                     </div>
-                  ))}
+                    <button
+                      className="file-remove-btn"
+                      onClick={(e) => { e.stopPropagation(); setMqFile(null); }}
+                    >
+                      ✕
+                    </button>
+                  </div>
+                ) : (
+                  <div className="db-update-upload-prompt">
+                    <span className="upload-icon">📤</span>
+                    <p className="upload-text">
+                      {mqDragActive ? 'Drop your Excel file here' : 'Drag & drop Manual QA Excel file here'}
+                    </p>
+                    <p className="upload-hint">or click to browse (.xlsx, .xls) — Expected columns: ad_id, dealer_id, Primary Category, Add'l Category 1, Add'l Category 2</p>
+                  </div>
+                )}
+              </div>
+
+              {/* Client Secret input */}
+              <div className="db-update-credentials">
+                <div className="form-group">
+                  <label>
+                    Client Secret
+                    {dbUpdateConfig?.has_secret && (
+                      <span className="config-hint"> (configured in config.ini)</span>
+                    )}
+                  </label>
+                  <input
+                    type="password"
+                    value={mqClientSecret}
+                    onChange={(e) => setMqClientSecret(e.target.value)}
+                    placeholder={dbUpdateConfig?.has_secret ? 'Using config.ini value (override here if needed)' : 'Enter client secret'}
+                    className="form-input"
+                  />
+                </div>
+                {dbUpdateConfig && (
+                  <div className="db-update-config-info">
+                    <p><strong>Token URL:</strong> {dbUpdateConfig.token_url || 'Not configured'}</p>
+                    <p><strong>Client ID:</strong> {dbUpdateConfig.client_id || 'Not configured'}</p>
+                  </div>
+                )}
+              </div>
+
+              {/* Update button */}
+              <div className="db-update-actions">
+                <button
+                  className={`btn btn-db-update ${mqCanUpdate ? '' : 'disabled'}`}
+                  onClick={handleMqUpdate}
+                  disabled={!mqCanUpdate}
+                >
+                  {mqIsUpdating ? (
+                    <>
+                      <div className="btn-spinner"></div>
+                      Updating Database (Manual QA)...
+                    </>
+                  ) : (
+                    <>
+                      <span>🔄</span> Update Database Categories (Manual QA)
+                    </>
+                  )}
+                </button>
+              </div>
+
+              {/* Error message */}
+              {mqError && (
+                <div className="audit-error">
+                  <span className="error-icon">❌</span>
+                  <span>{mqError}</span>
                 </div>
               )}
-            </div>
+            </>
           )}
 
-          {/* Patch Summary Download */}
-          {((updateResult.patched_count > 0) || (updateResult.patches_created > 0) || (updateResult.patches_updated > 0)) && updateResult.patch_report_id && (
-            <div className="db-update-patch-download" style={{ margin: '1rem 0', padding: '1rem', background: 'rgba(255, 152, 0, 0.08)', borderRadius: '10px', border: '1px solid rgba(255, 152, 0, 0.25)' }}>
-              <p style={{ margin: '0 0 0.75rem 0', fontSize: '0.9rem', color: '#ff9800' }}>
-                🩹 <strong>{updateResult.patches_created} patch(es) created, {updateResult.patches_updated} updated{updateResult.patches_failed > 0 ? `, ${updateResult.patches_failed} failed` : ''}.</strong> Download the patch summary for the data team to review.
-              </p>
-              <button
-                className="btn"
-                onClick={() => {
-                  window.open(`${API_BASE}/api/db-update/patch-report/${updateResult.patch_report_id}/download`, '_blank');
-                }}
-                style={{
-                  background: 'linear-gradient(135deg, #ff9800, #f57c00)',
-                  color: '#fff',
-                  border: 'none',
-                  padding: '0.6rem 1.25rem',
-                  borderRadius: '8px',
-                  cursor: 'pointer',
-                  fontWeight: '600',
-                  fontSize: '0.9rem',
-                  display: 'inline-flex',
-                  alignItems: 'center',
-                  gap: '0.5rem',
-                  boxShadow: '0 2px 8px rgba(255, 152, 0, 0.3)',
-                }}
-              >
-                <span>📥</span> Download Patch Summary Excel
-              </button>
+          {/* Results */}
+          {mqUpdateResult && (
+            <div className="db-update-results">
+              <div className="db-update-result-header">
+                <div className="result-icon">
+                  {mqUpdateResult.failed_count === 0 ? '✅' : '⚠️'}
+                </div>
+                <h3>Manual QA Update Complete!</h3>
+              </div>
+
+              {/* Summary Stats */}
+              <div className="db-update-stats">
+                <div className="db-update-stat-card main">
+                  <div className="stat-value">{mqUpdateResult.success_count}</div>
+                  <div className="stat-label-text">Successfully Updated</div>
+                </div>
+                <div className="db-update-stat-card">
+                  <div className="stat-value red">{mqUpdateResult.failed_count}</div>
+                  <div className="stat-label-text">Failed</div>
+                </div>
+                <div className="db-update-stat-card">
+                  <div className="stat-value gray">{mqUpdateResult.skipped_count}</div>
+                  <div className="stat-label-text">Skipped</div>
+                </div>
+                <div className="db-update-stat-card">
+                  <div className="stat-value">{mqUpdateResult.total_rows}</div>
+                  <div className="stat-label-text">Total Rows</div>
+                </div>
+                {mqUpdateResult.patched_count > 0 && (
+                  <div className="db-update-stat-card" style={{ borderLeft: '3px solid #ff9800' }}>
+                    <div className="stat-value" style={{ color: '#ff9800' }}>{mqUpdateResult.patched_count}</div>
+                    <div className="stat-label-text">Patched Ads</div>
+                  </div>
+                )}
+              </div>
+
+              {/* Message */}
+              <div className="db-update-message">
+                <p>{mqUpdateResult.message}</p>
+              </div>
+
+              {/* Details toggle */}
+              {mqUpdateResult.results && mqUpdateResult.results.length > 0 && (
+                <div className="db-update-details-section">
+                  <button
+                    className="btn btn-secondary db-update-toggle-btn"
+                    onClick={() => setMqShowDetails(!mqShowDetails)}
+                  >
+                    {mqShowDetails ? '▼ Hide Details' : '▶ Show Details'} ({mqUpdateResult.results.length} ads)
+                  </button>
+
+                  {mqShowDetails && (
+                    <div className="db-update-details-list">
+                      {mqUpdateResult.results.map((result, idx) => (
+                        <div key={idx} className={`db-update-detail-item ${result.success ? 'success' : 'failed'}`}>
+                          <span className="detail-status">{result.success ? '✅' : '❌'}</span>
+                          <span className="detail-ad-id">Ad {result.ad_id}</span>
+                          {result.dealer_id && (
+                            <span className="detail-ad-id" style={{ color: 'rgba(255,255,255,0.5)', fontSize: '0.8rem' }}>
+                              (Dealer: {result.dealer_id})
+                            </span>
+                          )}
+                          <span className="detail-categories">
+                            {result.categories && result.categories.length > 0
+                              ? result.categories.join(', ')
+                              : 'No categories'}
+                          </span>
+                          {result.error && (
+                            <span className="detail-error">{result.error}</span>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {/* Patch Summary Download */}
+              {((mqUpdateResult.patched_count > 0) || (mqUpdateResult.patches_created > 0) || (mqUpdateResult.patches_updated > 0)) && mqUpdateResult.patch_report_id && (
+                <div className="db-update-patch-download" style={{ margin: '1rem 0', padding: '1rem', background: 'rgba(255, 152, 0, 0.08)', borderRadius: '10px', border: '1px solid rgba(255, 152, 0, 0.25)' }}>
+                  <p style={{ margin: '0 0 0.75rem 0', fontSize: '0.9rem', color: '#ff9800' }}>
+                    🩹 <strong>{mqUpdateResult.patches_created} patch(es) created, {mqUpdateResult.patches_updated} updated{mqUpdateResult.patches_failed > 0 ? `, ${mqUpdateResult.patches_failed} failed` : ''}.</strong> Download the patch summary for the data team to review.
+                  </p>
+                  <button
+                    className="btn"
+                    onClick={() => {
+                      window.open(`${API_BASE}/api/manual-qa-update/patch-report/${mqUpdateResult.patch_report_id}/download`, '_blank');
+                    }}
+                    style={{
+                      background: 'linear-gradient(135deg, #ff9800, #f57c00)',
+                      color: '#fff',
+                      border: 'none',
+                      padding: '0.6rem 1.25rem',
+                      borderRadius: '8px',
+                      cursor: 'pointer',
+                      fontWeight: '600',
+                      fontSize: '0.9rem',
+                      display: 'inline-flex',
+                      alignItems: 'center',
+                      gap: '0.5rem',
+                      boxShadow: '0 2px 8px rgba(255, 152, 0, 0.3)',
+                    }}
+                  >
+                    <span>📥</span> Download Patch Summary Excel
+                  </button>
+                </div>
+              )}
+
+              {/* Action buttons */}
+              <div className="db-update-result-actions">
+                <button className="btn btn-secondary" onClick={handleMqReset}>
+                  <span>🔄</span> New Update
+                </button>
+              </div>
             </div>
           )}
-
-          {/* Action buttons */}
-          <div className="db-update-result-actions">
-            <button className="btn btn-secondary" onClick={handleReset}>
-              <span>🔄</span> New Update
-            </button>
-          </div>
-        </div>
+        </>
       )}
     </div>
   );

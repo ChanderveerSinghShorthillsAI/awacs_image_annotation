@@ -1763,33 +1763,75 @@ body {
   margin-top: 1.5rem;
 }
 
+/* Sub-tab switcher within DB Update */
+.db-update-subtabs {
+  display: flex;
+  gap: 0.5rem;
+  margin-bottom: 1.75rem;
+  padding: 0.35rem;
+  background: rgba(20, 20, 25, 0.85);
+  border-radius: 14px;
+  border: 1px solid rgba(255, 215, 0, 0.25);
+  width: fit-content;
+}
+
+.db-update-subtab-btn {
+  padding: 0.65rem 1.5rem;
+  background: transparent;
+  border: none;
+  color: rgba(255, 255, 255, 0.55);
+  cursor: pointer;
+  font-size: 0.95rem;
+  font-weight: 600;
+  border-radius: 10px;
+  transition: all 0.3s ease;
+  font-family: inherit;
+}
+
+.db-update-subtab-btn:hover {
+  color: rgba(255, 255, 255, 0.85);
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.db-update-subtab-btn.active {
+  background: var(--gradient-primary);
+  color: #1a1a1f;
+  font-weight: 800;
+  box-shadow: 0 4px 15px rgba(255, 215, 0, 0.4), 0 0 20px rgba(255, 215, 0, 0.2);
+}
+
 /* Upload Zone */
 .db-update-upload-zone {
-  border: 2px dashed rgba(255, 255, 255, 0.2);
-  border-radius: 12px;
+  border: 2px dashed rgba(255, 215, 0, 0.35);
+  border-radius: 14px;
   padding: 2.5rem;
   text-align: center;
   cursor: pointer;
   transition: all 0.3s ease;
-  background: rgba(255, 255, 255, 0.03);
+  background: rgba(20, 20, 25, 0.8);
   margin-bottom: 1.5rem;
+  backdrop-filter: blur(8px);
+  box-shadow: 0 2px 12px rgba(0, 0, 0, 0.4);
 }
 
 .db-update-upload-zone:hover {
-  border-color: rgba(255, 165, 0, 0.4);
-  background: rgba(255, 165, 0, 0.05);
+  border-color: rgba(255, 215, 0, 0.55);
+  background: rgba(25, 25, 30, 0.88);
+  box-shadow: 0 4px 20px rgba(255, 215, 0, 0.15), 0 2px 12px rgba(0, 0, 0, 0.4);
 }
 
 .db-update-upload-zone.drag-active {
-  border-color: rgba(255, 165, 0, 0.6);
-  background: rgba(255, 165, 0, 0.1);
+  border-color: rgba(255, 215, 0, 0.8);
+  background: rgba(255, 215, 0, 0.08);
   transform: scale(1.01);
+  box-shadow: 0 0 30px rgba(255, 215, 0, 0.2);
 }
 
 .db-update-upload-zone.has-file {
-  border-color: rgba(76, 175, 80, 0.4);
-  background: rgba(76, 175, 80, 0.05);
+  border-color: rgba(50, 205, 50, 0.5);
+  background: rgba(50, 205, 50, 0.06);
   border-style: solid;
+  box-shadow: 0 2px 12px rgba(50, 205, 50, 0.15);
 }
 
 .db-update-upload-prompt {
@@ -1806,13 +1848,13 @@ body {
 
 .db-update-upload-prompt .upload-text {
   font-size: 1.1rem;
-  color: rgba(255, 255, 255, 0.8);
-  font-weight: 500;
+  color: rgba(255, 255, 255, 0.9);
+  font-weight: 600;
 }
 
 .db-update-upload-prompt .upload-hint {
   font-size: 0.85rem;
-  color: rgba(255, 255, 255, 0.4);
+  color: rgba(255, 255, 255, 0.5);
 }
 
 .db-update-file-info {
@@ -1858,11 +1900,13 @@ body {
 
 /* Credentials Section */
 .db-update-credentials {
-  background: rgba(255, 255, 255, 0.03);
-  border: 1px solid rgba(255, 255, 255, 0.1);
-  border-radius: 12px;
+  background: rgba(20, 20, 25, 0.8);
+  border: 1px solid rgba(255, 215, 0, 0.2);
+  border-radius: 14px;
   padding: 1.5rem;
   margin-bottom: 1.5rem;
+  backdrop-filter: blur(8px);
+  box-shadow: 0 2px 12px rgba(0, 0, 0, 0.3);
 }
 
 .db-update-credentials .form-group {
@@ -1908,10 +1952,11 @@ body {
 .db-update-config-info {
   margin-top: 0.75rem;
   padding: 0.75rem;
-  background: rgba(0, 0, 0, 0.2);
+  background: rgba(0, 0, 0, 0.35);
+  border: 1px solid rgba(255, 255, 255, 0.08);
   border-radius: 8px;
   font-size: 0.8rem;
-  color: rgba(255, 255, 255, 0.5);
+  color: rgba(255, 255, 255, 0.6);
 }
 
 .db-update-config-info p {
@@ -1983,17 +2028,18 @@ body {
 }
 
 .db-update-stat-card {
-  background: rgba(255, 255, 255, 0.05);
-  border: 1px solid rgba(255, 255, 255, 0.1);
+  background: rgba(20, 20, 25, 0.85);
+  border: 1px solid rgba(255, 215, 0, 0.2);
   border-radius: 12px;
   padding: 1.25rem;
   text-align: center;
   transition: all 0.3s ease;
+  backdrop-filter: blur(6px);
 }
 
 .db-update-stat-card.main {
-  border-color: rgba(76, 175, 80, 0.3);
-  background: rgba(76, 175, 80, 0.08);
+  border-color: rgba(50, 205, 50, 0.4);
+  background: rgba(50, 205, 50, 0.1);
 }
 
 .db-update-stat-card .stat-value {
@@ -2021,11 +2067,13 @@ body {
 .db-update-message {
   text-align: center;
   padding: 1rem;
-  background: rgba(255, 255, 255, 0.03);
-  border-radius: 8px;
+  background: rgba(20, 20, 25, 0.8);
+  border: 1px solid rgba(255, 215, 0, 0.15);
+  border-radius: 10px;
   margin-bottom: 1.5rem;
-  color: rgba(255, 255, 255, 0.7);
+  color: rgba(255, 255, 255, 0.8);
   font-size: 0.95rem;
+  backdrop-filter: blur(6px);
 }
 
 /* Details Section */
@@ -2042,9 +2090,10 @@ body {
 .db-update-details-list {
   max-height: 400px;
   overflow-y: auto;
-  border: 1px solid rgba(255, 255, 255, 0.1);
+  border: 1px solid rgba(255, 215, 0, 0.15);
   border-radius: 10px;
-  background: rgba(0, 0, 0, 0.2);
+  background: rgba(15, 15, 20, 0.85);
+  backdrop-filter: blur(6px);
 }
 
 .db-update-detail-item {
@@ -2052,13 +2101,13 @@ body {
   align-items: center;
   gap: 0.75rem;
   padding: 0.75rem 1rem;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
   font-size: 0.85rem;
   transition: background 0.2s ease;
 }
 
 .db-update-detail-item:hover {
-  background: rgba(255, 255, 255, 0.03);
+  background: rgba(255, 255, 255, 0.05);
 }
 
 .db-update-detail-item:last-child {

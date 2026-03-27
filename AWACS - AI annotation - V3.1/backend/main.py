@@ -3329,6 +3329,8 @@ CATEGORY_ID_MAP = {
     "Conventional Day Cab": "2000601",
     "Dually": "644245588",
     "Dry Van": "644245645",
+    "Beverage Truck": "2000547",
+    "Catering Truck - Food Truck": "2006526"
 }
 
 def _normalize_category_key(name: str) -> str:
@@ -3630,6 +3632,9 @@ def create_or_update_ad_patch_categories(
 
 # Global storage for patch summary reports (keyed by report ID)
 db_update_patch_reports: Dict[str, dict] = {}
+
+# Global storage for ManualQA patch summary reports (keyed by report ID)
+manual_qa_patch_reports: Dict[str, dict] = {}
 
 
 @app.get("/api/db-update-config")
@@ -4066,6 +4071,448 @@ async def download_patch_report(report_id: str):
     df.to_excel(file_path, index=False, engine="openpyxl")
     print(f"📥 Patch report Excel generated: {file_path} ({len(summary)} rows)")
     
+    return FileResponse(
+        path=file_path,
+        filename=filename,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    )
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# MANUAL QA DB UPDATE FEATURE
+# ═══════════════════════════════════════════════════════════════════════════════
+
+@app.post("/api/manual-qa-update")
+async def manual_qa_update_categories(
+    file: UploadFile = File(..., description="Manual QA Excel file with category corrections"),
+    client_secret: str = Form(None),
+):
+    """
+    Manual QA Category Update Feature:
+    1. Accepts a Manual QA Excel file (columns: ad_id, dealer_id, Primary Category, Add'l Category 1, Add'l Category 2)
+    2. Processes ALL rows (no status filtering)
+    3. Gets bearer token from Trader API
+    4. Calls PUT for each qualifying ad to update categories
+    5. Returns summary of results
+    """
+    print("\n" + "=" * 80)
+    print("[ManualQA] 📋 MANUAL QA DB UPDATE: REQUEST RECEIVED")
+    print("=" * 80)
+
+    if not file.filename.endswith(('.xlsx', '.xls')):
+        print("[ManualQA] ❌ Invalid file type uploaded")
+        raise HTTPException(status_code=400, detail="Only Excel files (.xlsx, .xls) are supported")
+
+    # Save uploaded file temporarily
+    upload_dir = os.path.join(config.project_root, "uploads")
+    os.makedirs(upload_dir, exist_ok=True)
+    temp_id = str(uuid.uuid4())[:8]
+    file_path = os.path.join(upload_dir, f"{temp_id}_manual_qa_{file.filename}")
+    print(f"[ManualQA] 📁 Saving uploaded file: {file.filename}")
+
+    try:
+        with open(file_path, "wb") as f:
+            content = await file.read()
+            f.write(content)
+        print(f"[ManualQA] ✅ File saved to: {file_path}")
+
+        # Read Excel
+        df = pd.read_excel(file_path, dtype={"ad_id": str})
+        print(f"[ManualQA] 📊 Excel loaded: {len(df)} rows")
+
+        # Normalize ad_id column
+        if "ad_id" in df.columns:
+            df["ad_id"] = df["ad_id"].astype(str).str.replace(r'\.0$', '', regex=True).str.strip()
+
+        # Validate required columns
+        required_cols = ["ad_id", "Primary Category"]
+        missing_cols = [c for c in required_cols if c not in df.columns]
+        if missing_cols:
+            print(f"[ManualQA] ❌ Missing required columns: {missing_cols}")
+            raise HTTPException(
+                status_code=400,
+                detail=f"Excel file is missing required columns: {', '.join(missing_cols)}. Expected: ad_id, dealer_id, Primary Category, Add'l Category 1, Add'l Category 2"
+            )
+
+        total_rows = len(df)
+        print(f"[ManualQA] 📊 Total rows in file: {total_rows}")
+
+        # Process ALL rows — no status filtering for ManualQA
+        update_rows = []
+        skipped_rows = []
+
+        for idx, row in df.iterrows():
+            ad_id = str(row.get("ad_id", "")).strip()
+
+            if not ad_id or ad_id.lower() == "nan":
+                skipped_rows.append({"ad_id": "EMPTY", "reason": "Empty ad_id"})
+                print(f"[ManualQA] ⏭️ Row {idx}: Skipped — empty ad_id")
+                continue
+
+            update_rows.append(row)
+
+        print(f"[ManualQA] 📋 Rows to process: {len(update_rows)}, Skipped (empty ad_id): {len(skipped_rows)}")
+
+        if not update_rows:
+            print("[ManualQA] ⚠️ No valid rows to process")
+            return {
+                "status": "completed",
+                "message": "No valid rows found in the uploaded Manual QA file. All rows had empty ad_id.",
+                "total_rows": total_rows,
+                "update_count": 0,
+                "skipped_count": len(skipped_rows),
+                "success_count": 0,
+                "failed_count": 0,
+                "results": [],
+                "skipped": skipped_rows[:50],
+            }
+
+        # Get credentials
+        token_url = getattr(config, 'db_update_token_url', '').strip()
+        base_url = getattr(config, 'db_update_base_url', '').strip()
+        c_id = getattr(config, 'db_update_client_id', '').strip()
+        c_secret = (client_secret or getattr(config, 'db_update_client_secret', '')).strip()
+        c_grant = getattr(config, 'db_update_grant_type', 'client_credentials').strip()
+
+        if not token_url:
+            raise HTTPException(status_code=400, detail="DB Update API TokenUrl not configured in config.ini")
+        if not base_url:
+            raise HTTPException(status_code=400, detail="DB Update API UpdateBaseUrl not configured in config.ini")
+        if not c_id:
+            raise HTTPException(status_code=400, detail="DB Update API ClientId not configured in config.ini")
+        if not c_secret:
+            raise HTTPException(status_code=400, detail="DB Update API ClientSecret not configured. Please enter it manually or add it to config.ini")
+
+        # Step 1: Get bearer token
+        print("\n" + "=" * 80)
+        print("[ManualQA] 🔑 OBTAINING BEARER TOKEN")
+        print("=" * 80)
+
+        try:
+            token_info = get_db_update_bearer_token(token_url, c_id, c_secret, c_grant)
+            bearer_token = token_info["access_token"]
+            print("[ManualQA] ✅ Bearer token obtained successfully")
+        except Exception as e:
+            print(f"[ManualQA] ❌ Failed to obtain bearer token: {e}")
+            raise HTTPException(status_code=500, detail=f"Failed to obtain bearer token: {str(e)}")
+
+        # Derive the ad-patches base URL from the update base URL
+        patch_base_url = _derive_patch_base_url(base_url)
+        print(f"[ManualQA] 📌 Patch API base URL: {patch_base_url}")
+
+        # ── Pre-validate all rows (single-threaded, fast) ──
+        prepared_ads = []       # List of (ad_id, categories_list, cat_names, dealer_id) ready for API calls
+        pre_skip_results = []   # Results for rows skipped during validation
+
+        category_columns = ["Primary Category", "Add'l Category 1", "Add'l Category 2"]
+
+        for i, row in enumerate(update_rows, 1):
+            ad_id = str(row.get("ad_id", "")).strip()
+            dealer_id = str(row.get("dealer_id", "")).strip() if pd.notna(row.get("dealer_id")) else ""
+
+            categories = []
+            unmapped_cats = []
+            for col in category_columns:
+                cat_name = str(row.get(col, "")).strip() if pd.notna(row.get(col)) else ""
+                if cat_name and cat_name.lower() not in ["", "nan", "none"]:
+                    canonical_name, cat_id = lookup_category(cat_name)
+                    if cat_id:
+                        categories.append({"id": cat_id, "name": canonical_name})
+                    else:
+                        unmapped_cats.append(cat_name)
+
+            if not categories and not unmapped_cats:
+                pre_skip_results.append({
+                    "ad_id": ad_id,
+                    "dealer_id": dealer_id,
+                    "success": False,
+                    "error": "No categories found in Primary Category / Add'l Category columns",
+                    "categories": []
+                })
+                print(f"[ManualQA] [pre-check] ❌ Ad {ad_id} (Dealer {dealer_id}): No categories found")
+                continue
+
+            if unmapped_cats:
+                error_msg = f"Skipped — unmapped category: {', '.join(unmapped_cats)}"
+                pre_skip_results.append({
+                    "ad_id": ad_id,
+                    "dealer_id": dealer_id,
+                    "success": False,
+                    "error": error_msg,
+                    "categories": [c["name"] for c in categories] + unmapped_cats
+                })
+                print(f"[ManualQA] [pre-check] ⚠️ Ad {ad_id} (Dealer {dealer_id}): {error_msg}")
+                continue
+
+            cat_names = [c["name"] for c in categories]
+            prepared_ads.append((ad_id, categories, cat_names, dealer_id))
+            print(f"[ManualQA] [pre-check] ✅ Ad {ad_id} (Dealer {dealer_id}): {cat_names}")
+
+        # Step 2: Process prepared ads with MULTITHREADING
+        max_workers = 5
+        print("\n" + "=" * 80)
+        print(f"[ManualQA] 📝 PROCESSING {len(prepared_ads)} ADS (MULTITHREADED, {max_workers} workers)")
+        print(f"[ManualQA]    ⏭️ Pre-skipped: {len(pre_skip_results)} ads (validation failures)")
+        print(f"[ManualQA]    🚀 Using {max_workers} concurrent workers for ~{max_workers}x speedup!")
+        print("=" * 80)
+
+        # Thread-safe token holder with lock for refresh
+        token_lock = threading.Lock()
+        token_holder = {"access_token": bearer_token, "expires_at": token_info["expires_at"]}
+
+        def _get_valid_token():
+            """Get current bearer token, refreshing if expired (thread-safe)."""
+            with token_lock:
+                if time.time() >= token_holder["expires_at"]:
+                    print("[ManualQA] 🔄 Bearer token expiring soon, refreshing...")
+                    try:
+                        new_info = get_db_update_bearer_token(token_url, c_id, c_secret, c_grant)
+                        token_holder["access_token"] = new_info["access_token"]
+                        token_holder["expires_at"] = new_info["expires_at"]
+                        print("[ManualQA] ✅ Bearer token refreshed successfully")
+                    except Exception as e:
+                        print(f"[ManualQA] ⚠️ Token refresh failed: {e} — continuing with old token")
+                return token_holder["access_token"]
+
+        def _process_single_ad_manual_qa(ad_data, idx, total):
+            """
+            Worker function for ManualQA: check patch → delete patch categories if needed → PUT update.
+            Returns (result_dict, patch_summary_dict_or_None).
+            """
+            ad_id, categories, cat_names, dealer_id = ad_data
+            current_token = _get_valid_token()
+
+            print(f"\n[ManualQA] [{idx}/{total}] 🔎 Processing Ad {ad_id} (Dealer {dealer_id}) ...")
+            patch_info = check_ad_patch(patch_base_url, ad_id, current_token)
+
+            patch_deleted = False
+            old_patch_categories = []
+            patch_summary = None
+
+            if patch_info.get("has_patch") and patch_info.get("has_categories"):
+                old_patch_categories = patch_info["categories"]
+                old_cat_names = [c.get("name", c.get("id", "?")) for c in old_patch_categories]
+                print(f"[ManualQA]    ⚡ Ad {ad_id} has PATCHED categories: {old_cat_names}")
+                print(f"[ManualQA]    🗑️ Deleting categories from patch before PUT update...")
+
+                current_token = _get_valid_token()
+                delete_result = delete_patch_categories(patch_base_url, ad_id, current_token)
+
+                if not delete_result["success"]:
+                    error_msg = f"Failed to delete patch categories: {delete_result.get('error', 'Unknown error')}"
+                    print(f"[ManualQA] [{idx}/{total}] ❌ Ad {ad_id}: {error_msg}")
+                    return (
+                        {"ad_id": ad_id, "dealer_id": dealer_id, "success": False, "error": error_msg, "categories": cat_names},
+                        {"ad_id": ad_id, "dealer_id": dealer_id, "old_patched_categories": ", ".join(old_cat_names),
+                         "new_updated_categories": ", ".join(cat_names),
+                         "patch_deleted": "FAILED", "update_success": "No (patch delete failed)",
+                         "patch_step": "N/A"},
+                    )
+
+                patch_deleted = True
+                print(f"[ManualQA]    ✅ Patch categories deleted successfully for Ad {ad_id}")
+            elif patch_info.get("has_patch") and not patch_info.get("has_categories"):
+                print(f"[ManualQA]    ℹ️ Ad {ad_id} has a patch but NO categories in it — proceeding with direct PUT")
+            else:
+                print(f"[ManualQA]    ℹ️ Ad {ad_id} has no patch — proceeding with direct PUT")
+
+            # ── PUT UPDATE ──
+            current_token = _get_valid_token()
+            print(f"[ManualQA]    📤 Sending PUT to update Ad {ad_id} with categories: {cat_names}")
+            result = update_ad_categories_in_db(base_url, ad_id, categories, current_token)
+
+            if result["success"]:
+                print(f"[ManualQA] [{idx}/{total}] ✅ Ad {ad_id} (Dealer {dealer_id}): Updated -> {cat_names}")
+            else:
+                print(f"[ManualQA] [{idx}/{total}] ❌ Ad {ad_id} (Dealer {dealer_id}): {result.get('error', 'Unknown error')}")
+
+            # ── PATCH STEP: Create or update ad-patch with new categories ──
+            patch_action = None
+            patch_step_success = False
+            patch_step_error = ""
+
+            if result["success"]:
+                print(f"\n[ManualQA]    🩹 [Patch Step] Ad {ad_id}: Ad update succeeded — now creating/updating patch with categories...")
+                current_token = _get_valid_token()
+                patch_result = create_or_update_ad_patch_categories(
+                    patch_base_url, ad_id, categories,
+                    had_patch=patch_info.get("has_patch", False),
+                    bearer_token=current_token,
+                )
+                patch_step_success = patch_result["success"]
+                patch_action = patch_result.get("action")
+                patch_step_error = patch_result.get("error", "")
+                if patch_step_success:
+                    print(f"[ManualQA] [{idx}/{total}] 🩹 Ad {ad_id}: Patch {patch_action} successfully with categories: {cat_names}")
+                else:
+                    print(f"[ManualQA] [{idx}/{total}] ⚠️ Ad {ad_id}: Ad updated OK but patch step failed — {patch_step_error}")
+            else:
+                print(f"[ManualQA]    ⏭️ [Patch Step] Ad {ad_id}: Skipping patch step because ad update failed")
+
+            result_dict = {
+                "ad_id": ad_id,
+                "dealer_id": dealer_id,
+                "success": result["success"],
+                "error": result.get("error", ""),
+                "categories": cat_names,
+                "patch_action": patch_action,
+                "patch_step_success": patch_step_success,
+                "patch_step_error": patch_step_error,
+            }
+
+            # Build patch summary if a patch action was taken OR this ad had patch categories
+            if patch_action or patch_deleted or (patch_info.get("has_patch") and patch_info.get("has_categories")):
+                old_cat_names = [c.get("name", c.get("id", "?")) for c in old_patch_categories]
+                patch_summary = {
+                    "ad_id": ad_id,
+                    "dealer_id": dealer_id,
+                    "old_patched_categories": ", ".join(old_cat_names),
+                    "new_updated_categories": ", ".join(cat_names),
+                    "patch_deleted": "Yes" if patch_deleted else "No",
+                    "update_success": "Yes" if result["success"] else f"No ({result.get('error', 'Unknown')})",
+                    "patch_step": f"{patch_action} ({'OK' if patch_step_success else 'FAILED'})" if patch_action else "N/A",
+                }
+
+            return (result_dict, patch_summary)
+
+        # ── Run with ThreadPoolExecutor ──
+        results = list(pre_skip_results)  # Start with pre-skipped results
+        patched_ads_summary = []
+        update_start = time.time()
+
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            future_to_ad = {
+                executor.submit(_process_single_ad_manual_qa, ad_data, i, len(prepared_ads)): ad_data
+                for i, ad_data in enumerate(prepared_ads, 1)
+            }
+
+            for future in as_completed(future_to_ad):
+                try:
+                    result_dict, patch_summary = future.result()
+                    results.append(result_dict)
+                    if patch_summary:
+                        patched_ads_summary.append(patch_summary)
+                except Exception as e:
+                    ad_data = future_to_ad[future]
+                    ad_id = ad_data[0]
+                    dealer_id = ad_data[3]
+                    print(f"[ManualQA] ❌ Worker exception for Ad {ad_id}: {e}")
+                    results.append({
+                        "ad_id": ad_id,
+                        "dealer_id": dealer_id,
+                        "success": False,
+                        "error": f"Worker exception: {str(e)}",
+                        "categories": ad_data[2],
+                    })
+
+        update_elapsed = time.time() - update_start
+
+        # Count successes/failures from all results
+        success_count = sum(1 for r in results if r["success"])
+        failed_count = sum(1 for r in results if not r["success"])
+
+        # Count patch step outcomes
+        patches_created = sum(1 for r in results if r.get("patch_action") == "created" and r.get("patch_step_success"))
+        patches_updated = sum(1 for r in results if r.get("patch_action") == "updated" and r.get("patch_step_success"))
+        patches_failed  = sum(1 for r in results if r.get("patch_action") and not r.get("patch_step_success"))
+
+        # Store patch report if any patched ads were found
+        patch_report_id = None
+        if patched_ads_summary:
+            patch_report_id = str(uuid.uuid4())[:8]
+            manual_qa_patch_reports[patch_report_id] = {
+                "created_at": datetime.now().isoformat(),
+                "summary": patched_ads_summary,
+            }
+            print(f"\n[ManualQA] 📋 Patch summary report stored with ID: {patch_report_id} ({len(patched_ads_summary)} patched ads)")
+
+        # Summary
+        print("\n" + "=" * 80)
+        print(f"[ManualQA] 🎉 MANUAL QA DB UPDATE COMPLETE ({update_elapsed:.1f}s with {max_workers} workers)")
+        print(f"[ManualQA]    Total rows in file: {total_rows}")
+        print(f"[ManualQA]    Rows to update: {len(update_rows)}")
+        print(f"[ManualQA]    ✅ Ad updates successful: {success_count}")
+        print(f"[ManualQA]    ❌ Ad updates failed: {failed_count}")
+        print(f"[ManualQA]    ⏭️ Skipped: {len(skipped_rows)}")
+        print(f"[ManualQA]    🩹 Patched ads (had categories in patch): {len(patched_ads_summary)}")
+        print(f"[ManualQA]    🩹 Patch step — created: {patches_created}, updated: {patches_updated}, failed: {patches_failed}")
+        print(f"[ManualQA]    ⚡ Speed: {max_workers} concurrent workers")
+        print("=" * 80 + "\n")
+
+        return {
+            "status": "completed",
+            "message": f"Manual QA update completed in {update_elapsed:.1f}s. {success_count} successful, {failed_count} failed, {len(skipped_rows)} skipped. Patch step: {patches_created} created, {patches_updated} updated, {patches_failed} failed.",
+            "total_rows": total_rows,
+            "update_count": len(update_rows),
+            "skipped_count": len(skipped_rows),
+            "success_count": success_count,
+            "failed_count": failed_count,
+            "patched_count": len(patched_ads_summary),
+            "patches_created": patches_created,
+            "patches_updated": patches_updated,
+            "patches_failed": patches_failed,
+            "patch_report_id": patch_report_id,
+            "results": results,
+            "skipped": skipped_rows[:50],
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"[ManualQA] ❌ Manual QA Update error: {e}")
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=f"Manual QA Update failed: {str(e)}")
+    finally:
+        # Clean up temp file
+        if os.path.exists(file_path):
+            try:
+                os.remove(file_path)
+                print(f"[ManualQA] 🧹 Temp file cleaned up: {file_path}")
+            except:
+                pass
+
+
+@app.get("/api/manual-qa-update/patch-report/{report_id}/download")
+async def download_manual_qa_patch_report(report_id: str):
+    """
+    Downloads an Excel summary of all ads that had patched categories
+    during a Manual QA update run.
+    """
+    print(f"[ManualQA] 📥 Patch report download requested: {report_id}")
+
+    if report_id not in manual_qa_patch_reports:
+        raise HTTPException(status_code=404, detail="Patch report not found. It may have expired or the server was restarted.")
+
+    report_data = manual_qa_patch_reports[report_id]
+    summary = report_data["summary"]
+
+    if not summary:
+        raise HTTPException(status_code=404, detail="Patch report is empty — no patched ads were recorded.")
+
+    # Build DataFrame from summary
+    df = pd.DataFrame(summary)
+    column_map = {
+        "ad_id": "Ad ID",
+        "dealer_id": "Dealer ID",
+        "old_patched_categories": "Old Patched Categories",
+        "new_updated_categories": "New Updated Categories",
+        "patch_deleted": "Patch Deleted",
+        "update_success": "Update Success",
+        "patch_step": "Patch Create/Update Step",
+    }
+    df.rename(columns=column_map, inplace=True)
+
+    # Write to a temporary Excel file
+    report_dir = os.path.join(config.project_root, "uploads")
+    os.makedirs(report_dir, exist_ok=True)
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    filename = f"manual_qa_patch_summary_{report_id}_{timestamp}.xlsx"
+    file_path = os.path.join(report_dir, filename)
+
+    df.to_excel(file_path, index=False, engine="openpyxl")
+    print(f"[ManualQA] 📥 Patch report Excel generated: {file_path} ({len(summary)} rows)")
+
     return FileResponse(
         path=file_path,
         filename=filename,
