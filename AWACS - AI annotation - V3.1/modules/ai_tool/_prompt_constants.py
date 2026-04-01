@@ -330,6 +330,11 @@ CRITICAL CLASSIFICATION RULES:
      * The refrigeration unit is ON THE CARGO BOX, not on the cab
      * If the front wall of the cargo box is plain/flat (like a smooth metal wall), it is a Box Truck
 
+   - **🚨 CRITICAL: Reefer/Refrigerated Truck and Moving Van are MUTUALLY EXCLUSIVE!**
+     * A Reefer/Refrigerated Truck can NEVER be classified as a Moving Van, even if a liftgate is present.
+     * Refrigerated trucks use liftgates for loading temperature-sensitive cargo — this does NOT make them Moving Vans.
+     * If the truck has a refrigeration unit, it is a Reefer, NOT a Moving Van. Do NOT output both.
+
 
 
 8. **\"Image Not Clear\" Rule (EXTREMELY STRICT - Use Only When Truly Impossible to Classify):**
