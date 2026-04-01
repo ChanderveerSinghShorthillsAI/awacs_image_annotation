@@ -53,6 +53,13 @@ def load_config():
         config.save_mosaic_images = config_parser.getboolean('Settings', 'SaveMosaicImages', fallback=False)
         config.mosaic_batch_size = config_parser.getint('Settings', 'MosaicBatchSize', fallback=3)
 
+        # Cutaway-Cube Van Detection
+        config.max_images_cutaway = config_parser.getint('Settings', 'MaxImagesForCutawayCategories', fallback=30)
+        config.cutaway_categories = [
+            cat.strip().lower()
+            for cat in config_parser.get('Settings', 'CutawayCategories', fallback='box truck,straight truck,dry van,cargo van,stepvan').split(',')
+        ]
+
         # Thought Summaries
         config.enable_thought_summaries = config_parser.getboolean('Settings', 'EnableThoughtSummaries', fallback=False)
 

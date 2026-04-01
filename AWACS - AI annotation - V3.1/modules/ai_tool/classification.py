@@ -753,15 +753,50 @@ CRITICAL CLASSIFICATION RULES:
       2. Cutaway Cube Van (90%)
       3. Van (95%)  ← WRONG! Box Truck is NOT a van — do NOT add Van here!
 
-   **Visual Cues for Pass-Through (Cutaway feature):**
-   - A door or opening visible between the cab and cargo box
-   - The cab and box appear more "integrated" rather than separate
-   - The driver can access the cargo area from inside the cab
+   **Visual Cues for Pass-Through (Cutaway feature) — WHAT COUNTS as evidence:**
+   - **✅ An actual DOOR or OPENING** visible between the cab and cargo box — you can see a door frame, hinges, a door handle, or an open passageway that a person could walk/step through
+   - **✅ The cab and cargo box are clearly CONNECTED with a walkable passage** — the driver can physically move from the cab into the cargo area without exiting the vehicle
+   - **✅ A door panel (with or without a window) that has visible hinges, a handle, or a latch** at the front wall of the cargo area — this is a pass-through door
+   - **✅ An open doorway/archway** visible at the front of the cargo area (no door present, just an opening)
    - Common on delivery trucks where drivers need quick access to packages
 
-   **When in Doubt:**
-   - If you're unsure whether it's a Cutaway → Do NOT add "Cutaway Cube Van"
-   - The pass-through feature must be CLEARLY VISIBLE to add "Cutaway Cube Van"
+   **🚨🚨🚨 WHAT DOES NOT COUNT as Cutaway evidence (CRITICAL — READ CAREFULLY):**
+   - **❌ A mesh/wire WINDOW ALONE is NOT sufficient** — many box trucks and cabover trucks have a small mesh or glass window in the partition between cab and cargo area. This is just a VIEWING WINDOW for the driver to see into the cargo area. A window does NOT mean there is a pass-through door.
+   - **❌ A solid metal partition/bulkhead between cab and cargo is NOT Cutaway** — this is a WALL, not a door. Many trucks have a solid wall separating cab from cargo with no pass-through at all.
+   - **❌ A partition with ONLY a small window (no door, no handle, no hinges)** — this is just a standard bulkhead with a viewing port, NOT a cutaway pass-through.
+   - **❌ An interior cab view showing seats and a back wall** — just because you can see behind the seats does NOT mean there is a cutaway door. Look for an actual DOOR or OPENING, not just a wall.
+   - **❌ "It looks like there might be an opening"** — speculation is NOT evidence. You have up to 30 images to examine. If you cannot find CLEAR evidence of an actual door/opening across all images, do NOT mark as Cutaway.
+   - **❌ An interior cargo view looking toward the cab that shows a dark area or shadow near the bulkhead** — darkness or shadows do NOT prove a door exists. You need to see an actual door frame, handle, hinges, or a clearly open passageway.
+   - **❌ "The background shows what looks like an opening"** — vague shapes in the background of interior shots are NOT evidence. The pass-through door must be UNAMBIGUOUS and CLEARLY identifiable.
+
+   **🚨 THE DEFINITIVE TEST FOR CUTAWAY:**
+   Ask yourself: **"Can I see an actual DOOR (with handle/hinges) or an OPEN PASSAGEWAY between the cab and cargo area in ANY of the provided images?"**
+   - **YES** → Mark as Cutaway Cube Van
+   - **NO (I only see a window, a solid wall, or I'm guessing)** → Do NOT mark as Cutaway Cube Van
+
+   **🚨🚨🚨 COMMON HALLUCINATION PATTERNS (READ CAREFULLY):**
+   The LLM frequently HALLUCINATES pass-through doors that do not exist. These are the most common false-positive patterns:
+   1. **Interior cargo shots looking toward the front:** The LLM sees the bulkhead wall (solid partition between cab and cargo) and interprets shadows, reflections, or dark areas as "an opening" or "a door frame". This is almost always just a SOLID WALL with no door.
+   2. **Cab interior shots showing the back of seats:** The LLM sees the area behind the driver/passenger seats and assumes there must be a pass-through to the cargo area. Seeing the back of the seats does NOT prove a door exists behind them.
+   3. **"Sealing the deal" with weak evidence:** The LLM combines two pieces of weak evidence (e.g., "the interior shows something near the front" + "most trucks of this type have pass-through") to conclude Cutaway. This is NOT valid reasoning. You need ONE piece of STRONG, UNAMBIGUOUS evidence — an actual visible door or opening.
+   4. **Statistical reasoning:** "Most Isuzu NRR / Ford E-Series / etc. are cutaway chassis" is NOT valid evidence. Do NOT use vehicle make/model statistics to infer a pass-through door. You must SEE the door.
+
+   **🚨 RULE: If you find yourself writing reasoning like "I see a definite opening" or "this strongly suggests a pass-through" but you cannot point to a specific door handle, hinge, or clearly open passageway — you are likely hallucinating. DEFAULT TO NOT CUTAWAY.**
+
+   You are provided with up to 30 images per ad. With this many images, you should be able to clearly confirm or deny the presence of a pass-through door. Do NOT guess or assume — look through ALL images for definitive evidence.
+
+   **🚨 CRITICAL: DO NOT CONFUSE REAR CARGO DOORS WITH THE CUTAWAY PASS-THROUGH DOOR:**
+   - The **REAR double doors** (two large swinging doors at the back of the vehicle for loading/unloading cargo) are NOT the cutaway pass-through. Every cargo van and box truck has rear doors — these are standard and do NOT indicate cutaway.
+   - The **cutaway pass-through door** is a SINGLE door/partition located at the FRONT of the cargo area, separating the driver's cab from the cargo space. It is typically:
+     * A single door or panel (NOT a double door/gate)
+     * Located at the front wall of the cargo area (behind the driver's seat)
+     * Has visible hinges, a handle, or a latch (NOT just a window)
+   - **If you see double doors or a two-door gate → that is the REAR cargo door, NOT the cutaway door**
+   - **If you see a single door with handle/hinges at the front of the cargo area → that IS the cutaway pass-through**
+
+   **When in Doubt (for Cutaway):**
+   - **Do NOT default to marking as Cutaway.** With up to 30 images available, you have ample visual evidence to make a confident determination. If none of the images show a clear door/opening, then it is NOT a Cutaway Cube Van.
+   - A window in a partition is NOT a door. A solid wall is NOT a door. Only an actual door or opening counts.
 
 6. **DUALLY DETECTION (CRITICAL - ALWAYS CHECK):**
    - **CRITICAL: ALWAYS check for Dually indicators - false negatives are a major issue!**
@@ -816,7 +851,11 @@ CRITICAL CLASSIFICATION RULES:
    - **Pickup Truck** (30% are Duallys) - Especially heavy-duty models: Ford F-350/F-450, RAM 3500, Chevy 3500, GMC 3500. Look for wide rear fenders extending beyond cab, double rear wheels visible from rear/side/3-quarter view, front wheel hub extensions
    - **Flatbed Truck** - 🚨 CAUTION REQUIRED: Flatbed trucks have a FLAT platform/deck. Many flatbeds have SINGLE rear wheels. The flat platform is NOT evidence of Dually. You MUST see ACTUAL dual wheels (two separate wheels on each rear side) to mark as Dually. Platform width, stake pockets, rails, headache racks are NOT evidence of Dually. If you cannot clearly see two wheels per rear side, the answer is NOT Dually.
    - **Contractor Truck** (40% are Duallys) - Check for dual rear wheels
-   
+   - **Glass Truck** (70% are Duallys) - Assume Dually unless you clearly see a single thin tire on each rear side. These are heavy-load trucks that almost always have dual rear wheels.
+   - **Curtain Side** (80% are Duallys) - Assume Dually unless you clearly see a single thin tire on each rear side. These heavy cargo trucks almost always require dual rear wheels.
+   - **Reefer/Refrigerated Truck** (75% are Duallys) - Assume Dually unless you clearly see a single thin tire on each rear side. Refrigerated cargo is heavy; these trucks commonly have dual rear wheels.
+   - **Dry Van** (70% are Duallys) - Assume Dually unless you clearly see a single thin tire on each rear side. Large cargo vans commonly have dual rear wheels for load capacity.
+
    **==== HOW TO HANDLE UNCERTAINTY ====**
    - **🚨 FOR UTILITY-SERVICE TRUCKS - READ THIS FIRST:**
      * If you cannot SEE the actual rear wheels clearly → Answer is NOT Dually (no exceptions)
@@ -826,14 +865,14 @@ CRITICAL CLASSIFICATION RULES:
    - **🚨 FOR FLATBED TRUCKS - READ THIS FIRST:**
      * Flatbeds have a FLAT platform - the platform width is NOT evidence of Dually
      * **⚠️ TANDEM AXLE CHECK:** Many flatbeds have MULTIPLE rear axles (tandem/tri-axle) with tires arranged LENGTHWISE (one behind another) - this is NOT Dually!
-     * Dually = 2 wheels SIDE-BY-SIDE on SINGLE axle. Tandem = multiple axles arranged front-to-back.
-     * If you see tires arranged ONE BEHIND ANOTHER (lengthwise) → This is tandem axle, NOT Dually. Answer is NOT Dually.
+     * 🚨 TANDEM ≠ DUALLY: If you see MORE THAN ONE rear axle (tires arranged one BEHIND another in a row), this is a TANDEM/TRI-AXLE configuration. Count the rear axles FIRST: if there are 2+ rear axles with single wheels on each, that is tandem — NOT Dually. Dually ONLY means 2 wheels SIDE-BY-SIDE on a SINGLE rear axle. However, having dual wheels on EACH axle of a tandem setup IS still dually — check each axle individually for side-by-side wheels.
+     * If you see tires arranged ONE BEHIND ANOTHER (lengthwise) with only ONE tire per side per axle → This is tandem axle, NOT Dually. Answer is NOT Dually.
      * If you cannot SEE the actual rear wheels clearly showing dual configuration on a SINGLE axle → Answer is NOT Dually (no exceptions)
      * If you're using platform width, stake pockets, rails, headache rack, or multiple tires arranged lengthwise as reasoning → STOP. Answer is NOT Dually
      * The ONLY acceptable reason to mark flatbed truck as Dually: "I can clearly see TWO separate wheel rims SIDE-BY-SIDE on each rear side on a SINGLE axle"
    - **For other vehicle types - If rear wheels are NOT clearly visible:** Look at front wheels for hub extensions, check fender width, consider vehicle type
    - **For other vehicle types - If you see wide body but unclear wheels:** Check for fender flare, wheel well width, and vehicle type context
-   - **If it's a Box Truck/Cutaway/Stepvan:** Assume Dually UNLESS you clearly see a single thin rear tire
+   - **If it's a Box Truck/Cutaway/Stepvan/Glass Truck/Curtain Side/Reefer/Dry Van:** Assume Dually UNLESS you clearly see a single thin rear tire
    - **When in doubt (non-utility, non-flatbed vehicles):** If multiple secondary indicators are present (fender flare + vehicle type + front hub extensions), lean towards Dually
    - **When in doubt (UTILITY-SERVICE TRUCKS):** Answer is NOT Dually
    - **When in doubt (FLATBED TRUCKS):** Answer is NOT Dually
@@ -855,7 +894,7 @@ CRITICAL CLASSIFICATION RULES:
    1. You can clearly see TWO separate wheels/rims on the rear (per side)
    2. You see distinctive rear fender flare/bulge + vehicle type is typically Dually (BUT NOT for Utility-Service Trucks - see special rule below)
    3. You see dual rim "dish" pattern + wider rear profile
-   4. It's a Box Truck/Cutaway/Stepvan AND you don't see a single thin tire
+   4. It's a Box Truck/Cutaway/Stepvan/Glass Truck/Curtain Side/Reefer/Dry Van AND you don't see a single thin tire
    5. Multiple secondary indicators are present (fender flare + vehicle type + front hub extensions)
    
    **🚨 SPECIAL RULE FOR UTILITY-SERVICE TRUCKS (MOST IMPORTANT RULE - READ CAREFULLY):**
@@ -920,11 +959,29 @@ CRITICAL CLASSIFICATION RULES:
    8. **🚨 It's a Flatbed Truck and your only evidence is platform width, stakes, rails, or accessories**
 
    
+   **==== MANDATORY FINAL DUALLY RE-CHECK (DO THIS BEFORE SUBMITTING YOUR ANSWER) ====**
+   🚨🚨🚨 Before finalizing your answer, ask yourself: "Did I check for Dually?"
+
+   If the vehicle is ANY of these types and you did NOT include Dually in your output:
+   Box Truck, Cutaway-Cube Van, Stepvan, Glass Truck, Curtain Side,
+   Reefer/Refrigerated Truck, Dry Van, Cabover Truck - COE, Cab-Chassis
+
+   → STOP and RE-EXAMINE the rear wheels RIGHT NOW. These trucks are Dually 70-95% of the time.
+   → The burden of proof is on PROVING it is NOT dually (you must clearly see a single thin tire),
+     NOT on proving it IS dually.
+   → If you cannot clearly see the rear wheels at all and the vehicle is one of the above types,
+     DEFAULT TO DUALLY.
+   → If you said "single wheel" or "not dually" — are you CERTAIN? Look again. LLMs frequently
+     mistake dual wheels for single wheels, especially on Glass Trucks, Curtain Side trucks,
+     and Reefer trucks. This is the #1 most common error.
+
    **==== OUTPUT FORMAT FOR DUALLY ====**
    - If you detect Dually, include it as a SECONDARY category (not primary)
    - Example: "1. Box Truck - Straight Truck (95%)" followed by "2. Dually (90%)"
-   - The primary body type should ALWAYS be listed first, Dually should be second
+   - The primary body type should ALWAYS be listed first, Dually comes after
    - Dually is an attribute that modifies the vehicle, not a standalone category
+   - **🚨 Dually does NOT replace other secondary categories like Moving Van, Cabover Truck - COE, etc.** If a Box Truck has BOTH a liftgate (Moving Van) AND dual rear wheels (Dually), output ALL applicable categories: Box Truck + Moving Van + Dually. Do NOT drop Moving Van just because Dually is present.
+   - **🚨 ORDERING: Dually must ALWAYS be listed LAST among secondary categories.** Moving Van and other body-type modifiers come before Dually. Example: Box Truck → Cabover → Moving Van → Dually (Dually is always last).
 
 7. **BOX TRUCK vs REEFER/REFRIGERATED TRUCK DETECTION (CRITICAL - CHECK FIRST):**
    - **⚠️ CRITICAL: This is a HIGH-PRIORITY check. ALWAYS look for the refrigeration unit BEFORE classifying as Box Truck.**
@@ -946,11 +1003,72 @@ CRITICAL CLASSIFICATION RULES:
         - YES → **Reefer/Refrigerated Truck**
         - NO (flat/smooth front) → **Box Truck - Straight Truck**
    
+   - **🚨🚨🚨 MUTUAL EXCLUSIVITY RULE: Reefer/Refrigerated Truck and Dry Van are MUTUALLY EXCLUSIVE — NEVER output both!**
+     * If the truck has a refrigeration unit → it is a **Reefer/Refrigerated Truck**, NOT a Dry Van
+     * "Dry Van" means a large box truck with NO refrigeration — it carries dry goods only
+     * A refrigerated truck is the OPPOSITE of a dry van — one is temperature-controlled, the other is not
+     * If you see a cooling unit (Carrier, Thermo King, etc.) on the cargo box → output Reefer/Refrigerated Truck ONLY, do NOT also output Dry Van
+     * Similarly, Reefer/Refrigerated Truck and Box Truck - Straight Truck are MUTUALLY EXCLUSIVE — do NOT output both
+
    - **COMMON MISTAKE TO AVOID:**
      * Do NOT confuse the cab roof (driver compartment) with the refrigeration unit
      * The refrigeration unit is ON THE CARGO BOX, not on the cab
      * If the front wall of the cargo box is plain/flat (like a smooth metal wall), it is a Box Truck
 
+7a. **GLASS TRUCK DETECTION (PRIMARY CATEGORY - Box & Cargo Family):**
+   - **A Glass Truck is a specialized truck designed specifically for transporting glass panes, windows, and similar flat/fragile sheet materials.**
+   - **Glass Truck is a PRIMARY category — it does NOT combine with other primary categories like Box Truck, Dry Van, Flatbed Truck, etc.**
+
+   **Key Visual Cues (MUST have at least one):**
+     * **A-frame / vertical rack structures** mounted on the truck bed — these are tall, upright metal frames arranged in parallel rows along the sides of the truck
+     * **Square/rectangular metal compartments or fence-like structures** on the side walls — these form a grid pattern of open slots/bays designed to hold glass panes vertically
+     * **Multiple vertical divider slots** — the racks have evenly spaced vertical slots or channels where individual glass sheets slide in
+     * The racks are typically made of **aluminum or stainless steel** (shiny metallic appearance)
+     * The bed area is dominated by these rack structures — there is NO enclosed box, NO flat open platform, and NO dump mechanism
+     * Often the racks extend **above the cab height** to accommodate tall glass sheets
+     * The truck may have **rubber padding or cushioning** between the rack slots to protect the glass
+
+   **How to Distinguish from Similar Trucks:**
+     * **vs Flatbed Truck:** A flatbed has a flat, open platform. A Glass Truck has tall vertical rack/frame structures filling the bed area — these racks are the defining feature.
+     * **vs Stake Bed:** A stake bed has vertical posts along the sides with open space between them. A Glass Truck has solid metal rack frameworks with compartmentalized slots, NOT simple vertical stakes.
+     * **vs Box Truck / Dry Van:** These have a fully enclosed rectangular cargo box. A Glass Truck has open rack structures, NOT an enclosed box.
+
+   **Example Output:**
+     1. Glass Truck (95%)
+     2. Dually (90%)  ← if dual rear wheels are visible
+
+   **IMPORTANT:** Glass Truck is standalone — do NOT also output Box Truck, Flatbed Truck, Cargo Van, or any other primary body type alongside it. Glass Truck and Cargo Van are BOTH primary categories and are MUTUALLY EXCLUSIVE — a vehicle cannot be both.
+
+7b. **CURTAIN SIDE TRUCK DETECTION (PRIMARY CATEGORY - Box & Cargo Family):**
+   - **A Curtain Side Truck (also called Curtainsider or Tautliner) has the same overall box/van body shape as a Dry Van or Box Truck, but instead of rigid side walls, it has flexible CURTAIN panels on the sides.**
+   - **Curtain Side is a PRIMARY category — it does NOT combine with other primary categories like Box Truck, Dry Van, Reefer, etc.**
+
+   **Key Visual Cues:**
+     * **Flexible fabric/tarpaulin side panels** instead of rigid metal walls — the sides may appear slightly wrinkled, sagging, or have visible folds/creases
+     * **Curtain pulled back or partially open** — when the curtain is retracted, you can see inside the cargo area from the side. This is a STRONG indicator — a standard Box Truck or Dry Van CANNOT open from the side like this
+     * **Curtain rail/track visible** at the top edge of the cargo body — a horizontal rail or track along the top where the curtain slides
+     * **Straps, buckles, or tensioning mechanisms** along the bottom edge or sides holding the curtain in place
+     * The overall body shape looks like a Box Truck or Dry Van from a distance, but on closer inspection the side walls are soft/flexible rather than rigid metal panels
+     * **Brand markings on the curtain** (e.g., "Fastrak", "Tarpstop") — these indicate a curtain/tarp system
+     * The curtain may have a slightly **matte or fabric-like texture** compared to the glossy/smooth finish of a rigid metal box
+
+   **How to Identify When Curtain Looks Like a Wall:**
+     * ⚠️ **IMPORTANT:** When the curtain is fully closed and tensioned, it can closely resemble a solid wall. Look carefully for:
+       - Slight wrinkles, ripples, or waviness in the surface (rigid walls are perfectly flat)
+       - Visible seams or stitching lines on the surface
+       - Straps or buckle hardware along the bottom or rear edges
+       - A slightly different texture/material than the roof (roof is usually rigid metal, sides are fabric)
+       - The side panel meeting the rear door area — curtains typically end before the rear frame, while rigid walls are flush
+
+   **How to Distinguish from Similar Trucks:**
+     * **vs Box Truck / Dry Van:** Box Trucks and Dry Vans have RIGID metal side walls that are smooth, flat, and solid. Curtain Side trucks have FLEXIBLE fabric/tarp sides. If you can see the side is fabric, or if the side is pulled back revealing the interior, it is a Curtain Side.
+     * **vs Reefer/Refrigerated Truck:** Reefer trucks have rigid insulated walls AND a refrigeration unit on the front. Curtain Side trucks have NO refrigeration unit and have flexible sides.
+
+   **Example Output:**
+     1. Curtain Side (95%)
+     2. Dually (90%)  ← if dual rear wheels are visible
+
+   **IMPORTANT:** Curtain Side is standalone — do NOT also output Box Truck, Dry Van, or any other primary body type alongside it.
 
 
 8. **\"Image Not Clear\" Rule (EXTREMELY STRICT - Use Only When Truly Impossible to Classify):**
@@ -1564,10 +1682,59 @@ CRITICAL CLASSIFICATION RULES:
      * A **rear step bumper/footstand** is a SMALL narrow metal step or platform at the very bottom of the rear — it is just for a person to step on when opening doors. It does NOT lift anything.
      * A **slide-out ramp** is a long ramp that slides out from under the cargo floor for wheeling items in/out.
      * ❌ A small rear step bumper or footstand is NOT a liftgate — do NOT classify as Moving Van just because of a step bumper.
+   - **🚨🚨🚨 CRITICAL: LIFTGATES IN FOLDED/STOWED POSITION (VERY COMMONLY MISSED):**
+     * A liftgate is NOT always in the "down" position. Most liftgates are folded UP and stowed flat against/under the rear of the truck when not in use.
+     * **What a FOLDED/STOWED liftgate looks like:**
+       - A **metal platform frame** hanging horizontally BELOW the cargo floor, between the rear bumper area and the bottom of the roll-up door or rear doors
+       - **Two vertical support arms/brackets** (one on each side) extending downward from the cargo floor — these are the hydraulic arms that raise and lower the liftgate
+       - A **horizontal metal bar or rail** connecting the two support arms at the bottom
+       - The overall structure looks like a rectangular metal frame or platform tucked up under the truck body
+       - Common brands visible on liftgates: **MAXON**, **Waltco**, **Tommy Gate**, **Anthony**, **Thieman**, **Palfinger**
+     * **🎯 KEY VISUAL TEST:** Look BELOW the roll-up door or rear doors at the very bottom of the truck rear. If you see a metal frame structure with two vertical arms on each side and a horizontal platform between them — that IS a liftgate in folded position. This is NOT a step bumper.
+     * **How to distinguish folded liftgate from step bumper:**
+       - **Folded liftgate:** Has TWO prominent vertical support arms/brackets, a wide flat platform (nearly full truck width), hydraulic cylinders or hinges visible, substantial metal framework. The structure spans most of the truck's rear width.
+       - **Step bumper:** A simple narrow bar or small platform with NO vertical support arms, NO hydraulic components. Much smaller and simpler than a liftgate.
+     * **🚨 COMMON ERROR (FALSE NEGATIVE):** The LLM frequently mistakes folded liftgates for "standard bumpers" or "step bumpers". If you see a substantial metal framework below the doors with vertical arms on both sides — it is a LIFTGATE, and the truck IS a Moving Van.
+   - **🚨🚨🚨 EQUALLY IMPORTANT — WHAT IS NOT A LIFTGATE (COMMON FALSE POSITIVES):**
+     * A **standard rear bumper** (simple horizontal bar at the bottom rear) is NOT a liftgate
+     * A **ICC/DOT rear underride guard** (the horizontal metal bar required by law below the rear of larger trucks) is NOT a liftgate
+     * A **simple flat platform or step** with no hydraulic arms/brackets is NOT a liftgate
+     * A truck rear showing ONLY a roll-up door, rear doors, or tailgate with a simple bumper below — and NO metal framework with vertical support arms — does NOT have a liftgate
+     * **🎯 THE KEY TEST:** Does the structure below the doors have TWO prominent vertical hydraulic arms/brackets (one on each side) connected to a wide platform? If YES → liftgate. If NO (just a simple bar or bumper) → NOT a liftgate, NOT a Moving Van.
+   - **🚨🚨🚨 HIGH-PRIORITY FALSE POSITIVE PATTERN — ICC UNDERRIDE GUARD CONFUSED AS LIFTGATE:**
+     * The LLM frequently misidentifies the **ICC/DOT rear underride guard rail** as a folded liftgate. This is WRONG. Here is how to tell them apart:
+     * **ICC/DOT Underride Guard (NOT a liftgate):**
+       - A single horizontal metal bar or rail running across the bottom rear of the truck, typically 4-6 inches wide
+       - Attached to the truck frame by simple L-shaped brackets or angle iron supports on each side
+       - The brackets are thin, angled structural supports — they are NOT thick hydraulic cylinders
+       - The bar sits relatively close to the truck frame/chassis and does NOT fold up or down
+       - Purpose: legally required safety device to prevent cars from sliding under the truck in a rear collision
+       - Often painted black or left as bare metal, sometimes with reflective tape
+       - There is NO wide flat platform — just a narrow bar/rail
+     * **Folded Liftgate (IS a liftgate):**
+       - Has a WIDE flat platform (nearly the full width of the truck) that folds up against the rear
+       - Has TWO thick vertical HYDRAULIC CYLINDERS or arms (one on each side) — these are round, telescoping, and clearly mechanical lifting components
+       - The platform is substantial — typically 2-4 feet deep when unfolded — NOT just a narrow bar
+       - May have brand markings: MAXON, Waltco, Tommy Gate, Anthony, Thieman, Palfinger
+       - The overall structure is bulky and heavy-looking, clearly designed to lift hundreds of pounds
+     * **🎯 QUICK DECISION RULE:** Look at the rear bottom of the truck. Ask: "Is there a WIDE flat platform with THICK hydraulic cylinders on both sides?" If you only see a narrow horizontal bar with thin angle-iron brackets — it is an underride guard, NOT a liftgate. Do NOT classify as Moving Van.
    - **ONLY output "Moving Van" alongside "Box Truck - Straight Truck" or "Dry Van" — NEVER as a standalone category or with other van types.**
-   - **Example output:**
+   - **🚨 CRITICAL: Moving Van and Reefer/Refrigerated Truck are MUTUALLY EXCLUSIVE!** A Reefer/Refrigerated Truck can NEVER be classified as a Moving Van, even if a liftgate is present. Refrigerated trucks use liftgates for loading temperature-sensitive cargo — this does NOT make them Moving Vans. If the truck has a refrigeration unit, it is a Reefer, NOT a Moving Van.
+   - **🚨 CRITICAL: Moving Van and Dually are NOT mutually exclusive!** A Box Truck can be BOTH a Moving Van (has liftgate/ramp) AND a Dually (has dual rear wheels). If you detect a liftgate/ramp, you MUST output Moving Van — do NOT skip Moving Van just because you are also outputting Dually. Output ALL applicable categories.
+   - **🚨 MANDATORY RULE: If you detect a liftgate or slide-out ramp on a Box Truck or Dry Van, you MUST include "Moving Van" in the output. Detecting Dually does NOT replace or override Moving Van.**
+   - **🚨 ORDERING RULE: When BOTH Moving Van and Dually are detected, Moving Van MUST be listed BEFORE Dually.** Moving Van is a body-type modifier (describes what the truck IS), while Dually is a wheel configuration attribute. Body-type modifiers always take priority in ordering over wheel attributes. This applies even when other secondary categories like Cabover Truck - COE are present — the order should be: Primary Category → Cabover (if applicable) → Moving Van → Dually (last).
+   - **Example output (Moving Van only):**
      1. Box Truck - Straight Truck (95%)
      2. Moving Van (90%)
+   - **Example output (Moving Van + Dually — BOTH apply, Moving Van BEFORE Dually):**
+     1. Box Truck - Straight Truck (95%)
+     2. Moving Van (90%)
+     3. Dually (90%)
+   - **Example output (Cabover + Moving Van + Dually — Moving Van still before Dually):**
+     1. Box Truck - Straight Truck (95%)
+     2. Cabover Truck - COE (95%)
+     3. Moving Van (90%)
+     4. Dually (90%)
 
    **F. Mobility Van (RARE):**
    - A van specially equipped to accommodate wheelchairs.
@@ -1591,6 +1758,13 @@ CRITICAL CLASSIFICATION RULES:
    - ❌ **DO NOT classify a regular Box Truck as a Step Van** — Step Van has visible entry steps at the front; a regular Box Truck does not
    - ❌ **DO NOT output "Van" alongside "Box Truck - Straight Truck" + "Cutaway Cube Van"** — Box Truck is NOT a Van Family subtype. "Van" only accompanies Van Family subtypes (Cargo Van, Passenger Van, Crew Van, Mobility Van). Box Truck + Cutaway Cube Van = just those two categories, no Van.
    - ❌ **DO NOT classify a rear step bumper/footstand as a liftgate** — a small metal step at the bottom rear is NOT a liftgate. Only a large hydraulic lifting platform or slide-out ramp qualifies for Moving Van.
+
+   **🚨 BOX & CARGO FAMILY MUTUAL EXCLUSIVITY RULES:**
+   - ❌ **DO NOT output "Reefer/Refrigerated Truck" AND "Dry Van" together** — these are mutually exclusive. Reefer = has cooling unit, Dry Van = NO cooling unit. Pick one.
+   - ❌ **DO NOT output "Reefer/Refrigerated Truck" AND "Box Truck - Straight Truck" together** — these are mutually exclusive. If it has a refrigeration unit, it is Reefer, not Box Truck.
+   - ❌ **DO NOT output "Reefer/Refrigerated Truck" AND "Moving Van" together** — these are mutually exclusive. A Reefer/Refrigerated Truck can NEVER be a Moving Van, even if a liftgate is present. Refrigerated trucks are purpose-built for temperature-controlled cargo transport and are NOT moving vans regardless of rear equipment.
+   - ❌ **DO NOT output "Glass Truck" alongside any other primary body type** (Box Truck, Dry Van, Flatbed, Cargo Van, etc.) — Glass Truck is a standalone primary category.
+   - ❌ **DO NOT output "Curtain Side" alongside any other primary body type** (Box Truck, Dry Van, Reefer, etc.) — Curtain Side is a standalone primary category.
 
 
 OUTPUT FORMAT INSTRUCTIONS:
@@ -1626,6 +1800,15 @@ OUTPUT FORMAT INSTRUCTIONS:
  Example (Moving Van - pairs with Box Truck, NOT Van):
   1. Box Truck - Straight Truck (95%)
   2. Moving Van (90%)
+ Example (Moving Van + Dually — BOTH can coexist, Moving Van ALWAYS before Dually):
+  1. Box Truck - Straight Truck (95%)
+  2. Moving Van (90%)
+  3. Dually (90%)
+ Example (Cabover + Moving Van + Dually — Moving Van still before Dually):
+  1. Box Truck - Straight Truck (95%)
+  2. Cabover Truck - COE (95%)
+  3. Moving Van (90%)
+  4. Dually (90%)
 - Example Output:
   1. Pickup Truck (98%)
   2. Flatbed Truck (15%)
@@ -2030,8 +2213,14 @@ def classify_with_gemini_multi(breadcrumb: str, category_data: dict, img_bytes_l
     # If we have 2+ images, batch into smaller mosaics and send as multiple image parts.
     if len(img_bytes_list) >= 2 and OPENCV_AVAILABLE:
         try:
-            # Take up to 9 images (3 mosaics × 3 images each)
-            images_for_mosaic = img_bytes_list[:9]
+            # Cutaway-cube categories need more images — door photo is late in gallery
+            max_images = 9  # Default: 3 mosaics × 3
+            if breadcrumb:
+                breadcrumb_lower = breadcrumb.lower()
+                if any(cat in breadcrumb_lower for cat in config.cutaway_categories):
+                    max_images = config.max_images_cutaway
+                    log_msg(f"📦 Cutaway-cube candidate (breadcrumb match) — using up to {max_images} images", worker_id)
+            images_for_mosaic = img_bytes_list[:max_images]
             batch_size = config.mosaic_batch_size
 
             # Batch images into groups of batch_size (e.g., 9 images → 3-3-3, 8 → 3-3-2)
@@ -2457,6 +2646,8 @@ A "Dually" truck has TWO separate wheels/tires mounted on EACH SIDE of the rear 
    - **Stepvan** (95% are Duallys)
    - **Cabover / COE commercial trucks** (80% are Duallys)
    - **Heavy-Duty Pickup Trucks** (30% are Duallys) - Ford F-350/F-450, RAM 3500, Chevy 3500, GMC 3500
+   - **Glass Truck** (70% are Duallys) - Heavy-load glass transport trucks
+   - **Curtain Side** (80% are Duallys) - Similar to Box Truck/Dry Van body
    - If you see these types, look EXTRA CAREFULLY for dually indicators
    - **🚨 UTILITY/SERVICE TRUCK DUALLY TIPS (CRITICAL - 80% FALSE POSITIVE RATE)**: 
      * Wide service body with compartments is DESIGNED to be wide - this is NORMAL, NOT evidence of Dually
