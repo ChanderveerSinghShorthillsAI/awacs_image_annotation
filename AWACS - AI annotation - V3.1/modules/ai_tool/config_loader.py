@@ -63,6 +63,27 @@ def load_config():
         # Thought Summaries
         config.enable_thought_summaries = config_parser.getboolean('Settings', 'EnableThoughtSummaries', fallback=False)
 
+        # Verbose Cache Logging
+        config.verbose_cache_logging = config_parser.getboolean('Settings', 'VerboseCacheLogging', fallback=True)
+
+        # Key Reports (session Excel reports saved to Key Reports folder)
+        config.enable_key_reports = config_parser.getboolean('Settings', 'EnableKeyReports', fallback=True)
+
+        # Audit Reports (audit Excel reports saved to Audit Reports folder)
+        config.enable_audit_reports = config_parser.getboolean('Settings', 'EnableAuditReports', fallback=True)
+
+        # AI Output files (annotated Excel files saved to AI output folder)
+        config.enable_ai_output = config_parser.getboolean('Settings', 'EnableAIOutput', fallback=True)
+
+        # Scrapper output files (Scrapper_*.xlsx skipped; DB_Fetch_*.xlsx goes to temp)
+        config.enable_scrapper_output = config_parser.getboolean('Settings', 'EnableScrapperOutput', fallback=True)
+
+        # Uploads folder (user-uploaded files go to temp instead of uploads/)
+        config.enable_uploads = config_parser.getboolean('Settings', 'EnableUploads', fallback=True)
+
+        # Log files (worker .txt log files written to logs/ folder)
+        config.enable_log_files = config_parser.getboolean('Settings', 'EnableLogFiles', fallback=True)
+
         # DB API Credentials
         config.db_api_client_id = config_parser.get('DB_API', 'ClientId', fallback='')
         config.db_api_client_secret = config_parser.get('DB_API', 'ClientSecret', fallback='')

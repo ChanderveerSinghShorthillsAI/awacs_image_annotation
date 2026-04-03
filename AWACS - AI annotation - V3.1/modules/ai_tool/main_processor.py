@@ -16,6 +16,8 @@ from ai_tool.rate_limiter import Yoda
 
 def merge_all_session_reports(run_ts):
     """Merge all per-worker reports into one final session report."""
+    if not getattr(config, 'enable_key_reports', True):
+        return
     try:
         pattern = os.path.join(config.key_report_dir, f"*_{run_ts}.xlsx")
         worker_files = [f for f in glob.glob(pattern) if "worker" in os.path.basename(f)]

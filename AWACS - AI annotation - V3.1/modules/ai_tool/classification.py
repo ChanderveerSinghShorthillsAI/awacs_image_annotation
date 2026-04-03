@@ -101,6 +101,8 @@ def log_gemini_caching_info(response, call_type: str, ad_id: str = "", worker_id
     Logs comprehensive caching information from Gemini API response.
     Prints all caching-related details to terminal for manual inspection.
     """
+    if not getattr(config, 'verbose_cache_logging', True):
+        return
     print(f"\n{'#'*80}")
     print(f"# GEMINI IMPLICIT CACHING ANALYSIS - {call_type}")
     if ad_id:
@@ -1876,7 +1878,8 @@ Breadcrumb: "{breadcrumb}"
     
     # Log prompt structure
     cacheable_tokens_approx = len(cacheable_rules_prefix.split()) * 1.3
-    print(f"\n💡 EXPLICIT CACHING: {int(cacheable_tokens_approx)}+ static tokens (cached server-side) + dynamic breadcrumb/image per ad")
+    if getattr(config, 'verbose_cache_logging', True):
+        print(f"\n💡 EXPLICIT CACHING: {int(cacheable_tokens_approx)}+ static tokens (cached server-side) + dynamic breadcrumb/image per ad")
     
     max_retries = 3
     attempt = 0
@@ -1928,7 +1931,8 @@ Breadcrumb: "{breadcrumb}"
             
             if not using_explicit_cache:
                 # Fallback: use old google-generativeai SDK (standard non-cached call)
-                print(f"   ℹ️  Falling back to standard (non-cached) API call")
+                if getattr(config, 'verbose_cache_logging', True):
+                    print(f"   ℹ️  Falling back to standard (non-cached) API call")
                 model = setup_genai_client(config.gemini_model_classification)
                 all_parts = cacheable_content_parts + dynamic_parts
                 with open(os.devnull, 'w') as f, contextlib.redirect_stdout(f), contextlib.redirect_stderr(f):
@@ -2812,7 +2816,8 @@ Examples:
             
             if not using_explicit_cache:
                 # Fallback: use old google-generativeai SDK (standard non-cached call)
-                print(f"   ℹ️  Dually: Falling back to standard (non-cached) API call")
+                if getattr(config, 'verbose_cache_logging', True):
+                    print(f"   ℹ️  Dually: Falling back to standard (non-cached) API call")
                 model = setup_genai_client(config.gemini_model_dually_verification)
                 parts = [dynamic_intro + cacheable_dually_rules]
                 parts.append({

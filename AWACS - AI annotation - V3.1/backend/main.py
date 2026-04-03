@@ -6,6 +6,7 @@ import uuid
 import asyncio
 import time
 import threading
+import tempfile
 from datetime import datetime
 from typing import Dict
 from pathlib import Path
@@ -75,6 +76,113 @@ jobs: Dict[str, dict] = {}
 jobs_lock = threading.RLock()  # Thread-safe lock for concurrent job dict access
 job_progress: Dict[str, dict] = {}  # Track real-time progress per job
 audit_jobs: Dict[str, dict] = {}  # Track audit jobs
+
+# Temp file tracking — collects paths of files saved to OS temp dir so they
+# can be deleted by the background cleanup thread.
+_temp_output_files: set = set()
+_temp_files_lock = threading.Lock()
+
+# Unique tag embedded in every temp filename so startup cleanup only touches
+# files from THIS instance (safe if multiple AWACS instances share the same OS).
+_AWACS_TEMP_TAG = f"awacs8000_"
+
+# Filename prefixes that AWACS writes to temp dir (used for startup scan)
+_AWACS_TEMP_PREFIXES = (
+    f"{_AWACS_TEMP_TAG}output_annotated_",
+    f"{_AWACS_TEMP_TAG}output_reannotated_",
+    f"{_AWACS_TEMP_TAG}output_db_annotated_",
+    f"{_AWACS_TEMP_TAG}batch_",
+    f"{_AWACS_TEMP_TAG}Audit_Report_",
+    f"{_AWACS_TEMP_TAG}DB_Fetch_",
+    f"{_AWACS_TEMP_TAG}upload_",
+    f"{_AWACS_TEMP_TAG}patch_summary_",
+)
+
+# How long (in hours) to keep temp output files before deleting them.
+# Files older than this are removed by the background cleanup thread.
+_TEMP_FILE_MAX_AGE_HOURS = 24
+
+# How often (in seconds) the background cleanup thread runs.
+_TEMP_CLEANUP_INTERVAL_SECONDS = 3600  # every hour
+
+
+def _temp_path(filename: str) -> str:
+    """Return a tagged temp path for a given filename, safe across AWACS instances."""
+    tagged = _AWACS_TEMP_TAG + filename
+    return os.path.join(tempfile.gettempdir(), tagged)
+
+
+def _register_temp_file(path: str):
+    """Register a temp output file for periodic cleanup."""
+    with _temp_files_lock:
+        _temp_output_files.add(path)
+    print(f"   [TEMP] Registered for cleanup: {os.path.basename(path)}")
+
+
+def _cleanup_old_temp_files():
+    """Delete registered temp files older than _TEMP_FILE_MAX_AGE_HOURS."""
+    cutoff = time.time() - (_TEMP_FILE_MAX_AGE_HOURS * 3600)
+    deleted = []
+    with _temp_files_lock:
+        for path in list(_temp_output_files):
+            try:
+                if os.path.exists(path):
+                    if os.path.getmtime(path) < cutoff:
+                        os.remove(path)
+                        _temp_output_files.discard(path)
+                        deleted.append(os.path.basename(path))
+                else:
+                    _temp_output_files.discard(path)
+            except Exception as e:
+                print(f"   [TEMP] Could not delete {os.path.basename(path)}: {e}")
+    if deleted:
+        print(f"\n[TEMP CLEANUP] Deleted {len(deleted)} file(s) older than {_TEMP_FILE_MAX_AGE_HOURS}h:")
+        for name in deleted:
+            print(f"   - {name}")
+    else:
+        print(f"[TEMP CLEANUP] No files older than {_TEMP_FILE_MAX_AGE_HOURS}h — nothing to delete.")
+
+
+def _cleanup_leftover_awacs_temp_files():
+    """Delete any AWACS temp files left from a previous crashed/restarted session."""
+    tmp = tempfile.gettempdir()
+    deleted = []
+    for fname in os.listdir(tmp):
+        if fname.endswith(".xlsx") and any(fname.startswith(p) for p in _AWACS_TEMP_PREFIXES):
+            try:
+                os.remove(os.path.join(tmp, fname))
+                deleted.append(fname)
+            except Exception as e:
+                print(f"   [TEMP] Could not delete leftover {fname}: {e}")
+    if deleted:
+        print(f"[TEMP CLEANUP] Removed {len(deleted)} leftover file(s) from previous session:")
+        for name in deleted:
+            print(f"   - {name}")
+    else:
+        print("[TEMP CLEANUP] No leftover files from previous session.")
+
+
+def _temp_cleanup_loop():
+    """Background thread: runs cleanup every _TEMP_CLEANUP_INTERVAL_SECONDS."""
+    while True:
+        time.sleep(_TEMP_CLEANUP_INTERVAL_SECONDS)
+        print(f"\n[TEMP CLEANUP] Background cleanup running (interval: {_TEMP_CLEANUP_INTERVAL_SECONDS // 3600}h)...")
+        _cleanup_old_temp_files()
+
+
+@app.on_event("startup")
+def on_startup():
+    print("\n[TEMP CLEANUP] Checking for leftover temp files from previous session...")
+    _cleanup_leftover_awacs_temp_files()
+    t = threading.Thread(target=_temp_cleanup_loop, daemon=True)
+    t.start()
+    print(f"[TEMP CLEANUP] Background cleanup thread started — runs every {_TEMP_CLEANUP_INTERVAL_SECONDS // 3600}h, deletes files older than {_TEMP_FILE_MAX_AGE_HOURS}h\n")
+
+
+@app.on_event("shutdown")
+def on_shutdown():
+    print("\n[TEMP CLEANUP] Server shutting down — running final cleanup...")
+    _cleanup_old_temp_files()
 
 
 class JobStatus:
@@ -681,7 +789,8 @@ def verify_dually_listings(result_df: pd.DataFrame, job_id: str, yoda_instance):
         jobs[job_id]['dually_verified'] = 0
     
     # STEP 1: Pre-fetch all images first (PARALLEL for speed)
-    print("\n   📥 STEP 1: Pre-fetching ALL images from cache...")
+    if getattr(config, 'verbose_cache_logging', True):
+        print("\n   📥 STEP 1: Pre-fetching ALL images from cache...")
     prefetch_start = time.time()
     prefetched_images = {}
     
@@ -843,7 +952,8 @@ def verify_dually_listings(result_df: pd.DataFrame, job_id: str, yoda_instance):
                 
                 if is_dually:
                     verified_count += 1
-                    print(f"   [{current_num}/{total_dually}] ✅ {ad_id}: CONFIRMED | Cost: {cost:.4f}¢ → Total: {new_cost:.4f}¢ | Time: {listing_time:.2f}s | Avg: {avg_time:.2f}s | Rate: {rate*60:.1f}/min | ETA: {eta:.0f}s")
+                    if getattr(config, 'verbose_cache_logging', True):
+                        print(f"   [{current_num}/{total_dually}] ✅ {ad_id}: CONFIRMED | Cost: {cost:.4f}¢ → Total: {new_cost:.4f}¢ | Time: {listing_time:.2f}s | Avg: {avg_time:.2f}s | Rate: {rate*60:.1f}/min | ETA: {eta:.0f}s")
                     
                     # RECALCULATE STATUS for confirmed dually
                     breadcrumbs = [
@@ -863,7 +973,8 @@ def verify_dually_listings(result_df: pd.DataFrame, job_id: str, yoda_instance):
                     
                 else:
                     removed_count += 1
-                    print(f"   [{current_num}/{total_dually}] ❌ {ad_id}: FALSE POSITIVE - REMOVING | Cost: {cost:.4f}¢ → Total: {new_cost:.4f}¢ | Time: {listing_time:.2f}s | Avg: {avg_time:.2f}s | Rate: {rate*60:.1f}/min | ETA: {eta:.0f}s")
+                    if getattr(config, 'verbose_cache_logging', True):
+                        print(f"   [{current_num}/{total_dually}] ❌ {ad_id}: FALSE POSITIVE - REMOVING | Cost: {cost:.4f}¢ → Total: {new_cost:.4f}¢ | Time: {listing_time:.2f}s | Avg: {avg_time:.2f}s | Rate: {rate*60:.1f}/min | ETA: {eta:.0f}s")
                     
                     # Remove "Dually" from each annotation column
                     for col in annotation_cols:
@@ -933,13 +1044,14 @@ def verify_dually_listings(result_df: pd.DataFrame, job_id: str, yoda_instance):
     avg_verify_time = verification_loop_elapsed / results_collected if results_collected > 0 else 0
     
     # VERIFICATION: Check that costs were actually added to the DataFrame
-    print("\n" + "="*80)
-    print("📊 COST VERIFICATION: Checking Cost_Cents Updates")
-    print("="*80)
-    cost_sum_in_df = result_df['Cost_Cents'].sum() if 'Cost_Cents' in result_df.columns else 0
-    print(f"   Total Cost_Cents in DataFrame: {cost_sum_in_df:.4f}¢")
-    print(f"   Dually verification costs calculated: {total_cost:.4f}¢")
-    print("="*80 + "\n")
+    if getattr(config, 'verbose_cache_logging', True):
+        print("\n" + "="*80)
+        print("📊 COST VERIFICATION: Checking Cost_Cents Updates")
+        print("="*80)
+        cost_sum_in_df = result_df['Cost_Cents'].sum() if 'Cost_Cents' in result_df.columns else 0
+        print(f"   Total Cost_Cents in DataFrame: {cost_sum_in_df:.4f}¢")
+        print(f"   Dually verification costs calculated: {total_cost:.4f}¢")
+        print("="*80 + "\n")
     
     print("\n" + "="*80)
     print("🔍 DUALLY VERIFICATION PHASE COMPLETE - MULTI-THREADED RESULTS")
@@ -1060,10 +1172,11 @@ def run_job_pipeline_sync(job_id: str, file_path: str):
         # Fallback to synchronous scraper if needed (for troubleshooting):
         # df = scrape_ads_sync(df, job_id)
 
-        # Save scraped data
-        scraper_output_path = os.path.join(config.scrapper_output_dir, f"Scrapper_{run_ts}.xlsx")
-        os.makedirs(config.scrapper_output_dir, exist_ok=True)
-        df.to_excel(scraper_output_path, index=False)
+        # Save scraped data (skipped if EnableScrapperOutput=False — df already in memory, file not read back)
+        if getattr(config, 'enable_scrapper_output', True):
+            os.makedirs(config.scrapper_output_dir, exist_ok=True)
+            scraper_output_path = os.path.join(config.scrapper_output_dir, f"Scrapper_{run_ts}.xlsx")
+            df.to_excel(scraper_output_path, index=False)
         
         job['status'] = JobStatus.PROCESSING
         
@@ -1116,14 +1229,18 @@ def run_job_pipeline_sync(job_id: str, file_path: str):
         
         # Save final output
         output_filename = f"output_annotated_{run_ts}.xlsx"
-        output_path = os.path.join(config.output_dir, output_filename)
-        os.makedirs(config.output_dir, exist_ok=True)
+        if getattr(config, 'enable_ai_output', True):
+            os.makedirs(config.output_dir, exist_ok=True)
+            output_path = os.path.join(config.output_dir, output_filename)
+        else:
+            output_path = _temp_path(output_filename)
+            _register_temp_file(output_path)
         result_df.to_excel(output_path, index=False)
-        
+
         job['status'] = JobStatus.COMPLETED
         job['output_file'] = output_path
         job['output_filename'] = output_filename
-        
+
         # Calculate summary - Cost_Cents already includes dually verification costs (added in line 737)
         total_cost_in_df = result_df['Cost_Cents'].sum() if 'Cost_Cents' in result_df.columns else 0
         
@@ -1235,14 +1352,18 @@ def run_reannotation_pipeline_sync(job_id: str, file_path: str):
         
         # Save final output
         output_filename = f"output_reannotated_{run_ts}.xlsx"
-        output_path = os.path.join(config.output_dir, output_filename)
-        os.makedirs(config.output_dir, exist_ok=True)
+        if getattr(config, 'enable_ai_output', True):
+            os.makedirs(config.output_dir, exist_ok=True)
+            output_path = os.path.join(config.output_dir, output_filename)
+        else:
+            output_path = _temp_path(output_filename)
+            _register_temp_file(output_path)
         result_df.to_excel(output_path, index=False)
-        
+
         job['status'] = JobStatus.COMPLETED
         job['output_file'] = output_path
         job['output_filename'] = output_filename
-        
+
         # Calculate summary
         # Calculate summary - Cost_Cents already includes dually verification costs (added in line 737)
         total_cost_in_df = result_df['Cost_Cents'].sum() if 'Cost_Cents' in result_df.columns else 0
@@ -1406,8 +1527,12 @@ def run_db_annotation_pipeline_sync(job_id: str, file_path: str):
             print(f"{'='*80}")
             
             batch_filename = f"batch_{batch_num}_{batch_start+1}-{batch_end}_annotated_{run_ts}.xlsx"
-            batch_path = os.path.join(config.output_dir, batch_filename)
-            
+            if getattr(config, 'enable_ai_output', True):
+                batch_path = os.path.join(config.output_dir, batch_filename)
+            else:
+                batch_path = _temp_path(batch_filename)
+                _register_temp_file(batch_path)
+
             # Write to temp file first, then move atomically to prevent corruption
             temp_path = batch_path + '.writing.xlsx'
             batch_result_df.to_excel(temp_path, index=False)
@@ -1478,18 +1603,22 @@ def run_db_annotation_pipeline_sync(job_id: str, file_path: str):
             final_result_df = pd.DataFrame()
         
         output_filename = f"output_db_annotated_{run_ts}.xlsx"
-        output_path = os.path.join(config.output_dir, output_filename)
+        if getattr(config, 'enable_ai_output', True):
+            output_path = os.path.join(config.output_dir, output_filename)
+        else:
+            output_path = _temp_path(output_filename)
+            _register_temp_file(output_path)
         final_result_df.to_excel(output_path, index=False)
-        
+
         total_cost = total_annotation_cost + total_dually_cost
-        
+
         job['status'] = JobStatus.COMPLETED
         job['output_file'] = output_path
         job['output_filename'] = output_filename
         job['total_cost'] = float(total_cost)
         job['annotation_cost'] = float(total_annotation_cost)
         job['dually_verification_cost'] = float(total_dually_cost)
-        
+
         print(f"   ✅ Final combined file saved: {output_filename}")
         print(f"   📊 Total rows: {len(final_result_df)}")
         print(f"   📁 Path: {output_path}")
@@ -1657,16 +1786,20 @@ def run_db_fetch_pipeline_sync(
         else:
             print(f"   ✅ No duplicates found")
         
-        # Save intermediate DB fetch output
+        # Save intermediate DB fetch output (read back by start_db_annotation — must always be saved)
         db_fetch_filename = f"DB_Fetch_{run_ts}.xlsx"
-        db_fetch_dir = os.path.join(config.project_root, "Scrapper output")
-        os.makedirs(db_fetch_dir, exist_ok=True)
-        db_fetch_path = os.path.join(db_fetch_dir, db_fetch_filename)
+        if getattr(config, 'enable_scrapper_output', True):
+            db_fetch_dir = os.path.join(config.project_root, "Scrapper output")
+            os.makedirs(db_fetch_dir, exist_ok=True)
+            db_fetch_path = os.path.join(db_fetch_dir, db_fetch_filename)
+        else:
+            db_fetch_path = _temp_path(db_fetch_filename)
+            _register_temp_file(db_fetch_path)
         df.to_excel(db_fetch_path, index=False)
-        
+
         print(f"   ✅ Intermediate DB Fetch file saved: {db_fetch_filename}")
         print(f"   📁 Path: {db_fetch_path}\n")
-        
+
         job['total_ads'] = int(len(df))
         job['status'] = JobStatus.PROCESSING
         
@@ -1726,14 +1859,18 @@ def run_db_fetch_pipeline_sync(
         print("="*80)
         
         output_filename = f"output_db_annotated_{run_ts}.xlsx"
-        output_path = os.path.join(config.output_dir, output_filename)
-        os.makedirs(config.output_dir, exist_ok=True)
+        if getattr(config, 'enable_ai_output', True):
+            os.makedirs(config.output_dir, exist_ok=True)
+            output_path = os.path.join(config.output_dir, output_filename)
+        else:
+            output_path = _temp_path(output_filename)
+            _register_temp_file(output_path)
         result_df.to_excel(output_path, index=False)
-        
+
         print(f"   ✅ Final annotated file saved: {output_filename}")
         print(f"   📁 Path: {output_path}")
         print("="*80 + "\n")
-        
+
         job['status'] = JobStatus.COMPLETED
         job['output_file'] = output_path
         job['output_filename'] = output_filename
@@ -1785,16 +1922,21 @@ async def upload_file(file: UploadFile = File(...)):
         raise HTTPException(status_code=400, detail="Only Excel files (.xlsx, .xls) are supported")
     
     job_id = str(uuid.uuid4())[:8]
-    
+
     # Save uploaded file
-    upload_dir = os.path.join(config.project_root, "uploads")
-    os.makedirs(upload_dir, exist_ok=True)
-    file_path = os.path.join(upload_dir, f"{job_id}_{file.filename}")
-    
+    upload_filename = f"upload_{job_id}_{file.filename}"
+    if getattr(config, 'enable_uploads', True):
+        upload_dir = os.path.join(config.project_root, "uploads")
+        os.makedirs(upload_dir, exist_ok=True)
+        file_path = os.path.join(upload_dir, upload_filename)
+    else:
+        file_path = _temp_path(upload_filename)
+        _register_temp_file(file_path)
+
     with open(file_path, "wb") as f:
         content = await file.read()
         f.write(content)
-    
+
     # Validate file has Ad ID column
     try:
         df = pd.read_excel(file_path)
@@ -1806,7 +1948,7 @@ async def upload_file(file: UploadFile = File(...)):
         if os.path.exists(file_path):
             os.remove(file_path)
         raise HTTPException(status_code=400, detail=f"Invalid Excel file: {str(e)}")
-    
+
     # Create job
     jobs[job_id] = {
         "id": job_id,
@@ -1859,11 +2001,16 @@ async def reannotate_file(file: UploadFile = File(...), background_tasks: Backgr
         raise HTTPException(status_code=400, detail="Only Excel files (.xlsx, .xls) are supported")
     
     job_id = str(uuid.uuid4())[:8]
-    
+
     # Save uploaded file
-    upload_dir = os.path.join(config.project_root, "uploads")
-    os.makedirs(upload_dir, exist_ok=True)
-    file_path = os.path.join(upload_dir, f"{job_id}_reannotate_{file.filename}")
+    upload_filename = f"upload_{job_id}_reannotate_{file.filename}"
+    if getattr(config, 'enable_uploads', True):
+        upload_dir = os.path.join(config.project_root, "uploads")
+        os.makedirs(upload_dir, exist_ok=True)
+        file_path = os.path.join(upload_dir, upload_filename)
+    else:
+        file_path = _temp_path(upload_filename)
+        _register_temp_file(file_path)
     
     with open(file_path, "wb") as f:
         content = await file.read()
@@ -2005,15 +2152,15 @@ async def download_result(job_id: str):
     """Download the annotated Excel file"""
     if job_id not in jobs:
         raise HTTPException(status_code=404, detail="Job not found")
-    
+
     job = jobs[job_id]
     if job['status'] != JobStatus.COMPLETED:
         raise HTTPException(status_code=400, detail="Job is not completed yet")
-    
+
     output_path = job.get('output_file')
     if not output_path or not os.path.exists(output_path):
         raise HTTPException(status_code=404, detail="Output file not found")
-    
+
     return FileResponse(
         path=output_path,
         filename=job.get('output_filename', 'output.xlsx'),
@@ -2056,24 +2203,27 @@ async def download_batch(job_id: str, batch_index: int):
     """Download a specific batch Excel file"""
     if job_id not in jobs:
         raise HTTPException(status_code=404, detail="Job not found")
-    
+
     job = jobs[job_id]
     batches = job.get('batches', [])
-    
+
     # Find the batch by index
     batch = None
     for b in batches:
         if b['batch_index'] == batch_index:
             batch = b
             break
-    
+
     if not batch:
         raise HTTPException(status_code=404, detail=f"Batch {batch_index} not found")
-    
+
     file_path = batch.get('file_path')
     if not file_path or not os.path.exists(file_path):
         raise HTTPException(status_code=404, detail="Batch file not found")
-    
+
+    # Batch temp files are NOT deleted here — the combine step still needs to read them all.
+    # They are deleted after the final combined file is written.
+
     return FileResponse(
         path=file_path,
         filename=batch['filename'],
@@ -2265,13 +2415,16 @@ def run_audit_comparison(ai_df: pd.DataFrame, manual_df: pd.DataFrame, audit_id:
         hall_of_shame = pd.DataFrame([{"Message": "No Rejections! Perfect accuracy!"}])
     
     # Save Audit Report
-    audit_dir = os.path.join(config.project_root, "Audit Reports")
-    os.makedirs(audit_dir, exist_ok=True)
-    
     timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
     report_filename = f"Audit_Report_{timestamp}.xlsx"
-    report_path = os.path.join(audit_dir, report_filename)
-    
+    if getattr(config, 'enable_audit_reports', True):
+        audit_dir = os.path.join(config.project_root, "Audit Reports")
+        os.makedirs(audit_dir, exist_ok=True)
+        report_path = os.path.join(audit_dir, report_filename)
+    else:
+        report_path = _temp_path(report_filename)
+        _register_temp_file(report_path)
+
     try:
         with pd.ExcelWriter(report_path) as writer:
             final_output.to_excel(writer, sheet_name="Detailed Audit", index=False)
@@ -2393,17 +2546,21 @@ async def run_audit(
 
 
 @app.get("/api/audit/{audit_id}/download")
-async def download_audit_report(audit_id: str):
+async def download_audit_report(audit_id: str, background_tasks: BackgroundTasks):
     """Download the audit report Excel file"""
     if audit_id not in audit_jobs:
         raise HTTPException(status_code=404, detail="Audit report not found")
-    
+
     audit = audit_jobs[audit_id]
     report_path = audit.get('report_path')
-    
+
     if not report_path or not os.path.exists(report_path):
         raise HTTPException(status_code=404, detail="Audit report file not found")
-    
+
+    # If audit reports are stored in temp dir, clean up after serving
+    if not getattr(config, 'enable_audit_reports', True):
+        background_tasks.add_task(os.remove, report_path)
+
     return FileResponse(
         path=report_path,
         filename=audit.get('report_filename', 'audit_report.xlsx'),
@@ -2856,11 +3013,15 @@ def run_db_fetch_by_ids_sync(job_id: str, file_path: str, client_id: str, client
         # Merge to preserve the input order (left join keeps the order of ordered_df)
         result_df = pd.merge(ordered_df, result_df, on="Ad ID", how="left")
         
-        # Save intermediate DB fetch output
+        # Save intermediate DB fetch output (read back for annotation + download — must always be saved)
         db_fetch_filename = f"DB_Fetch_ByIDs_{run_ts}.xlsx"
-        db_fetch_dir = os.path.join(config.project_root, "Scrapper output")
-        os.makedirs(db_fetch_dir, exist_ok=True)
-        db_fetch_path = os.path.join(db_fetch_dir, db_fetch_filename)
+        if getattr(config, 'enable_scrapper_output', True):
+            db_fetch_dir = os.path.join(config.project_root, "Scrapper output")
+            os.makedirs(db_fetch_dir, exist_ok=True)
+            db_fetch_path = os.path.join(db_fetch_dir, db_fetch_filename)
+        else:
+            db_fetch_path = _temp_path(db_fetch_filename)
+            _register_temp_file(db_fetch_path)
         result_df.to_excel(db_fetch_path, index=False)
         
         print(f"   ✅ Excel file saved: {db_fetch_filename}")
@@ -3101,14 +3262,18 @@ async def fetch_from_db(request: DBFetchRequest):
         df = pd.DataFrame(processed_trucks)
         df["Ad ID"] = df["Ad ID"].astype(str).str.replace(r'\.0$', '', regex=True).str.strip()
         
-        # Save to file
+        # Save to file (read back by start_db_annotation + download — must always be saved)
         timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
         fetch_id = str(uuid.uuid4())[:8]
         output_filename = f"DB_Fetch_{timestamp}.xlsx"
-        output_dir = os.path.join(config.project_root, "Scrapper output")
-        os.makedirs(output_dir, exist_ok=True)
-        output_path = os.path.join(output_dir, output_filename)
-        
+        if getattr(config, 'enable_scrapper_output', True):
+            output_dir = os.path.join(config.project_root, "Scrapper output")
+            os.makedirs(output_dir, exist_ok=True)
+            output_path = os.path.join(output_dir, output_filename)
+        else:
+            output_path = _temp_path(output_filename)
+            _register_temp_file(output_path)
+
         df.to_excel(output_path, index=False)
         
         print(f"   ✅ Excel file created: {output_filename}")
@@ -3309,11 +3474,16 @@ async def fetch_by_ad_ids(
         raise HTTPException(status_code=400, detail="Only Excel files (.xlsx, .xls) are supported")
     
     job_id = str(uuid.uuid4())[:8]
-    
+
     # Save uploaded file
-    upload_dir = os.path.join(config.project_root, "uploads")
-    os.makedirs(upload_dir, exist_ok=True)
-    file_path = os.path.join(upload_dir, f"{job_id}_db_fetch_ids_{file.filename}")
+    upload_filename = f"upload_{job_id}_db_fetch_ids_{file.filename}"
+    if getattr(config, 'enable_uploads', True):
+        upload_dir = os.path.join(config.project_root, "uploads")
+        os.makedirs(upload_dir, exist_ok=True)
+        file_path = os.path.join(upload_dir, upload_filename)
+    else:
+        file_path = _temp_path(upload_filename)
+        _register_temp_file(file_path)
     
     with open(file_path, "wb") as f:
         content = await file.read()
@@ -4138,13 +4308,17 @@ async def download_patch_report(report_id: str):
     }
     df.rename(columns=column_map, inplace=True)
     
-    # Write to a temporary Excel file
-    report_dir = os.path.join(config.project_root, "uploads")
-    os.makedirs(report_dir, exist_ok=True)
+    # Write patch summary Excel (served immediately, not read back — always goes to temp)
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     filename = f"patch_summary_{report_id}_{timestamp}.xlsx"
-    file_path = os.path.join(report_dir, filename)
-    
+    if getattr(config, 'enable_uploads', True):
+        report_dir = os.path.join(config.project_root, "uploads")
+        os.makedirs(report_dir, exist_ok=True)
+        file_path = os.path.join(report_dir, filename)
+    else:
+        file_path = _temp_path(filename)
+        _register_temp_file(file_path)
+
     df.to_excel(file_path, index=False, engine="openpyxl")
     print(f"📥 Patch report Excel generated: {file_path} ({len(summary)} rows)")
     

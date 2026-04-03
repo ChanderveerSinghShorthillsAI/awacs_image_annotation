@@ -12,6 +12,8 @@ at 90% discount ($0.03/M vs $0.30/M for Flash).
 import time
 import base64
 
+from .config_loader import config
+
 # === Try importing the NEW google-genai SDK for caching ===
 try:
     from google import genai
@@ -46,11 +48,12 @@ class ExplicitCacheManager:
         
         # Print SDK caching availability status
         if CACHING_AVAILABLE:
-            print(f"\n{'='*80}")
-            print(f"✅ GEMINI EXPLICIT CACHING: google-genai SDK detected!")
-            print(f"   Explicit caching is ENABLED — static classification rules will be cached server-side")
-            print(f"   Cached tokens are 90% cheaper ($0.03/M vs $0.30/M for Flash)")
-            print(f"{'='*80}\n")
+            if getattr(config, 'verbose_cache_logging', True):
+                print(f"\n{'='*80}")
+                print(f"✅ GEMINI EXPLICIT CACHING: google-genai SDK detected!")
+                print(f"   Explicit caching is ENABLED — static classification rules will be cached server-side")
+                print(f"   Cached tokens are 90% cheaper ($0.03/M vs $0.30/M for Flash)")
+                print(f"{'='*80}\n")
         else:
             print(f"\n{'='*80}")
             print(f"⚠️  GEMINI EXPLICIT CACHING: google-genai SDK NOT found!")
@@ -158,7 +161,8 @@ class ExplicitCacheManager:
                 config=gen_config
             )
             
-            print(f"   ✅ EXPLICIT CACHE USED: Only dynamic content (breadcrumb + image) sent to API")
+            if getattr(config, 'verbose_cache_logging', True):
+                print(f"   ✅ EXPLICIT CACHE USED: Only dynamic content (breadcrumb + image) sent to API")
             return response, True
             
         except Exception as e:
@@ -193,19 +197,22 @@ class ExplicitCacheManager:
                 # Verify cache still exists on the server
                 client.caches.get(name=cache_info['cache_name'])
                 
-                print(f"   🔄 EXPLICIT CACHE REUSED: '{cache_info['cache_name'][-30:]}...' "
-                      f"(age: {cache_age_minutes:.1f} min)")
+                if getattr(config, 'verbose_cache_logging', True):
+                    print(f"   🔄 EXPLICIT CACHE REUSED: '{cache_info['cache_name'][-30:]}...' "
+                          f"(age: {cache_age_minutes:.1f} min)")
                 return cache_info['cache_name']
-                
+
             except Exception:
-                print(f"   ⚠️  Cache expired/invalid. Recreating...")
+                if getattr(config, 'verbose_cache_logging', True):
+                    print(f"   ⚠️  Cache expired/invalid. Recreating...")
                 del self._cache_store[cache_key]
         
         # === CREATE NEW CACHE ===
         try:
-            print(f"\n{'='*80}")
-            print(f"🆕 CREATING EXPLICIT CACHE for model '{model_name}'")
-            print(f"   Uploading static classification rules to Gemini cache server...")
+            if getattr(config, 'verbose_cache_logging', True):
+                print(f"\n{'='*80}")
+                print(f"🆕 CREATING EXPLICIT CACHE for model '{model_name}'")
+                print(f"   Uploading static classification rules to Gemini cache server...")
             
             t_start = time.time()
             
@@ -238,12 +245,13 @@ class ExplicitCacheManager:
             else:
                 token_count = 'unknown'
             
-            print(f"   ✅ CACHE CREATED in {creation_time:.1f}s!")
-            print(f"   📦 Cache Name: {cache.name}")
-            print(f"   📊 Cached Tokens: {token_count}")
-            print(f"   ⏰ TTL: 1 hour (auto-expires)")
-            print(f"   💰 These tokens will now be billed at 90% discount for all subsequent calls!")
-            print(f"{'='*80}\n")
+            if getattr(config, 'verbose_cache_logging', True):
+                print(f"   ✅ CACHE CREATED in {creation_time:.1f}s!")
+                print(f"   📦 Cache Name: {cache.name}")
+                print(f"   📊 Cached Tokens: {token_count}")
+                print(f"   ⏰ TTL: 1 hour (auto-expires)")
+                print(f"   💰 These tokens will now be billed at 90% discount for all subsequent calls!")
+                print(f"{'='*80}\n")
             
             return cache.name
             
@@ -279,14 +287,17 @@ class ExplicitCacheManager:
         self._total_listings_with_cache += 1
         
         # Print per-listing savings
-        cache_type = "EXPLICIT" if is_explicit_cache else "IMPLICIT"
-        print(f"   💰 [{cache_type} CACHE HIT] Ad {ad_id}: "
-              f"{cached_tokens:,} of {total_input_tokens:,} tokens cached ({cache_percent:.0f}%) | "
-              f"Saved {listing_savings_cents:.4f}¢ on this listing | "
-              f"Running total: ${self._total_savings_usd:.4f}")
+        if getattr(config, 'verbose_cache_logging', True):
+            cache_type = "EXPLICIT" if is_explicit_cache else "IMPLICIT"
+            print(f"   💰 [{cache_type} CACHE HIT] Ad {ad_id}: "
+                  f"{cached_tokens:,} of {total_input_tokens:,} tokens cached ({cache_percent:.0f}%) | "
+                  f"Saved {listing_savings_cents:.4f}¢ on this listing | "
+                  f"Running total: ${self._total_savings_usd:.4f}")
     
     def print_total_savings(self):
         """Prints a comprehensive session summary of caching savings."""
+        if not getattr(config, 'verbose_cache_logging', True):
+            return
         print(f"\n{'='*80}")
         print(f"📊 EXPLICIT CACHING — SESSION SAVINGS REPORT")
         print(f"{'='*80}")

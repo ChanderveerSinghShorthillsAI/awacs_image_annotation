@@ -14,7 +14,11 @@ def initialize_logging(run_ts: str, worker_id: int = 0):
     Creates the file and writes the header.
     """
     global LOG_FILE
-    
+
+    if not getattr(config, 'enable_log_files', True):
+        LOG_FILE = None
+        return
+
     # Define filename: log_2025-11-26_10-00-00_worker_01.txt
     log_filename = f"log_{run_ts}_worker_{worker_id:02d}.txt"
     
@@ -234,16 +238,18 @@ def generate_session_reports(key_usage_stats_data, token_usage_stats, run_ts, wo
             ]
 
         # Save to File
+        if not getattr(config, 'enable_key_reports', True):
+            return
         os.makedirs(config.key_report_dir, exist_ok=True)
         report_filename = f"Session_Report_worker_{worker_id}_{run_ts}.xlsx"
         report_path = os.path.join(config.key_report_dir, report_filename)
-        
+
         with pd.ExcelWriter(report_path) as writer:
             if key_report_data:
                 pd.DataFrame(key_report_data).to_excel(writer, sheet_name='Key Usage', index=False)
             if token_report_data:
                 pd.DataFrame(token_report_data).to_excel(writer, sheet_name='Token Usage', index=False)
-        
+
         log_msg(f"✅ Excel Report saved: {os.path.basename(report_path)}", worker_id)
 
     except Exception as e:
@@ -260,6 +266,11 @@ def initialize_thought_log(run_ts: str, worker_id: int = 0):
     Call this right after initialize_logging() in each worker.
     """
     global THOUGHT_LOG_FILE
+
+    if not getattr(config, 'enable_log_files', True):
+        THOUGHT_LOG_FILE = None
+        return
+
     try:
         os.makedirs(config.log_dir, exist_ok=True)
         filename = f"thoughts_{run_ts}_worker_{worker_id:02d}.txt"
