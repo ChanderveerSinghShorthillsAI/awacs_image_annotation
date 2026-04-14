@@ -3054,6 +3054,601 @@ def run_db_fetch_by_ids_sync(job_id: str, file_path: str, client_id: str, client
         traceback.print_exc()
 
 
+# ==================== CDC PIPELINE TRIGGER ====================
+
+CDC_OUTPUT_DIR = os.path.join(str(PROJECT_ROOT), "cdc_ai_output_excels")
+
+
+def _cdc_get_access_token(base_url: str, client_id: str, client_secret: str, grant_type: str) -> dict:
+    """Get access token from the CDC dev DB API."""
+    import requests as _requests
+    token_url = f"{base_url}/token"
+    print(f"   POST {token_url}")
+    resp = _requests.post(token_url, data={
+        'client_id': client_id,
+        'client_secret': client_secret,
+        'grant_type': grant_type,
+    }, headers={'Content-Type': 'application/x-www-form-urlencoded'})
+    resp.raise_for_status()
+    token_data = resp.json()
+    print(f"   Access token received: {token_data['access_token'][:20]}...")
+    return token_data
+
+
+def _cdc_fetch_single_truck(base_url: str, access_token: str, ad_id: str) -> dict | None:
+    """Fetch a single truck from the CDC dev DB API."""
+    import requests as _requests
+    truck_url = f"{base_url}/trucks/{ad_id}?bypassCache=true"
+    resp = _requests.get(truck_url, headers={'Authorization': f'Bearer {access_token}'})
+    if resp.status_code == 404:
+        return None
+    resp.raise_for_status()
+    data = resp.json()
+    return data.get('result', {})
+
+
+def _cdc_fetch_worker(base_url: str, ad_id: str, access_token: str, index: int, total: int):
+    """Worker for concurrent CDC truck fetching."""
+    try:
+        print(f"   [{index}/{total}] Fetching truck {ad_id}...", end=" ", flush=True)
+        truck_data = _cdc_fetch_single_truck(base_url, access_token, ad_id)
+        if truck_data:
+            print("OK")
+            return ('success', ad_id, truck_data)
+        else:
+            print("Not Found")
+            return ('not_found', ad_id, None)
+    except Exception as e:
+        print(f"Error: {str(e)[:50]}")
+        return ('error', ad_id, str(e))
+
+
+def _cdc_dev_db_update(db_api_base_url: str, client_id: str, client_secret: str,
+                       grant_type: str, output_excel_path: str, job_id: str) -> dict:
+    """
+    Dev DB Update: Reads the annotated CDC output Excel and PUTs category updates
+    to the dev DB API for ads with Status == "Require Update".
+
+    Simplified version of the prod /api/db-update — no patch workflow, direct PUT only.
+    Uses dev credentials (same as CDC fetch).
+
+    Returns a summary dict with counts and per-ad results.
+    """
+    print(f"\n{'='*80}")
+    print(f"🔄 CDC DEV DB UPDATE — Job {job_id}")
+    print(f"{'='*80}")
+    print(f"   Excel: {os.path.basename(output_excel_path)}")
+    print(f"   Dev API: {db_api_base_url}")
+    print(f"{'='*80}\n")
+
+    # 1. Read the annotated output Excel
+    df = pd.read_excel(output_excel_path, dtype={"Ad ID": str})
+    df["Ad ID"] = df["Ad ID"].astype(str).str.replace(r'\.0$', '', regex=True).str.strip()
+    total_rows = len(df)
+
+    if "Status" not in df.columns or "Annotated_Top1" not in df.columns:
+        print(f"   ⚠️ Missing required columns (Status, Annotated_Top1) — skipping db update")
+        return {"total_rows": total_rows, "update_count": 0, "success_count": 0,
+                "failed_count": 0, "skipped_count": total_rows, "results": []}
+
+    # 2. Filter rows — only "Require Update"
+    prepared_ads = []
+    skipped_count = 0
+
+    for _, row in df.iterrows():
+        ad_id = str(row.get("Ad ID", "")).strip()
+        status = str(row.get("Status", "")).strip()
+        status_lower = status.lower()
+
+        if not ad_id or ad_id.lower() == "nan":
+            skipped_count += 1
+            continue
+
+        # Skip known non-update statuses
+        should_skip = False
+        for skip_status in DB_UPDATE_SKIP_STATUSES:
+            if skip_status in status_lower:
+                should_skip = True
+                break
+        if should_skip:
+            skipped_count += 1
+            continue
+
+        # Only process "Require Update"
+        if status_lower != "require update":
+            skipped_count += 1
+            continue
+
+        # 3. Resolve categories from Annotated_Top1/2/3
+        categories = []
+        unmapped = []
+        for col in ["Annotated_Top1", "Annotated_Top2", "Annotated_Top3"]:
+            cat_name = str(row.get(col, "")).strip() if pd.notna(row.get(col)) else ""
+            if cat_name and cat_name.lower() not in ("", "nan", "none"):
+                canonical_name, cat_id = lookup_category(cat_name)
+                if cat_id:
+                    categories.append({"id": cat_id, "name": canonical_name})
+                else:
+                    unmapped.append(cat_name)
+
+        if not categories or unmapped:
+            reason = f"unmapped: {unmapped}" if unmapped else "no categories"
+            print(f"   ⏭️ Ad {ad_id}: Skipped — {reason}")
+            skipped_count += 1
+            continue
+
+        cat_names = [c["name"] for c in categories]
+        prepared_ads.append((ad_id, categories, cat_names))
+
+    if not prepared_ads:
+        print(f"   ℹ️ No ads with 'Require Update' status to process")
+        print(f"   Total: {total_rows} | Skipped: {skipped_count}")
+        return {"total_rows": total_rows, "update_count": 0, "success_count": 0,
+                "failed_count": 0, "skipped_count": skipped_count, "results": []}
+
+    # 4. Get fresh dev token
+    print(f"   🔑 Getting fresh dev access token...")
+    token_data = _cdc_get_access_token(db_api_base_url, client_id, client_secret, grant_type)
+    token_holder = {"access_token": token_data["access_token"]}
+    token_lock = threading.Lock()
+
+    # Token refresh helper (re-fetch if needed during long runs)
+    token_expiry = time.time() + token_data.get("expires_in", 3600) - 300
+
+    def _get_valid_token():
+        nonlocal token_expiry
+        with token_lock:
+            if time.time() >= token_expiry:
+                print("   🔄 Refreshing dev access token...")
+                new_data = _cdc_get_access_token(db_api_base_url, client_id, client_secret, grant_type)
+                token_holder["access_token"] = new_data["access_token"]
+                token_expiry = time.time() + new_data.get("expires_in", 3600) - 300
+            return token_holder["access_token"]
+
+    # 5. Multithreaded PUT updates
+    update_base_url = f"{db_api_base_url}/trucks"
+    max_workers = 5
+    print(f"\n   📝 Updating {len(prepared_ads)} ads in dev DB ({max_workers} workers)")
+
+    results = []
+    update_start = time.time()
+
+    def _update_worker(ad_data, idx, total):
+        ad_id, categories, cat_names = ad_data
+        current_token = _get_valid_token()
+        print(f"   [{idx}/{total}] 📤 Ad {ad_id} → {cat_names}")
+        result = update_ad_categories_in_db(update_base_url, ad_id, categories, current_token)
+        if result["success"]:
+            print(f"   [{idx}/{total}] ✅ Ad {ad_id}: Updated")
+        else:
+            print(f"   [{idx}/{total}] ❌ Ad {ad_id}: {result.get('error', 'Unknown')}")
+        return {
+            "ad_id": ad_id,
+            "success": result["success"],
+            "error": result.get("error", ""),
+            "categories": cat_names,
+        }
+
+    with ThreadPoolExecutor(max_workers=max_workers) as executor:
+        future_to_ad = {
+            executor.submit(_update_worker, ad_data, i, len(prepared_ads)): ad_data
+            for i, ad_data in enumerate(prepared_ads, 1)
+        }
+        for future in as_completed(future_to_ad):
+            try:
+                results.append(future.result())
+            except Exception as e:
+                ad_data = future_to_ad[future]
+                print(f"   ❌ Worker exception for Ad {ad_data[0]}: {e}")
+                results.append({
+                    "ad_id": ad_data[0], "success": False,
+                    "error": f"Worker exception: {str(e)}", "categories": ad_data[2],
+                })
+
+    elapsed = time.time() - update_start
+    success_count = sum(1 for r in results if r["success"])
+    failed_count = sum(1 for r in results if not r["success"])
+
+    print(f"\n{'='*80}")
+    print(f"🔄 CDC DEV DB UPDATE COMPLETE ({elapsed:.1f}s)")
+    print(f"   Total rows: {total_rows} | To update: {len(prepared_ads)} | Skipped: {skipped_count}")
+    print(f"   ✅ Success: {success_count} | ❌ Failed: {failed_count}")
+    print(f"{'='*80}\n")
+
+    # Save db-update report as Excel to cdc_ai_output_excels/
+    report_filename = None
+    if results:
+        try:
+            report_df = pd.DataFrame([
+                {
+                    "Ad ID": r["ad_id"],
+                    "Categories": ", ".join(r.get("categories", [])),
+                    "Update Status": "Success" if r["success"] else "Failed",
+                    "Error": r.get("error", ""),
+                }
+                for r in results
+            ])
+            run_ts = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+            report_filename = f"CDC_DB_Update_{run_ts}.xlsx"
+            report_path = os.path.join(CDC_OUTPUT_DIR, report_filename)
+            os.makedirs(CDC_OUTPUT_DIR, exist_ok=True)
+            report_df.to_excel(report_path, index=False)
+            print(f"   📄 DB Update report saved: {report_filename}")
+        except Exception as e:
+            print(f"   ⚠️ Failed to save DB Update report: {e}")
+
+    return {
+        "total_rows": total_rows,
+        "update_count": len(prepared_ads),
+        "success_count": success_count,
+        "failed_count": failed_count,
+        "skipped_count": skipped_count,
+        "elapsed_seconds": round(elapsed, 1),
+        "results": results,
+        "report_filename": report_filename,
+    }
+
+
+def run_cdc_pipeline_sync(job_id: str, ad_ids: list, client_id: str, client_secret: str,
+                          grant_type: str, db_api_base_url: str):
+    """
+    CDC Pipeline: DB Fetch + AI Annotation for CDC-filtered truck ads.
+
+    Uses the dev DB API (separate from prod) for fetching truck data.
+
+    1. Fetches truck data from dev DB API by ad IDs
+    2. Saves intermediate fetch Excel to cdc_ai_output_excels/
+    3. Runs AI annotation pipeline
+    4. Saves annotated output to cdc_ai_output_excels/
+    """
+    job = jobs[job_id]
+    run_ts = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+
+    try:
+        print(f"\n{'='*80}")
+        print(f"CDC PIPELINE JOB {job_id} STARTED")
+        print(f"{'='*80}")
+        print(f"   Ad IDs: {len(ad_ids)}")
+        print(f"   Output Dir: {CDC_OUTPUT_DIR}")
+        print(f"{'='*80}\n")
+
+        os.makedirs(CDC_OUTPUT_DIR, exist_ok=True)
+
+        # ── Ad Annotation Limit: Pre-filter ──
+        if config.enable_ad_annotation_limit:
+            over_limit = ad_tracker.filter_over_limit_ads(ad_ids, config.max_annotation_runs)
+            if over_limit:
+                print(f"   Ad Tracker: Skipping {len(over_limit)} ads (already annotated {config.max_annotation_runs}+ times)")
+                ad_ids = [aid for aid in ad_ids if aid not in over_limit]
+                print(f"   Ad Tracker: {len(ad_ids)} ads remaining\n")
+
+        if not ad_ids:
+            raise ValueError("No ads to process after filtering")
+
+        job['total_ads'] = len(ad_ids)
+        job['status'] = "fetching"
+
+        # ========== STEP 1: Get Access Token (Dev DB API) ==========
+        print("="*80)
+        print(f"STEP 1: AUTHENTICATING WITH DEV DB API ({db_api_base_url})")
+        print("="*80)
+
+        token_data = _cdc_get_access_token(db_api_base_url, client_id, client_secret, grant_type)
+        access_token = token_data['access_token']
+        print("="*80 + "\n")
+
+        # ========== STEP 2: Fetch Trucks (Multithreaded) ==========
+        print("="*80)
+        print(f"STEP 2: FETCHING {len(ad_ids)} TRUCKS FROM DEV DB API")
+        print("="*80)
+
+        fetched_trucks = []
+        not_found_ids = []
+        error_ids = []
+
+        max_workers = 5
+        print(f"   Starting {max_workers} concurrent fetch workers...\n")
+
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            future_to_ad_id = {
+                executor.submit(_cdc_fetch_worker, db_api_base_url, ad_id, access_token, i, len(ad_ids)): ad_id
+                for i, ad_id in enumerate(ad_ids, 1)
+            }
+            for future in as_completed(future_to_ad_id):
+                status, ad_id, result = future.result()
+                if status == 'success':
+                    fetched_trucks.append(result)
+                elif status == 'not_found':
+                    not_found_ids.append(ad_id)
+                elif status == 'error':
+                    error_ids.append(ad_id)
+
+        print(f"\n   Fetched: {len(fetched_trucks)}/{len(ad_ids)} trucks")
+        if not_found_ids:
+            print(f"   Not found: {len(not_found_ids)} - {not_found_ids[:10]}")
+        if error_ids:
+            print(f"   Errors: {len(error_ids)} - {error_ids[:10]}")
+        print("="*80 + "\n")
+
+        if len(fetched_trucks) == 0:
+            raise ValueError("No trucks were successfully fetched from the database")
+
+        # ========== STEP 3: Process Truck Data ==========
+        print("="*80)
+        print("STEP 3: PROCESSING TRUCK DATA")
+        print("="*80)
+
+        processed_trucks = []
+        for i, truck in enumerate(fetched_trucks, 1):
+            processed = process_truck_data(truck, debug=(i == 1))
+            processed_trucks.append(processed)
+
+        for ad_id in not_found_ids + error_ids:
+            processed_trucks.append({
+                'Ad ID': ad_id,
+                'Breadcrumb_Top1': 'Inactive ad',
+                'Breadcrumb_Top2': '',
+                'Breadcrumb_Top3': '',
+                'Image_URLs': ''
+            })
+
+        print(f"   Processed: {len(processed_trucks)} trucks total")
+        print("="*80 + "\n")
+
+        # ========== STEP 4: Save Fetch Excel ==========
+        result_df = pd.DataFrame(processed_trucks)
+        result_df["Ad ID"] = result_df["Ad ID"].astype(str).str.replace(r'\.0$', '', regex=True).str.strip()
+        result_df = result_df.drop_duplicates(subset=["Ad ID"], keep='first').reset_index(drop=True)
+
+        fetch_filename = f"CDC_Fetch_{run_ts}.xlsx"
+        fetch_path = os.path.join(CDC_OUTPUT_DIR, fetch_filename)
+        result_df.to_excel(fetch_path, index=False)
+
+        print(f"   Fetch Excel saved: {fetch_path}")
+
+        job['status'] = 'fetched'
+        job['file_path'] = fetch_path
+
+        # ========== STEP 5: Run AI Annotation ==========
+        print(f"\n{'='*80}")
+        print("STEP 5: RUNNING AI ANNOTATION PIPELINE")
+        print(f"{'='*80}\n")
+
+        # Temporarily redirect output_dir to CDC folder
+        original_output_dir = config.output_dir
+        config.output_dir = CDC_OUTPUT_DIR
+
+        try:
+            run_db_annotation_pipeline_sync(job_id, fetch_path)
+        finally:
+            config.output_dir = original_output_dir
+
+        # If enable_ai_output=False, the annotated output landed in temp instead of
+        # CDC_OUTPUT_DIR (because load_config() re-reads config.ini mid-pipeline).
+        # Move it to CDC_OUTPUT_DIR so it persists for the data team.
+        output_excel = job.get('output_file', '')
+        if output_excel and os.path.exists(output_excel):
+            if CDC_OUTPUT_DIR not in os.path.dirname(os.path.abspath(output_excel)):
+                dest = os.path.join(CDC_OUTPUT_DIR, os.path.basename(output_excel))
+                import shutil
+                shutil.move(output_excel, dest)
+                job['output_file'] = dest
+                print(f"   📁 Moved annotated output to CDC folder: {os.path.basename(dest)}")
+
+            # Also move any batch files that ended up in temp
+            for batch_info in job.get('batches', []):
+                bp = batch_info.get('file_path', '')
+                if bp and os.path.exists(bp) and CDC_OUTPUT_DIR not in os.path.dirname(os.path.abspath(bp)):
+                    batch_dest = os.path.join(CDC_OUTPUT_DIR, os.path.basename(bp))
+                    shutil.move(bp, batch_dest)
+                    batch_info['file_path'] = batch_dest
+
+        # ========== STEP 6: Dev DB Update (Auto) ==========
+        output_excel = job.get('output_file')
+        if output_excel and os.path.exists(output_excel):
+            try:
+                db_update_result = _cdc_dev_db_update(
+                    db_api_base_url, client_id, client_secret, grant_type,
+                    output_excel, job_id
+                )
+                job['db_update_result'] = db_update_result
+            except Exception as e:
+                print(f"\n   ⚠️ STEP 6 Dev DB Update failed (non-fatal): {e}")
+                import traceback
+                traceback.print_exc()
+                job['db_update_result'] = {"error": str(e)}
+        else:
+            print(f"\n   ⏭️ STEP 6: Skipped — no output file found for db update")
+
+        print(f"\n{'='*80}")
+        print(f"CDC PIPELINE JOB {job_id} COMPLETE!")
+        print(f"{'='*80}")
+        print(f"   Output Dir: {CDC_OUTPUT_DIR}")
+        print(f"{'='*80}\n")
+
+    except Exception as e:
+        job['status'] = JobStatus.FAILED
+        job['error'] = str(e)
+        print(f"\n CDC PIPELINE JOB {job_id} FAILED: {str(e)}\n")
+        import traceback
+        traceback.print_exc()
+
+
+@app.post("/api/cdc-trigger")
+async def cdc_trigger(payload: dict, background_tasks: BackgroundTasks):
+    """
+    Trigger the CDC pipeline: DB Fetch + AI Annotation for a list of ad IDs.
+
+    Called by the cdc_pipeline/run_annotation.py script after the CDC consumer
+    has collected filtered ads in filtered_ads.jsonl.
+
+    Accepts: {
+        "ad_ids": ["123", "456", ...],
+        "db_api_base_url": "",
+        "client_id": "...",
+        "client_secret": "...",
+        "grant_type": ""
+    }
+    Returns: {"job_id": "...", "total_ads": N, "status": "fetching"}
+    """
+    ad_ids = payload.get("ad_ids", [])
+    if not ad_ids:
+        raise HTTPException(status_code=400, detail="ad_ids list is empty")
+
+    # Deduplicate
+    ad_ids = list(dict.fromkeys(str(aid).strip() for aid in ad_ids))
+
+    # Dev DB API credentials from the request (sent by cdc_pipeline/.env)
+    db_api_base_url = payload.get("db_api_base_url", "").strip()
+    client_id = payload.get("client_id", "").strip()
+    client_secret = payload.get("client_secret", "").strip()
+    grant_type = payload.get("grant_type", "client_credentials").strip()
+
+    if not db_api_base_url:
+        raise HTTPException(status_code=400, detail="db_api_base_url is required")
+    if not client_id:
+        raise HTTPException(status_code=400, detail="client_id is required")
+    if not client_secret:
+        raise HTTPException(status_code=400, detail="client_secret is required")
+
+    job_id = str(uuid.uuid4())[:8]
+
+    jobs[job_id] = {
+        "id": job_id,
+        "status": "fetching",
+        "total_ads": len(ad_ids),
+        "created_at": datetime.now().isoformat(),
+        "is_cdc_triggered": True,
+    }
+
+    background_tasks.add_task(
+        run_cdc_pipeline_sync,
+        job_id,
+        ad_ids,
+        client_id,
+        client_secret,
+        grant_type,
+        db_api_base_url,
+    )
+
+    return {
+        "job_id": job_id,
+        "total_ads": len(ad_ids),
+        "status": "fetching",
+        "message": f"CDC pipeline started for {len(ad_ids)} ads. Output: cdc_ai_output_excels/",
+    }
+
+
+@app.get("/api/cdc-trigger/{job_id}/status")
+async def cdc_trigger_status(job_id: str):
+    """Check status of a CDC-triggered pipeline job."""
+    if job_id not in jobs:
+        raise HTTPException(status_code=404, detail="Job ID not found")
+
+    job = jobs[job_id]
+    return {
+        "job_id": job_id,
+        "status": job.get("status"),
+        "total_ads": job.get("total_ads"),
+        "output_file": job.get("output_filename"),
+        "error": job.get("error"),
+        "db_update_result": job.get("db_update_result"),
+    }
+
+
+@app.get("/api/cdc-outputs")
+async def list_cdc_outputs():
+    """List all files in cdc_ai_output_excels/ for the CDC Outputs UI tab."""
+    import glob as _glob
+
+    os.makedirs(CDC_OUTPUT_DIR, exist_ok=True)
+
+    annotation_files = []
+    db_update_files = []
+    db_fetch_files = []
+
+    for filepath in sorted(_glob.glob(os.path.join(CDC_OUTPUT_DIR, "*.xlsx")), key=os.path.getmtime, reverse=True):
+        fname = os.path.basename(filepath)
+        try:
+            stat = os.stat(filepath)
+            info = {
+                "filename": fname,
+                "size_kb": round(stat.st_size / 1024, 1),
+                "created_at": datetime.fromtimestamp(stat.st_mtime).strftime("%Y-%m-%d %H:%M:%S"),
+            }
+        except OSError:
+            continue
+
+        if fname.startswith("CDC_DB_Update_"):
+            db_update_files.append(info)
+        elif fname.startswith("CDC_Fetch_"):
+            db_fetch_files.append(info)
+        elif "annotated" in fname.lower() or fname.startswith("batch_"):
+            annotation_files.append(info)
+
+    return {
+        "annotation_files": annotation_files,
+        "db_update_files": db_update_files,
+        "db_fetch_files": db_fetch_files,
+    }
+
+
+@app.get("/api/cdc-outputs/download/{filename}")
+async def download_cdc_output(filename: str):
+    """Download a specific file from cdc_ai_output_excels/."""
+    # Prevent path traversal
+    if ".." in filename or "/" in filename or "\\" in filename:
+        raise HTTPException(status_code=400, detail="Invalid filename")
+
+    filepath = os.path.join(CDC_OUTPUT_DIR, filename)
+    if not os.path.exists(filepath):
+        raise HTTPException(status_code=404, detail="File not found")
+
+    return FileResponse(
+        path=filepath,
+        filename=filename,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    )
+
+
+@app.delete("/api/cdc-outputs/delete")
+async def delete_cdc_outputs(type: str):
+    """
+    Delete CDC output files by type.
+    type=annotation — deletes annotated output and batch files
+    type=db_update  — deletes CDC_DB_Update_*.xlsx files
+    type=db_fetch   — deletes CDC_Fetch_*.xlsx files
+    """
+    if type not in ("annotation", "db_update", "db_fetch"):
+        raise HTTPException(status_code=400, detail="type must be 'annotation', 'db_update', or 'db_fetch'")
+
+    deleted = 0
+    if not os.path.exists(CDC_OUTPUT_DIR):
+        return {"deleted": 0, "type": type}
+
+    for fname in os.listdir(CDC_OUTPUT_DIR):
+        if not fname.endswith(".xlsx"):
+            continue
+
+        should_delete = False
+        if type == "db_update" and fname.startswith("CDC_DB_Update_"):
+            should_delete = True
+        elif type == "db_fetch" and fname.startswith("CDC_Fetch_"):
+            should_delete = True
+        elif type == "annotation" and ("annotated" in fname.lower() or fname.startswith("batch_")):
+            should_delete = True
+
+        if should_delete:
+            try:
+                os.remove(os.path.join(CDC_OUTPUT_DIR, fname))
+                deleted += 1
+            except OSError:
+                pass
+
+    print(f"   🗑️ Deleted {deleted} CDC {type} file(s)")
+    return {"deleted": deleted, "type": type}
+
+
 @app.post("/api/db-fetch")
 async def fetch_from_db(request: DBFetchRequest):
     """

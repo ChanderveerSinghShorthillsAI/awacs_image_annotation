@@ -65,6 +65,13 @@ const TabSwitcher = ({ activeTab, onTabChange }) => (
       <span className="tab-icon">🔄</span>
       DB Update
     </button>
+    <button
+      className={`tab-btn ${activeTab === 'cdcoutputs' ? 'active' : ''}`}
+      onClick={() => onTabChange('cdcoutputs')}
+    >
+      <span className="tab-icon">📡</span>
+      CDC Outputs
+    </button>
   </div>
 );
 
@@ -1796,6 +1803,140 @@ const DBUpdateSection = () => {
 };
 
 
+// CDC Outputs section — lists annotated + db-update files with download/delete
+const CDCOutputsSection = () => {
+  const [annotationFiles, setAnnotationFiles] = useState([]);
+  const [dbUpdateFiles, setDbUpdateFiles] = useState([]);
+  const [dbFetchFiles, setDbFetchFiles] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null);
+  const [deleting, setDeleting] = useState(null); // 'annotation' | 'db_update' | 'db_fetch' | null
+
+  const fetchFiles = async () => {
+    setLoading(true);
+    setError(null);
+    try {
+      const res = await fetch(`${API_BASE}/api/cdc-outputs`);
+      if (!res.ok) throw new Error(`Failed to fetch: ${res.status}`);
+      const data = await res.json();
+      setAnnotationFiles(data.annotation_files || []);
+      setDbUpdateFiles(data.db_update_files || []);
+      setDbFetchFiles(data.db_fetch_files || []);
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => { fetchFiles(); }, []);
+
+  const handleDelete = async (type) => {
+    const label = type === 'annotation' ? 'annotation output' : 'DB update';
+    if (!window.confirm(`Delete ALL CDC ${label} files? This cannot be undone.`)) return;
+
+    setDeleting(type);
+    try {
+      const res = await fetch(`${API_BASE}/api/cdc-outputs/delete?type=${type}`, { method: 'DELETE' });
+      if (!res.ok) throw new Error(`Delete failed: ${res.status}`);
+      const data = await res.json();
+      alert(`Deleted ${data.deleted} ${label} file(s).`);
+      fetchFiles();
+    } catch (err) {
+      alert(`Error: ${err.message}`);
+    } finally {
+      setDeleting(null);
+    }
+  };
+
+  const handleDownload = (filename) => {
+    window.open(`${API_BASE}/api/cdc-outputs/download/${encodeURIComponent(filename)}`, '_blank');
+  };
+
+  const renderFileList = (files, emptyMessage) => {
+    if (files.length === 0) {
+      return <p className="cdc-empty-message">{emptyMessage}</p>;
+    }
+    return (
+      <div className="cdc-file-list">
+        {files.map((file) => (
+          <div key={file.filename} className="cdc-file-item">
+            <div className="cdc-file-info">
+              <span className="cdc-file-name">{file.filename}</span>
+              <span className="cdc-file-meta">{file.size_kb} KB &middot; {file.created_at}</span>
+            </div>
+            <button className="cdc-download-btn" onClick={() => handleDownload(file.filename)}>
+              📥 Download
+            </button>
+          </div>
+        ))}
+      </div>
+    );
+  };
+
+  if (loading) {
+    return <div className="cdc-outputs-section"><p style={{ textAlign: 'center', color: 'var(--text-secondary)' }}>Loading CDC output files...</p></div>;
+  }
+
+  if (error) {
+    return (
+      <div className="cdc-outputs-section">
+        <div className="audit-error"><span className="error-icon">❌</span><span>{error}</span></div>
+        <button className="btn btn-secondary" onClick={fetchFiles} style={{ marginTop: '1rem' }}>Retry</button>
+      </div>
+    );
+  }
+
+  return (
+    <div className="cdc-outputs-section">
+      {/* Action bar */}
+      <div className="cdc-actions-bar">
+        <button className="btn btn-secondary" onClick={fetchFiles}>🔄 Refresh</button>
+        <button
+          className="btn cdc-delete-btn"
+          onClick={() => handleDelete('annotation')}
+          disabled={deleting || annotationFiles.length === 0}
+        >
+          {deleting === 'annotation' ? 'Deleting...' : `🗑️ Delete All Annotation Files (${annotationFiles.length})`}
+        </button>
+        <button
+          className="btn cdc-delete-btn"
+          onClick={() => handleDelete('db_update')}
+          disabled={deleting || dbUpdateFiles.length === 0}
+        >
+          {deleting === 'db_update' ? 'Deleting...' : `🗑️ Delete All DB Update Files (${dbUpdateFiles.length})`}
+        </button>
+        <button
+          className="btn cdc-delete-btn"
+          onClick={() => handleDelete('db_fetch')}
+          disabled={deleting || dbFetchFiles.length === 0}
+        >
+          {deleting === 'db_fetch' ? 'Deleting...' : `🗑️ Delete All DB Fetch Files (${dbFetchFiles.length})`}
+        </button>
+      </div>
+
+      {/* AI Annotated Outputs */}
+      <div className="cdc-file-section">
+        <h3 className="cdc-section-title">🤖 AI Annotated Outputs <span className="cdc-count">{annotationFiles.length}</span></h3>
+        {renderFileList(annotationFiles, 'No annotation output files yet. Run the CDC pipeline to generate them.')}
+      </div>
+
+      {/* DB Update Reports */}
+      <div className="cdc-file-section">
+        <h3 className="cdc-section-title">🔄 DB Update Reports <span className="cdc-count">{dbUpdateFiles.length}</span></h3>
+        {renderFileList(dbUpdateFiles, 'No DB update report files yet. They are generated after CDC annotation with auto db-update.')}
+      </div>
+
+      {/* DB Fetch Files */}
+      <div className="cdc-file-section">
+        <h3 className="cdc-section-title">🗄️ DB Fetch Files <span className="cdc-count">{dbFetchFiles.length}</span></h3>
+        {renderFileList(dbFetchFiles, 'No DB fetch files yet. They are generated when the CDC pipeline fetches truck data from dev API.')}
+      </div>
+    </div>
+  );
+};
+
+
 // Main App component
 function App() {
   const [activeTab, setActiveTab] = useState('annotation');
@@ -2360,6 +2501,36 @@ function App() {
                   <div className="info-icon">⏭️</div>
                   <h4>Smart Skip</h4>
                   <p>Skips inactive ads, no-image cases, and unchanged categories. Only updates what needs updating.</p>
+                </div>
+              </div>
+            </>
+          )}
+
+          {/* CDC OUTPUTS TAB */}
+          {activeTab === 'cdcoutputs' && (
+            <>
+              <div className="section-header">
+                <h2>CDC Pipeline Outputs</h2>
+                <p className="mode-badge">View & Download CDC Annotated Files and DB Update Reports</p>
+              </div>
+
+              <CDCOutputsSection />
+
+              <div className="info-section">
+                <div className="info-card">
+                  <div className="info-icon">📡</div>
+                  <h4>CDC Pipeline</h4>
+                  <p>Files generated by the Kafka CDC pipeline — AI annotation outputs and dev DB update reports.</p>
+                </div>
+                <div className="info-card">
+                  <div className="info-icon">📥</div>
+                  <h4>Download Files</h4>
+                  <p>Download individual files for review. Annotation outputs contain AI predictions; DB Update reports show update results.</p>
+                </div>
+                <div className="info-card">
+                  <div className="info-icon">🗑️</div>
+                  <h4>Manual Cleanup</h4>
+                  <p>Use the delete buttons to clean up old files. Annotation and DB update files can be deleted independently.</p>
                 </div>
               </div>
             </>

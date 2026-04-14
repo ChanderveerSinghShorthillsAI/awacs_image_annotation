@@ -2124,5 +2124,127 @@ body {
   }
 }
 
+/* ==================== CDC OUTPUTS SECTION ==================== */
+
+.cdc-outputs-section {
+  padding: 0.5rem 0;
+}
+
+.cdc-actions-bar {
+  display: flex;
+  gap: 0.75rem;
+  margin-bottom: 1.5rem;
+  flex-wrap: wrap;
+}
+
+.cdc-delete-btn {
+  background: rgba(239, 68, 68, 0.12) !important;
+  color: #ef4444 !important;
+  border: 1px solid rgba(239, 68, 68, 0.3) !important;
+  font-size: 0.85rem !important;
+}
+
+.cdc-delete-btn:hover:not(:disabled) {
+  background: rgba(239, 68, 68, 0.22) !important;
+}
+
+.cdc-delete-btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.cdc-file-section {
+  margin-bottom: 2rem;
+}
+
+.cdc-section-title {
+  font-size: 1.1rem;
+  font-weight: 700;
+  color: var(--text-primary);
+  margin-bottom: 0.75rem;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.cdc-count {
+  background: var(--bg-card);
+  color: var(--text-secondary);
+  font-size: 0.8rem;
+  font-weight: 600;
+  padding: 0.15rem 0.5rem;
+  border-radius: 10px;
+  border: 1px solid var(--border-subtle);
+}
+
+.cdc-file-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.cdc-file-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0.75rem 1rem;
+  background: var(--bg-card);
+  border: 1px solid var(--border-subtle);
+  border-radius: 10px;
+  transition: border-color 0.2s;
+}
+
+.cdc-file-item:hover {
+  border-color: var(--highway-yellow);
+}
+
+.cdc-file-info {
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+  min-width: 0;
+  flex: 1;
+}
+
+.cdc-file-name {
+  font-size: 0.9rem;
+  font-weight: 600;
+  color: var(--text-primary);
+  word-break: break-all;
+}
+
+.cdc-file-meta {
+  font-size: 0.78rem;
+  color: var(--text-secondary);
+}
+
+.cdc-download-btn {
+  background: var(--gradient-primary);
+  color: #1a1a1f;
+  border: none;
+  padding: 0.45rem 0.9rem;
+  border-radius: 8px;
+  font-weight: 700;
+  font-size: 0.82rem;
+  cursor: pointer;
+  white-space: nowrap;
+  margin-left: 1rem;
+  transition: opacity 0.2s;
+}
+
+.cdc-download-btn:hover {
+  opacity: 0.85;
+}
+
+.cdc-empty-message {
+  color: var(--text-secondary);
+  font-size: 0.9rem;
+  padding: 1.5rem;
+  text-align: center;
+  background: var(--bg-card);
+  border: 1px dashed var(--border-subtle);
+  border-radius: 10px;
+}
+
 /* Import Google Fonts */
 @import url('https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap');
