@@ -28,9 +28,30 @@ def _get_realm_id(message: dict) -> int | None:
     return None
 
 
+# Valid class IDs for our pipeline (Class 0 through Class 8)
+VALID_CLASS_IDS = set(range(0, 9))  # {0, 1, 2, 3, 4, 5, 6, 7, 8}
+
+
+def _get_class_id(message: dict) -> int | None:
+    """Extract the truck class id from message['class']['id']."""
+    cls = message.get("class")
+    if isinstance(cls, dict) and cls.get("id") is not None:
+        try:
+            return int(cls["id"])
+        except (ValueError, TypeError):
+            return None
+    return None
+
+
 def is_truck_ad(message: dict) -> bool:
     """Check if the message is for a truck ad (realm id == 4)."""
     return _get_realm_id(message) == 4
+
+
+def has_valid_class_id(message: dict) -> bool:
+    """Check if the message has a class id in the range 0-8."""
+    class_id = _get_class_id(message)
+    return class_id is not None and class_id in VALID_CLASS_IDS
 
 
 def is_new_ad(message: dict) -> bool:
@@ -84,8 +105,17 @@ def has_photo_changes(message: dict) -> bool:
 
 
 def classify_message(message: dict) -> str | None:
-    """Classify a truck ad message. Returns 'new_ad', 'photo_update', or None."""
+    """Classify a truck ad message. Returns 'new_ad', 'photo_update', or None.
+
+    Filters applied:
+      1. realm_id must be 4 (TRUCK)
+      2. class id must be 0-8
+      3. Must be a new ad OR have photo changes
+    """
     if not is_truck_ad(message):
+        return None
+
+    if not has_valid_class_id(message):
         return None
 
     if is_new_ad(message):

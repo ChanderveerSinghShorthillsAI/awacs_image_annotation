@@ -1806,11 +1806,11 @@ const DBUpdateSection = () => {
 // CDC Outputs section — lists annotated + db-update files with download/delete
 const CDCOutputsSection = () => {
   const [annotationFiles, setAnnotationFiles] = useState([]);
-  const [dbUpdateFiles, setDbUpdateFiles] = useState([]);
+  const [patchSummaryFiles, setPatchSummaryFiles] = useState([]);
   const [dbFetchFiles, setDbFetchFiles] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
-  const [deleting, setDeleting] = useState(null); // 'annotation' | 'db_update' | 'db_fetch' | null
+  const [deleting, setDeleting] = useState(null); // 'annotation' | 'patch_summary' | 'db_fetch' | null
 
   const fetchFiles = async () => {
     setLoading(true);
@@ -1820,7 +1820,7 @@ const CDCOutputsSection = () => {
       if (!res.ok) throw new Error(`Failed to fetch: ${res.status}`);
       const data = await res.json();
       setAnnotationFiles(data.annotation_files || []);
-      setDbUpdateFiles(data.db_update_files || []);
+      setPatchSummaryFiles(data.patch_summary_files || []);
       setDbFetchFiles(data.db_fetch_files || []);
     } catch (err) {
       setError(err.message);
@@ -1832,7 +1832,7 @@ const CDCOutputsSection = () => {
   useEffect(() => { fetchFiles(); }, []);
 
   const handleDelete = async (type) => {
-    const label = type === 'annotation' ? 'annotation output' : 'DB update';
+    const label = type === 'annotation' ? 'annotation output' : type === 'patch_summary' ? 'patch summary' : type === 'db_fetch' ? 'DB fetch' : type;
     if (!window.confirm(`Delete ALL CDC ${label} files? This cannot be undone.`)) return;
 
     setDeleting(type);
@@ -1901,10 +1901,10 @@ const CDCOutputsSection = () => {
         </button>
         <button
           className="btn cdc-delete-btn"
-          onClick={() => handleDelete('db_update')}
-          disabled={deleting || dbUpdateFiles.length === 0}
+          onClick={() => handleDelete('patch_summary')}
+          disabled={deleting || patchSummaryFiles.length === 0}
         >
-          {deleting === 'db_update' ? 'Deleting...' : `🗑️ Delete All DB Update Files (${dbUpdateFiles.length})`}
+          {deleting === 'patch_summary' ? 'Deleting...' : `🗑️ Delete All Patch Summary Files (${patchSummaryFiles.length})`}
         </button>
         <button
           className="btn cdc-delete-btn"
@@ -1921,10 +1921,10 @@ const CDCOutputsSection = () => {
         {renderFileList(annotationFiles, 'No annotation output files yet. Run the CDC pipeline to generate them.')}
       </div>
 
-      {/* DB Update Reports */}
+      {/* Patch Summary Reports */}
       <div className="cdc-file-section">
-        <h3 className="cdc-section-title">🔄 DB Update Reports <span className="cdc-count">{dbUpdateFiles.length}</span></h3>
-        {renderFileList(dbUpdateFiles, 'No DB update report files yet. They are generated after CDC annotation with auto db-update.')}
+        <h3 className="cdc-section-title">🩹 Patch Summary Reports <span className="cdc-count">{patchSummaryFiles.length}</span></h3>
+        {renderFileList(patchSummaryFiles, 'No patch summary files yet. They are generated after CDC annotation with auto db-update.')}
       </div>
 
       {/* DB Fetch Files */}

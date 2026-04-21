@@ -105,8 +105,9 @@ def _process_single_ad(ad_row: dict, category_data: dict, rules: dict,
     # ---------------------
 
     breadcrumb_raw = [ad_row.get(f"Breadcrumb_Top{i}", "") for i in range(1, 4)]
-    if any("inactive" in str(b).lower() for b in breadcrumb_raw):
-        final_row = {"Ad ID": ad_id, "Status": "Inactive ad", "Cost_Cents": 0}
+    if any("inactive" in str(b).lower() or "non-ctt platform" in str(b).lower() for b in breadcrumb_raw):
+        status_label = "Non-CTT Platform" if any("non-ctt platform" in str(b).lower() for b in breadcrumb_raw) else "Inactive ad"
+        final_row = {"Ad ID": ad_id, "Status": status_label, "Cost_Cents": 0}
         results_queue.put(final_row)
         return final_row
 

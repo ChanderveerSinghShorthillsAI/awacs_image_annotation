@@ -4,6 +4,8 @@ Trigger AI annotation for CDC-filtered truck ads.
 Reads unique ad IDs from filtered_ads.jsonl and sends them to the
 FastAPI backend which runs the full DB Fetch + AI Annotation pipeline.
 
+Supports both dev and prod environments via CDC_ENV flag in .env.
+
 Usage:
     cd "AWACS - AI annotation - V3.1"
     python -m cdc_pipeline.run_annotation
@@ -14,6 +16,7 @@ Prerequisites:
 """
 
 import json
+import os
 import sys
 import time
 
@@ -21,56 +24,146 @@ import requests
 
 from cdc_pipeline.config import (
     BACKEND_URL,
+    CDC_ENV,
+    IS_PROD,
+    # Dev credentials
     DB_API_BASE_URL,
     DB_API_CLIENT_ID,
     DB_API_CLIENT_SECRET,
     DB_API_GRANT_TYPE,
+    # Prod credentials
+    PROD_DB_API_TOKEN_URL,
+    PROD_DB_API_BASE_URL,
+    PROD_DB_API_UPDATE_BASE_URL,
+    PROD_DB_API_CLIENT_ID,
+    PROD_DB_API_CLIENT_SECRET,
+    PROD_DB_API_GRANT_TYPE,
     OUTPUT_FILE,
 )
 
 
 def read_unique_ad_ids(filepath: str) -> list[str]:
-    """Read filtered_ads.jsonl and return deduplicated ad IDs (preserving order)."""
+    """Read filtered_ads.jsonl and return deduplicated ad IDs (preserving order).
+
+    Handles both strict JSONL (one JSON object per line) and pretty-printed
+    JSON (multi-line objects, or a top-level JSON array).
+    """
     seen = set()
     ad_ids = []
     try:
         with open(filepath, encoding="utf-8") as f:
-            for line in f:
-                line = line.strip()
-                if not line:
-                    continue
-                try:
-                    record = json.loads(line)
-                    ad_id = str(record.get("adId", "")).strip()
-                    if ad_id and ad_id not in seen:
-                        seen.add(ad_id)
-                        ad_ids.append(ad_id)
-                except json.JSONDecodeError:
-                    continue
+            content = f.read().strip()
     except FileNotFoundError:
         print(f"File not found: {filepath}")
         sys.exit(1)
+
+    if not content:
+        return ad_ids
+
+    # Try line-by-line JSONL first (most common / expected format)
+    lines = content.splitlines()
+    jsonl_ok = False
+    for line in lines:
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            record = json.loads(line)
+            ad_id = str(record.get("adId", "")).strip()
+            if ad_id and ad_id not in seen:
+                seen.add(ad_id)
+                ad_ids.append(ad_id)
+            jsonl_ok = True
+        except json.JSONDecodeError:
+            continue
+
+    if jsonl_ok and ad_ids:
+        return ad_ids
+
+    # Fallback: try parsing as a single JSON array or comma-separated objects
+    # Wrap with brackets if needed (handles pretty-printed objects separated by commas)
+    ad_ids = []
+    seen = set()
+    try:
+        data = json.loads(content)
+    except json.JSONDecodeError:
+        # Try wrapping comma-separated objects in an array
+        try:
+            data = json.loads(f"[{content}]")
+        except json.JSONDecodeError:
+            print(f"Warning: Could not parse {filepath} as JSONL or JSON")
+            return ad_ids
+
+    # data could be a single dict or a list
+    if isinstance(data, dict):
+        data = [data]
+
+    for record in data:
+        if isinstance(record, dict):
+            ad_id = str(record.get("adId", "")).strip()
+            if ad_id and ad_id not in seen:
+                seen.add(ad_id)
+                ad_ids.append(ad_id)
+
     return ad_ids
 
 
 def trigger_pipeline(ad_ids: list[str]) -> str:
-    """POST ad IDs + dev DB API credentials to the backend CDC trigger endpoint."""
+    """POST ad IDs + DB API credentials to the backend CDC trigger endpoint."""
     url = f"{BACKEND_URL}/api/cdc-trigger"
     print(f"Sending {len(ad_ids)} ad IDs to {url}...")
-    print(f"Using dev DB API: {DB_API_BASE_URL}")
+    print(f"Environment: {CDC_ENV.upper()}")
 
-    if not DB_API_CLIENT_ID or not DB_API_CLIENT_SECRET:
-        print("\nError: Dev DB API credentials not set in cdc_pipeline/.env")
-        print("Set CDC_DB_API_CLIENT_ID and CDC_DB_API_CLIENT_SECRET")
-        sys.exit(1)
+    if IS_PROD:
+        # ── Prod mode ──
+        client_id = PROD_DB_API_CLIENT_ID
+        client_secret = PROD_DB_API_CLIENT_SECRET
+        grant_type = PROD_DB_API_GRANT_TYPE
+        base_url = PROD_DB_API_BASE_URL
+        token_url = PROD_DB_API_TOKEN_URL
+        update_base_url = PROD_DB_API_UPDATE_BASE_URL
 
-    payload = {
-        "ad_ids": ad_ids,
-        "db_api_base_url": DB_API_BASE_URL,
-        "client_id": DB_API_CLIENT_ID,
-        "client_secret": DB_API_CLIENT_SECRET,
-        "grant_type": DB_API_GRANT_TYPE,
-    }
+        print(f"Using PROD DB API: {base_url}")
+        print(f"Using PROD Token URL: {token_url}")
+        print(f"Using PROD Update URL: {update_base_url}")
+
+        if not client_id or not client_secret:
+            print("\nError: Prod DB API credentials not set in cdc_pipeline/.env")
+            print("Set PROD_DB_API_CLIENT_ID and PROD_DB_API_CLIENT_SECRET")
+            sys.exit(1)
+
+        payload = {
+            "ad_ids": ad_ids,
+            "cdc_env": "prod",
+            "db_api_base_url": base_url,
+            "client_id": client_id,
+            "client_secret": client_secret,
+            "grant_type": grant_type,
+            "token_url": token_url,
+            "update_base_url": update_base_url,
+        }
+    else:
+        # ── Dev mode (existing behavior) ──
+        client_id = DB_API_CLIENT_ID
+        client_secret = DB_API_CLIENT_SECRET
+        grant_type = DB_API_GRANT_TYPE
+        base_url = DB_API_BASE_URL
+
+        print(f"Using DEV DB API: {base_url}")
+
+        if not client_id or not client_secret:
+            print("\nError: Dev DB API credentials not set in cdc_pipeline/.env")
+            print("Set CDC_DB_API_CLIENT_ID and CDC_DB_API_CLIENT_SECRET")
+            sys.exit(1)
+
+        payload = {
+            "ad_ids": ad_ids,
+            "cdc_env": "dev",
+            "db_api_base_url": base_url,
+            "client_id": client_id,
+            "client_secret": client_secret,
+            "grant_type": grant_type,
+        }
 
     try:
         resp = requests.post(url, json=payload, timeout=30)
@@ -106,6 +199,16 @@ def poll_status(job_id: str):
                 print(f"\nJob {job_id} COMPLETED!")
                 if data.get("output_file"):
                     print(f"Output: cdc_ai_output_excels/{data['output_file']}")
+                # Show DB update result if present
+                db_update = data.get("db_update_result")
+                if db_update:
+                    print(f"\nDB Update: {db_update.get('success_count', 0)} updated, "
+                          f"{db_update.get('failed_count', 0)} failed, "
+                          f"{db_update.get('skipped_count', 0)} skipped")
+                    if db_update.get("report_filename"):
+                        print(f"DB Update Report: cdc_ai_output_excels/{db_update['report_filename']}")
+                    if db_update.get("patch_report_filename"):
+                        print(f"Patch Summary: cdc_ai_output_excels/{db_update['patch_report_filename']}")
                 return
             elif status == "failed":
                 print(f"\nJob {job_id} FAILED: {data.get('error', 'unknown error')}")
@@ -120,10 +223,30 @@ def poll_status(job_id: str):
 
         time.sleep(5)
 
+def archive_processed_file(filepath: str):
+    """Archive the processed jsonl file by renaming it with a timestamp,
+    then truncate the original so the next run starts fresh."""
+    import shutil
+    from datetime import datetime as _dt
+
+    ts = _dt.now().strftime("%Y%m%d_%H%M%S")
+    base, ext = os.path.splitext(filepath)
+    archive_path = f"{base}_{ts}{ext}"
+
+    try:
+        shutil.copy2(filepath, archive_path)
+        # Truncate the original file so next consumer run starts fresh
+        with open(filepath, "w", encoding="utf-8") as f:
+            pass  # empty
+        print(f"Archived processed ads to: {os.path.basename(archive_path)}")
+        print(f"Cleared {os.path.basename(filepath)} for next run")
+    except Exception as e:
+        print(f"Warning: Could not archive {filepath}: {e}")
+
 
 def main():
     print("=" * 60)
-    print("CDC Pipeline -> AI Annotation")
+    print(f"CDC Pipeline -> AI Annotation [{CDC_ENV.upper()}]")
     print("=" * 60)
 
     # Step 1: Read unique ad IDs
@@ -143,9 +266,13 @@ def main():
     # Step 3: Poll until done
     try:
         poll_status(job_id)
+        # Pipeline completed successfully — archive and clear the jsonl file
+        # so the next run doesn't reprocess these ads
+        archive_processed_file(OUTPUT_FILE)
     except KeyboardInterrupt:
         print(f"\n\nStopped polling. Job {job_id} is still running in the backend.")
         print(f"Check status: curl {BACKEND_URL}/api/cdc-trigger/{job_id}/status")
+        print(f"Note: {OUTPUT_FILE} was NOT cleared (job may still be running).")
 
 
 if __name__ == "__main__":

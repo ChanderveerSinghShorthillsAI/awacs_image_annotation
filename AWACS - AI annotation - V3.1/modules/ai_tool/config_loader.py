@@ -84,7 +84,14 @@ def load_config():
         # Log files (worker .txt log files written to logs/ folder)
         config.enable_log_files = config_parser.getboolean('Settings', 'EnableLogFiles', fallback=True)
 
+        # CTT Platform Filter
+        config.enable_ctt_platform_filter = config_parser.getboolean('Settings', 'EnableCTTPlatformFilter', fallback=False)
+        config.ctt_feature_id = config_parser.get('Settings', 'CTTFeatureId', fallback='5000000080')
+
         # DB API Credentials
+        config.db_api_token_url = config_parser.get('DB_API', 'TokenUrl', fallback='')
+        config.db_api_base_url = config_parser.get('DB_API', 'BaseUrl', fallback='')
+        config.db_api_trucks_url = config_parser.get('DB_API', 'TrucksUrl', fallback='')
         config.db_api_client_id = config_parser.get('DB_API', 'ClientId', fallback='')
         config.db_api_client_secret = config_parser.get('DB_API', 'ClientSecret', fallback='')
         config.db_api_grant_type = config_parser.get('DB_API', 'GrantType', fallback='client_credentials')

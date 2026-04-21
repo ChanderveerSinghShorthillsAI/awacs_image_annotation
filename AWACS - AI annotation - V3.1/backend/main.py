@@ -1089,7 +1089,7 @@ def verify_dually_listings(result_df: pd.DataFrame, job_id: str, yoda_instance):
     for idx, row in result_df.iterrows():
         # Skip inactive ads, errors, and no-image cases
         current_status = str(row.get("Status", "")).strip()
-        if any(x in current_status.lower() for x in ["inactive", "error", "image not clear", "no images present"]):
+        if any(x in current_status.lower() for x in ["inactive", "error", "image not clear", "no images present", "non-ctt platform"]):
             continue
         
         # Get breadcrumbs and annotations
@@ -1410,7 +1410,7 @@ def run_db_annotation_pipeline_sync(job_id: str, file_path: str):
     After all batches: combines into one final complete file.
     Handles any size: 700→[500,200], 300→[300], 1500→[500,500,500]
     """
-    BATCH_SIZE = 500
+    BATCH_SIZE = 20
     job = jobs[job_id]
     run_ts = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
     
@@ -2354,6 +2354,8 @@ def run_audit_comparison(ai_df: pd.DataFrame, manual_df: pd.DataFrame, audit_id:
                 status = "Accepted"
             elif "inactive ad" in ai_set:
                 status = "Accepted"
+            elif "non-ctt platform" in ai_status:
+                status = "Accepted"
         
         audit_results.append({
             "Ad ID": row["Ad ID"],
@@ -2371,8 +2373,8 @@ def run_audit_comparison(ai_df: pd.DataFrame, manual_df: pd.DataFrame, audit_id:
     # Generate Summary
     total = len(final_output)
     
-    # Identify Inactive Rows
-    is_inactive = final_output['Status'].astype(str).str.contains('inactive', case=False, na=False) if 'Status' in final_output.columns else pd.Series([False] * total)
+    # Identify Inactive and Non-CTT Rows
+    is_inactive = final_output['Status'].astype(str).str.contains('inactive|non-ctt platform', case=False, na=False) if 'Status' in final_output.columns else pd.Series([False] * total)
     inactive_count = is_inactive.sum()
     
     active_total = total - inactive_count
@@ -2600,9 +2602,9 @@ def get_access_token(client_id: str, client_secret: str, grant_type: str) -> dic
     print("\n" + "="*80)
     print("🔑 FETCHING ACCESS TOKEN FROM DB API (PRODUCTION)")
     print("="*80)
-    
-    # PRODUCTION TOKEN URL
-    token_url = "https://nebulous-prod.traderonline.com/vLatest/token"
+
+    # Token URL from config.ini [DB_API] section
+    token_url = config.db_api_token_url
     
     # Strip whitespace from all parameters to avoid auth issues
     client_id = client_id.strip()
@@ -2623,7 +2625,7 @@ def get_access_token(client_id: str, client_secret: str, grant_type: str) -> dic
     try:
         print(f"   📤 POST {token_url}")
         print(f"   📝 Form Data: client_id={client_id}, grant_type={grant_type}")
-        print(f"   📝 Client Secret: {len(client_secret)} chars, starts with '{client_secret[:10]}...'")
+        print(f"   📝 Client Secret: {len(client_secret)} chars")
         print(f"   📋 Headers: {headers}")
         
         response = requests.post(token_url, data=form_data, headers=headers)
@@ -2641,7 +2643,7 @@ def get_access_token(client_id: str, client_secret: str, grant_type: str) -> dic
         response.raise_for_status()
         
         token_data = response.json()
-        print(f"   ✅ Access token received: {token_data['access_token'][:20]}...")
+        print(f"   ✅ Access token received successfully")
         print(f"   ⏱️  Expires in: {token_data['expires_in']} seconds")
         print("="*80 + "\n")
         
@@ -2660,8 +2662,8 @@ def fetch_trucks_from_db(access_token: str, min_last_update: int, max_last_updat
     """
     Fetch truck data from the DB API with pagination (PRODUCTION)
     """
-    # PRODUCTION TRUCKS URL
-    trucks_url = "https://nebulous-prod.traderonline.com/v1/trucks"
+    # Trucks URL from config.ini [DB_API] section
+    trucks_url = config.db_api_trucks_url
     
     params = {
         'bypassCache': 'true',
@@ -2757,28 +2759,81 @@ def process_truck_data(truck: dict, debug: bool = False) -> dict:
     return processed
 
 
-def fetch_single_truck_by_id(access_token: str, ad_id: str) -> dict:
+def filter_ctt_platform_trucks(fetched_trucks: list) -> tuple:
     """
-    Fetch a single truck by Ad ID from the DB API (PRODUCTION)
+    Filter trucks to only include those present on the CTT platform.
+
+    Checks the 'adFeatures' field (comma-separated string) for the CTT feature ID.
+    If EnableCTTPlatformFilter is False, all trucks pass through unchanged.
+
+    Args:
+        fetched_trucks: List of raw truck dicts from DB API
+
+    Returns:
+        tuple: (ctt_trucks, non_ctt_ids)
+            - ctt_trucks: List of truck dicts that ARE on CTT
+            - non_ctt_ids: List of ad IDs that are NOT on CTT
+    """
+    if not config.enable_ctt_platform_filter:
+        return fetched_trucks, []
+
+    ctt_feature_id = config.ctt_feature_id
+    ctt_trucks = []
+    non_ctt_ids = []
+
+    for truck in fetched_trucks:
+        ad_features = str(truck.get('adFeatures', '') or '')
+        feature_list = [f.strip() for f in ad_features.split(',') if f.strip()]
+
+        if ctt_feature_id in feature_list:
+            ctt_trucks.append(truck)
+        else:
+            ad_id = truck.get('id', 'unknown')
+            non_ctt_ids.append(str(ad_id))
+
+    print(f"\n   {'='*60}")
+    print(f"   CTT PLATFORM FILTER")
+    print(f"   {'='*60}")
+    print(f"   Feature ID checked: {ctt_feature_id}")
+    print(f"   Total trucks checked: {len(fetched_trucks)}")
+    print(f"   CTT platform (pass): {len(ctt_trucks)}")
+    print(f"   Non-CTT platform (filtered out): {len(non_ctt_ids)}")
+    if non_ctt_ids:
+        if len(non_ctt_ids) <= 20:
+            print(f"   Filtered Ad IDs: {non_ctt_ids}")
+        else:
+            print(f"   Filtered Ad IDs (first 20): {non_ctt_ids[:20]}...")
+    print(f"   {'='*60}\n")
+
+    return ctt_trucks, non_ctt_ids
+
+
+def fetch_single_truck_by_id(access_token: str, ad_id: str,
+                             base_url: str = None) -> dict:
+    """
+    Fetch a single truck by Ad ID from the DB API.
     
     Args:
         access_token: Bearer token for authentication
         ad_id: The truck Ad ID to fetch
+        base_url: Base URL for trucks endpoint (e.g. https://host/vLatest/trucks)
         
     Returns:
         dict: Truck data from API
     """
-    # PRODUCTION TRUCKS URL (individual truck endpoint)
-    truck_url = f"https://nebulous-prod.traderonline.com/vLatest/trucks/{ad_id}"
-    
+    if base_url is None:
+        base_url = config.db_api_base_url
+    truck_url = f"{base_url.rstrip('/')}/{ad_id}"
+
     headers = {
         'Authorization': f'Bearer {access_token}'
     }
-    
+    params = {'bypassCache': 'true'}
+
     try:
-        response = requests.get(truck_url, headers=headers)
+        response = requests.get(truck_url, headers=headers, params=params)
         response.raise_for_status()
-        
+
         data = response.json()
         # The API returns data in format: {"url": "...", "result": {...}}
         # We need the "result" object which contains the truck data
@@ -2795,7 +2850,8 @@ def fetch_single_truck_by_id(access_token: str, ad_id: str) -> dict:
         raise
 
 
-def _fetch_single_truck_worker(ad_id: str, access_token: str, index: int, total: int):
+def _fetch_single_truck_worker(ad_id: str, access_token: str, index: int, total: int,
+                               base_url: str = None):
     """
     Worker function to fetch a single truck by Ad ID (for multithreading)
     
@@ -2804,6 +2860,7 @@ def _fetch_single_truck_worker(ad_id: str, access_token: str, index: int, total:
         access_token: Bearer token for authentication
         index: Current index (for progress display)
         total: Total number of trucks to fetch
+        base_url: Base URL for trucks endpoint
         
     Returns:
         tuple: (status, ad_id, truck_data_or_error)
@@ -2813,7 +2870,7 @@ def _fetch_single_truck_worker(ad_id: str, access_token: str, index: int, total:
     """
     try:
         print(f"   🔄 [{index}/{total}] Fetching truck {ad_id}...", end=" ", flush=True)
-        truck_data = fetch_single_truck_by_id(access_token, ad_id)
+        truck_data = fetch_single_truck_by_id(access_token, ad_id, base_url=base_url)
         
         if truck_data:
             print(f"✅")
@@ -2904,7 +2961,7 @@ def run_db_fetch_by_ids_sync(job_id: str, file_path: str, client_id: str, client
         print("="*80)
         print(f"📦 STEP 3: FETCHING {len(ad_ids)} TRUCKS FROM DB API (MULTITHREADED)")
         print("="*80)
-        print(f"   Using endpoint: https://nebulous-prod.traderonline.com/vLatest/trucks/{{ad_id}}")
+        print(f"   Using endpoint: {config.db_api_base_url}/{{ad_id}}")
         print(f"   🚀 Using 5 concurrent workers for SUPER FAST fetching!")
         print(f"   This is MUCH faster than scraping! (~1-2 seconds per truck)\n")
         
@@ -2944,24 +3001,27 @@ def run_db_fetch_by_ids_sync(job_id: str, file_path: str, client_id: str, client
             print(f"   ❌ Errors: {len(error_ids)} trucks - {error_ids[:10]}")
         print("="*80 + "\n")
         
-        if len(fetched_trucks) == 0:
+        # Apply CTT Platform Filter
+        fetched_trucks, non_ctt_ids = filter_ctt_platform_trucks(fetched_trucks)
+
+        if len(fetched_trucks) == 0 and len(non_ctt_ids) == 0:
             raise ValueError("No trucks were successfully fetched from the database")
-        
+
         # ========== STEP 4: Process Truck Data ==========
         print("="*80)
         print("🔄 STEP 4: PROCESSING TRUCK DATA")
         print("="*80)
-        
+
         processed_trucks = []
         for i, truck in enumerate(fetched_trucks, 1):
             debug = (i == 1)  # Debug first truck only
             processed = process_truck_data(truck, debug=debug)
             processed_trucks.append(processed)
-            
+
             if i % 50 == 0:
                 print(f"   ✅ Processed {i}/{len(fetched_trucks)} trucks")
-        
-        # ✅ FIX: Add not_found and error trucks with "Inactive ad" status
+
+        # Add not_found and error trucks with "Inactive ad" status
         for ad_id in not_found_ids:
             processed_trucks.append({
                 'Ad ID': ad_id,
@@ -2970,7 +3030,7 @@ def run_db_fetch_by_ids_sync(job_id: str, file_path: str, client_id: str, client
                 'Breadcrumb_Top3': '',
                 'Image_URLs': ''
             })
-        
+
         for ad_id in error_ids:
             processed_trucks.append({
                 'Ad ID': ad_id,
@@ -2979,12 +3039,24 @@ def run_db_fetch_by_ids_sync(job_id: str, file_path: str, client_id: str, client
                 'Breadcrumb_Top3': '',
                 'Image_URLs': ''
             })
-        
+
+        # Add non-CTT platform trucks
+        for ad_id in non_ctt_ids:
+            processed_trucks.append({
+                'Ad ID': ad_id,
+                'Breadcrumb_Top1': 'Non-CTT Platform',
+                'Breadcrumb_Top2': '',
+                'Breadcrumb_Top3': '',
+                'Image_URLs': ''
+            })
+
         print(f"   ✅ Processed {len(fetched_trucks)} successful trucks")
         if not_found_ids:
             print(f"   ⚠️ Added {len(not_found_ids)} inactive (not found) trucks")
         if error_ids:
             print(f"   ⚠️ Added {len(error_ids)} inactive (error) trucks")
+        if non_ctt_ids:
+            print(f"   ℹ️  Added {len(non_ctt_ids)} Non-CTT Platform entries")
         print(f"   ✅ Total processed: {len(processed_trucks)} trucks")
         print("="*80 + "\n")
         
@@ -3071,7 +3143,7 @@ def _cdc_get_access_token(base_url: str, client_id: str, client_secret: str, gra
     }, headers={'Content-Type': 'application/x-www-form-urlencoded'})
     resp.raise_for_status()
     token_data = resp.json()
-    print(f"   Access token received: {token_data['access_token'][:20]}...")
+    print(f"   Access token received successfully")
     return token_data
 
 
@@ -3255,8 +3327,8 @@ def _cdc_dev_db_update(db_api_base_url: str, client_id: str, client_secret: str,
     print(f"   ✅ Success: {success_count} | ❌ Failed: {failed_count}")
     print(f"{'='*80}\n")
 
-    # Save db-update report as Excel to cdc_ai_output_excels/
-    report_filename = None
+    # Save patch summary report as Excel to cdc_ai_output_excels/
+    patch_report_filename = None
     if results:
         try:
             report_df = pd.DataFrame([
@@ -3269,13 +3341,13 @@ def _cdc_dev_db_update(db_api_base_url: str, client_id: str, client_secret: str,
                 for r in results
             ])
             run_ts = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
-            report_filename = f"CDC_DB_Update_{run_ts}.xlsx"
-            report_path = os.path.join(CDC_OUTPUT_DIR, report_filename)
+            patch_report_filename = f"CDC_Patch_Summary_{run_ts}.xlsx"
+            report_path = os.path.join(CDC_OUTPUT_DIR, patch_report_filename)
             os.makedirs(CDC_OUTPUT_DIR, exist_ok=True)
             report_df.to_excel(report_path, index=False)
-            print(f"   📄 DB Update report saved: {report_filename}")
+            print(f"   📋 Patch Summary report saved: {patch_report_filename}")
         except Exception as e:
-            print(f"   ⚠️ Failed to save DB Update report: {e}")
+            print(f"   ⚠️ Failed to save Patch Summary report: {e}")
 
     return {
         "total_rows": total_rows,
@@ -3285,31 +3357,337 @@ def _cdc_dev_db_update(db_api_base_url: str, client_id: str, client_secret: str,
         "skipped_count": skipped_count,
         "elapsed_seconds": round(elapsed, 1),
         "results": results,
-        "report_filename": report_filename,
+        "patch_report_filename": patch_report_filename,
+    }
+
+
+def _cdc_prod_db_update(token_url: str, client_id: str, client_secret: str,
+                        grant_type: str, update_base_url: str,
+                        output_excel_path: str, job_id: str) -> dict:
+    """
+    Prod DB Update: Full patch lifecycle for CDC pipeline.
+
+    Replicates the complete /api/db-update workflow:
+    1. Get bearer token from prod token endpoint
+    2. For each ad with Status == "Require Update":
+       a. check_ad_patch() — check if ad has existing patch
+       b. delete_patch_categories() — remove old patch categories if present
+       c. update_ad_categories_in_db() — PUT new categories
+       d. create_or_update_ad_patch_categories() — create/update the patch
+    3. Generate patch summary Excel
+    4. Generate DB update report Excel
+
+    Returns a summary dict with counts and per-ad results.
+    """
+    print(f"\n{'='*80}")
+    print(f"🔄 CDC PROD DB UPDATE — Job {job_id}")
+    print(f"{'='*80}")
+    print(f"   Excel: {os.path.basename(output_excel_path)}")
+    print(f"   Token URL: {token_url}")
+    print(f"   Update URL: {update_base_url}")
+    print(f"{'='*80}\n")
+
+    # 1. Read the annotated output Excel
+    df = pd.read_excel(output_excel_path, dtype={"Ad ID": str})
+    df["Ad ID"] = df["Ad ID"].astype(str).str.replace(r'\.0$', '', regex=True).str.strip()
+    total_rows = len(df)
+
+    if "Status" not in df.columns or "Annotated_Top1" not in df.columns:
+        print(f"   ⚠️ Missing required columns (Status, Annotated_Top1) — skipping db update")
+        return {"total_rows": total_rows, "update_count": 0, "success_count": 0,
+                "failed_count": 0, "skipped_count": total_rows, "results": [],
+                "patch_report_filename": None}
+
+    # 2. Filter rows — only "Require Update"
+    prepared_ads = []
+    skipped_count = 0
+
+    for _, row in df.iterrows():
+        ad_id = str(row.get("Ad ID", "")).strip()
+        status = str(row.get("Status", "")).strip()
+        status_lower = status.lower()
+
+        if not ad_id or ad_id.lower() == "nan":
+            skipped_count += 1
+            continue
+
+        # Skip known non-update statuses
+        should_skip = False
+        for skip_status in DB_UPDATE_SKIP_STATUSES:
+            if skip_status in status_lower:
+                should_skip = True
+                break
+        if should_skip:
+            skipped_count += 1
+            continue
+
+        # Only process "Require Update"
+        if status_lower != "require update":
+            skipped_count += 1
+            continue
+
+        # 3. Resolve categories from Annotated_Top1/2/3
+        categories = []
+        unmapped = []
+        for col in ["Annotated_Top1", "Annotated_Top2", "Annotated_Top3"]:
+            cat_name = str(row.get(col, "")).strip() if pd.notna(row.get(col)) else ""
+            if cat_name and cat_name.lower() not in ("", "nan", "none"):
+                canonical_name, cat_id = lookup_category(cat_name)
+                if cat_id:
+                    categories.append({"id": cat_id, "name": canonical_name})
+                else:
+                    unmapped.append(cat_name)
+
+        if not categories or unmapped:
+            reason = f"unmapped: {unmapped}" if unmapped else "no categories"
+            print(f"   ⏭️ Ad {ad_id}: Skipped — {reason}")
+            skipped_count += 1
+            continue
+
+        cat_names = [c["name"] for c in categories]
+        prepared_ads.append((ad_id, categories, cat_names))
+
+    if not prepared_ads:
+        print(f"   ℹ️ No ads with 'Require Update' status to process")
+        print(f"   Total: {total_rows} | Skipped: {skipped_count}")
+        return {"total_rows": total_rows, "update_count": 0, "success_count": 0,
+                "failed_count": 0, "skipped_count": skipped_count, "results": [],
+                "patch_report_filename": None}
+
+    # 4. Get fresh prod bearer token
+    print(f"   🔑 Getting fresh PROD access token from {token_url}...")
+    token_info = get_db_update_bearer_token(token_url, client_id, client_secret, grant_type)
+    token_holder = {"access_token": token_info["access_token"], "expires_at": token_info["expires_at"]}
+    token_lock = threading.Lock()
+
+    def _get_valid_token():
+        with token_lock:
+            if time.time() >= token_holder["expires_at"]:
+                print("   🔄 Refreshing PROD access token...")
+                new_info = get_db_update_bearer_token(token_url, client_id, client_secret, grant_type)
+                token_holder["access_token"] = new_info["access_token"]
+                token_holder["expires_at"] = new_info["expires_at"]
+            return token_holder["access_token"]
+
+    # Derive the ad-patches base URL
+    patch_base_url = _derive_patch_base_url(update_base_url)
+    print(f"   📌 Patch API base URL: {patch_base_url}")
+
+    # 5. Multithreaded update with full patch lifecycle
+    max_workers = 5
+    print(f"\n   📝 Updating {len(prepared_ads)} ads in PROD DB ({max_workers} workers)")
+    print(f"   🩹 Using full patch lifecycle (check → delete → PUT → patch)\n")
+
+    results = []
+    patched_ads_summary = []
+    update_start = time.time()
+
+    def _prod_update_worker(ad_data, idx, total):
+        """Worker: full patch lifecycle for a single ad (mirrors /api/db-update logic)."""
+        ad_id, categories, cat_names = ad_data
+        current_token = _get_valid_token()
+
+        print(f"\n   [{idx}/{total}] 🔎 Processing Ad {ad_id} ...")
+
+        # Step A: Check for existing patch
+        patch_info = check_ad_patch(patch_base_url, ad_id, current_token)
+
+        patch_deleted = False
+        old_patch_categories = []
+        patch_summary = None
+
+        # Step B: Delete patch categories if present
+        if patch_info.get("has_patch") and patch_info.get("has_categories"):
+            old_patch_categories = patch_info["categories"]
+            old_cat_names = [c.get("name", c.get("id", "?")) for c in old_patch_categories]
+            print(f"      ⚡ Ad {ad_id} has PATCHED categories: {old_cat_names}")
+            print(f"      🗑️ Deleting categories from patch before PUT update...")
+
+            current_token = _get_valid_token()
+            delete_result = delete_patch_categories(patch_base_url, ad_id, current_token)
+
+            if not delete_result["success"]:
+                error_msg = f"Failed to delete patch categories: {delete_result.get('error', 'Unknown error')}"
+                print(f"   [{idx}/{total}] ❌ Ad {ad_id}: {error_msg}")
+                return (
+                    {"ad_id": ad_id, "success": False, "error": error_msg, "categories": cat_names},
+                    {"ad_id": ad_id, "old_patched_categories": ", ".join(old_cat_names),
+                     "new_updated_categories": ", ".join(cat_names),
+                     "patch_deleted": "FAILED", "update_success": "No (patch delete failed)",
+                     "patch_step": "N/A"},
+                )
+
+            patch_deleted = True
+            print(f"      ✅ Patch categories deleted successfully for Ad {ad_id}")
+        elif patch_info.get("has_patch") and not patch_info.get("has_categories"):
+            print(f"      ℹ️ Ad {ad_id} has a patch but NO categories in it — proceeding with direct PUT")
+        else:
+            print(f"      ℹ️ Ad {ad_id} has no patch — proceeding with direct PUT")
+
+        # Step C: PUT update
+        current_token = _get_valid_token()
+        print(f"      📤 Sending PUT to update Ad {ad_id} with categories: {cat_names}")
+        result = update_ad_categories_in_db(update_base_url, ad_id, categories, current_token)
+
+        if result["success"]:
+            print(f"   [{idx}/{total}] ✅ Ad {ad_id}: Updated -> {cat_names}")
+        else:
+            print(f"   [{idx}/{total}] ❌ Ad {ad_id}: {result.get('error', 'Unknown error')}")
+
+        # Step D: Create or update ad-patch with new categories
+        patch_action = None
+        patch_step_success = False
+        patch_step_error = ""
+
+        if result["success"]:
+            print(f"\n      🩹 [Patch Step] Ad {ad_id}: Ad update succeeded — now creating/updating patch...")
+            current_token = _get_valid_token()
+            patch_result = create_or_update_ad_patch_categories(
+                patch_base_url, ad_id, categories,
+                had_patch=patch_info.get("has_patch", False),
+                bearer_token=current_token,
+            )
+            patch_step_success = patch_result["success"]
+            patch_action = patch_result.get("action")
+            patch_step_error = patch_result.get("error", "")
+            if patch_step_success:
+                print(f"   [{idx}/{total}] 🩹 Ad {ad_id}: Patch {patch_action} successfully with categories: {cat_names}")
+            else:
+                print(f"   [{idx}/{total}] ⚠️ Ad {ad_id}: Ad updated OK but patch step failed — {patch_step_error}")
+        else:
+            print(f"      ⏭️ [Patch Step] Ad {ad_id}: Skipping patch step because ad update failed")
+
+        result_dict = {
+            "ad_id": ad_id,
+            "success": result["success"],
+            "error": result.get("error", ""),
+            "categories": cat_names,
+            "patch_action": patch_action,
+            "patch_step_success": patch_step_success,
+            "patch_step_error": patch_step_error,
+        }
+
+        # Build patch summary if applicable
+        if patch_action or patch_deleted or (patch_info.get("has_patch") and patch_info.get("has_categories")):
+            old_cat_names = [c.get("name", c.get("id", "?")) for c in old_patch_categories]
+            patch_summary = {
+                "ad_id": ad_id,
+                "old_patched_categories": ", ".join(old_cat_names),
+                "new_updated_categories": ", ".join(cat_names),
+                "patch_deleted": "Yes" if patch_deleted else "No",
+                "update_success": "Yes" if result["success"] else f"No ({result.get('error', 'Unknown')})",
+                "patch_step": f"{patch_action} ({'OK' if patch_step_success else 'FAILED'})" if patch_action else "N/A",
+            }
+
+        return (result_dict, patch_summary)
+
+    # Run with ThreadPoolExecutor
+    with ThreadPoolExecutor(max_workers=max_workers) as executor:
+        future_to_ad = {
+            executor.submit(_prod_update_worker, ad_data, i, len(prepared_ads)): ad_data
+            for i, ad_data in enumerate(prepared_ads, 1)
+        }
+        for future in as_completed(future_to_ad):
+            try:
+                result_dict, patch_summary = future.result()
+                results.append(result_dict)
+                if patch_summary:
+                    patched_ads_summary.append(patch_summary)
+            except Exception as e:
+                ad_data = future_to_ad[future]
+                print(f"   ❌ Worker exception for Ad {ad_data[0]}: {e}")
+                results.append({
+                    "ad_id": ad_data[0], "success": False,
+                    "error": f"Worker exception: {str(e)}", "categories": ad_data[2],
+                })
+
+    elapsed = time.time() - update_start
+    success_count = sum(1 for r in results if r["success"])
+    failed_count = sum(1 for r in results if not r["success"])
+
+    # Count patch step outcomes
+    patches_created = sum(1 for r in results if r.get("patch_action") == "created" and r.get("patch_step_success"))
+    patches_updated = sum(1 for r in results if r.get("patch_action") == "updated" and r.get("patch_step_success"))
+    patches_failed = sum(1 for r in results if r.get("patch_action") and not r.get("patch_step_success"))
+
+    print(f"\n{'='*80}")
+    print(f"🔄 CDC PROD DB UPDATE COMPLETE ({elapsed:.1f}s)")
+    print(f"   Total rows: {total_rows} | To update: {len(prepared_ads)} | Skipped: {skipped_count}")
+    print(f"   ✅ Success: {success_count} | ❌ Failed: {failed_count}")
+    print(f"   🩹 Patches — created: {patches_created}, updated: {patches_updated}, failed: {patches_failed}")
+    print(f"{'='*80}\n")
+
+    # 6. Save patch summary Excel to cdc_ai_output_excels/
+    patch_report_filename = None
+    if patched_ads_summary:
+        try:
+            patch_df = pd.DataFrame(patched_ads_summary)
+            column_map = {
+                "ad_id": "Ad ID",
+                "old_patched_categories": "Old Patched Categories",
+                "new_updated_categories": "New Updated Categories",
+                "patch_deleted": "Patch Deleted",
+                "update_success": "Update Success",
+                "patch_step": "Patch Create/Update Step",
+            }
+            patch_df.rename(columns=column_map, inplace=True)
+
+            run_ts = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+            patch_report_filename = f"CDC_Patch_Summary_{run_ts}.xlsx"
+            patch_report_path = os.path.join(CDC_OUTPUT_DIR, patch_report_filename)
+            patch_df.to_excel(patch_report_path, index=False, engine="openpyxl")
+            print(f"   📋 Patch Summary report saved: {patch_report_filename} ({len(patched_ads_summary)} patched ads)")
+        except Exception as e:
+            print(f"   ⚠️ Failed to save Patch Summary report: {e}")
+
+    return {
+        "total_rows": total_rows,
+        "update_count": len(prepared_ads),
+        "success_count": success_count,
+        "failed_count": failed_count,
+        "skipped_count": skipped_count,
+        "elapsed_seconds": round(elapsed, 1),
+        "patches_created": patches_created,
+        "patches_updated": patches_updated,
+        "patches_failed": patches_failed,
+        "patched_count": len(patched_ads_summary),
+        "results": results,
+        "patch_report_filename": patch_report_filename,
     }
 
 
 def run_cdc_pipeline_sync(job_id: str, ad_ids: list, client_id: str, client_secret: str,
-                          grant_type: str, db_api_base_url: str):
+                          grant_type: str, db_api_base_url: str,
+                          cdc_env: str = "dev", token_url: str = "",
+                          update_base_url: str = ""):
     """
     CDC Pipeline: DB Fetch + AI Annotation for CDC-filtered truck ads.
 
-    Uses the dev DB API (separate from prod) for fetching truck data.
+    Supports both dev and prod environments:
+    - dev: Uses dev DB API for fetch + simple PUT for update
+    - prod: Uses prod DB API (nebulous-prod) for fetch + full patch lifecycle for update
 
-    1. Fetches truck data from dev DB API by ad IDs
+    1. Fetches truck data from DB API by ad IDs
     2. Saves intermediate fetch Excel to cdc_ai_output_excels/
     3. Runs AI annotation pipeline
     4. Saves annotated output to cdc_ai_output_excels/
+    5. Updates DB (dev: simple PUT, prod: patch lifecycle)
     """
+    is_prod = (cdc_env == "prod")
+    env_label = "PROD ⚠️" if is_prod else "DEV"
     job = jobs[job_id]
     run_ts = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
 
     try:
         print(f"\n{'='*80}")
-        print(f"CDC PIPELINE JOB {job_id} STARTED")
+        print(f"CDC PIPELINE JOB {job_id} STARTED [{env_label}]")
         print(f"{'='*80}")
+        print(f"   Environment: {env_label}")
         print(f"   Ad IDs: {len(ad_ids)}")
         print(f"   Output Dir: {CDC_OUTPUT_DIR}")
+        if is_prod:
+            print(f"   Token URL: {token_url}")
+            print(f"   Update URL: {update_base_url}")
         print(f"{'='*80}\n")
 
         os.makedirs(CDC_OUTPUT_DIR, exist_ok=True)
@@ -3328,40 +3706,87 @@ def run_cdc_pipeline_sync(job_id: str, ad_ids: list, client_id: str, client_secr
         job['total_ads'] = len(ad_ids)
         job['status'] = "fetching"
 
-        # ========== STEP 1: Get Access Token (Dev DB API) ==========
-        print("="*80)
-        print(f"STEP 1: AUTHENTICATING WITH DEV DB API ({db_api_base_url})")
-        print("="*80)
+        if is_prod:
+            # ==================== PROD: Fetch via prod API ====================
 
-        token_data = _cdc_get_access_token(db_api_base_url, client_id, client_secret, grant_type)
-        access_token = token_data['access_token']
-        print("="*80 + "\n")
+            # ========== STEP 1: Get Access Token (Prod) ==========
+            print("="*80)
+            print(f"STEP 1: AUTHENTICATING WITH PROD DB API ({db_api_base_url})")
+            print("="*80)
 
-        # ========== STEP 2: Fetch Trucks (Multithreaded) ==========
-        print("="*80)
-        print(f"STEP 2: FETCHING {len(ad_ids)} TRUCKS FROM DEV DB API")
-        print("="*80)
+            token_data = _cdc_get_access_token(db_api_base_url, client_id, client_secret, grant_type)
+            access_token = token_data['access_token']
+            print("="*80 + "\n")
 
-        fetched_trucks = []
-        not_found_ids = []
-        error_ids = []
+            # ========== STEP 2: Fetch Trucks via Prod API (Multithreaded) ==========
+            # Derive the trucks endpoint from the base URL
+            prod_trucks_url = f"{db_api_base_url.rstrip('/')}/trucks"
+            print("="*80)
+            print(f"STEP 2: FETCHING {len(ad_ids)} TRUCKS FROM PROD DB API")
+            print("="*80)
+            print(f"   Using endpoint: {prod_trucks_url}/{{ad_id}}")
 
-        max_workers = 5
-        print(f"   Starting {max_workers} concurrent fetch workers...\n")
+            fetched_trucks = []
+            not_found_ids = []
+            error_ids = []
 
-        with ThreadPoolExecutor(max_workers=max_workers) as executor:
-            future_to_ad_id = {
-                executor.submit(_cdc_fetch_worker, db_api_base_url, ad_id, access_token, i, len(ad_ids)): ad_id
-                for i, ad_id in enumerate(ad_ids, 1)
-            }
-            for future in as_completed(future_to_ad_id):
-                status, ad_id, result = future.result()
-                if status == 'success':
-                    fetched_trucks.append(result)
-                elif status == 'not_found':
-                    not_found_ids.append(ad_id)
-                elif status == 'error':
-                    error_ids.append(ad_id)
+            max_workers = 5
+            print(f"   Starting {max_workers} concurrent fetch workers...\n")
+
+            with ThreadPoolExecutor(max_workers=max_workers) as executor:
+                future_to_ad_id = {
+                    executor.submit(_fetch_single_truck_worker, ad_id, access_token, i, len(ad_ids),
+                                    base_url=prod_trucks_url): ad_id
+                    for i, ad_id in enumerate(ad_ids, 1)
+                }
+                for future in as_completed(future_to_ad_id):
+                    status, ad_id, result = future.result()
+                    if status == 'success':
+                        fetched_trucks.append(result)
+                    elif status == 'not_found':
+                        not_found_ids.append(ad_id)
+                    elif status == 'error':
+                        error_ids.append(ad_id)
+
+        else:
+            # ==================== DEV: Fetch via dev API ====================
+
+            # ========== STEP 1: Get Access Token (Dev DB API) ==========
+            print("="*80)
+            print(f"STEP 1: AUTHENTICATING WITH DEV DB API ({db_api_base_url})")
+            print("="*80)
+
+            token_data = _cdc_get_access_token(db_api_base_url, client_id, client_secret, grant_type)
+            access_token = token_data['access_token']
+            print("="*80 + "\n")
+
+            # ========== STEP 2: Fetch Trucks (Multithreaded) ==========
+            print("="*80)
+            print(f"STEP 2: FETCHING {len(ad_ids)} TRUCKS FROM DEV DB API")
+            print("="*80)
+
+            fetched_trucks = []
+            not_found_ids = []
+            error_ids = []
+
+            max_workers = 5
+            print(f"   Starting {max_workers} concurrent fetch workers...\n")
+
+            with ThreadPoolExecutor(max_workers=max_workers) as executor:
+                future_to_ad_id = {
+                    executor.submit(_cdc_fetch_worker, db_api_base_url, ad_id, access_token, i, len(ad_ids)): ad_id
+                    for i, ad_id in enumerate(ad_ids, 1)
+                }
+                for future in as_completed(future_to_ad_id):
+                    status, ad_id, result = future.result()
+                    if status == 'success':
+                        fetched_trucks.append(result)
+                    elif status == 'not_found':
+                        not_found_ids.append(ad_id)
+                    elif status == 'error':
+                        error_ids.append(ad_id)
+
+        # ── Common steps from here ──
 
         print(f"\n   Fetched: {len(fetched_trucks)}/{len(ad_ids)} trucks")
         if not_found_ids:
@@ -3370,7 +3795,10 @@ def run_cdc_pipeline_sync(job_id: str, ad_ids: list, client_id: str, client_secr
             print(f"   Errors: {len(error_ids)} - {error_ids[:10]}")
         print("="*80 + "\n")
 
-        if len(fetched_trucks) == 0:
+        # Apply CTT Platform Filter
+        fetched_trucks, non_ctt_ids = filter_ctt_platform_trucks(fetched_trucks)
+
+        if len(fetched_trucks) == 0 and len(non_ctt_ids) == 0:
             raise ValueError("No trucks were successfully fetched from the database")
 
         # ========== STEP 3: Process Truck Data ==========
@@ -3392,7 +3820,19 @@ def run_cdc_pipeline_sync(job_id: str, ad_ids: list, client_id: str, client_secr
                 'Image_URLs': ''
             })
 
+        # Add non-CTT platform trucks
+        for ad_id in non_ctt_ids:
+            processed_trucks.append({
+                'Ad ID': ad_id,
+                'Breadcrumb_Top1': 'Non-CTT Platform',
+                'Breadcrumb_Top2': '',
+                'Breadcrumb_Top3': '',
+                'Image_URLs': ''
+            })
+
         print(f"   Processed: {len(processed_trucks)} trucks total")
+        if non_ctt_ids:
+            print(f"   Non-CTT Platform: {len(non_ctt_ids)} ads filtered out")
         print("="*80 + "\n")
 
         # ========== STEP 4: Save Fetch Excel ==========
@@ -3443,17 +3883,26 @@ def run_cdc_pipeline_sync(job_id: str, ad_ids: list, client_id: str, client_secr
                     shutil.move(bp, batch_dest)
                     batch_info['file_path'] = batch_dest
 
-        # ========== STEP 6: Dev DB Update (Auto) ==========
+        # ========== STEP 6: DB Update ==========
         output_excel = job.get('output_file')
         if output_excel and os.path.exists(output_excel):
             try:
-                db_update_result = _cdc_dev_db_update(
-                    db_api_base_url, client_id, client_secret, grant_type,
-                    output_excel, job_id
-                )
+                if is_prod:
+                    # ── PROD: Full patch lifecycle ──
+                    db_update_result = _cdc_prod_db_update(
+                        token_url, client_id, client_secret, grant_type,
+                        update_base_url, output_excel, job_id
+                    )
+                else:
+                    # ── DEV: Simple PUT (existing behavior) ──
+                    db_update_result = _cdc_dev_db_update(
+                        db_api_base_url, client_id, client_secret, grant_type,
+                        output_excel, job_id
+                    )
                 job['db_update_result'] = db_update_result
             except Exception as e:
-                print(f"\n   ⚠️ STEP 6 Dev DB Update failed (non-fatal): {e}")
+                update_type = "Prod" if is_prod else "Dev"
+                print(f"\n   ⚠️ STEP 6 {update_type} DB Update failed (non-fatal): {e}")
                 import traceback
                 traceback.print_exc()
                 job['db_update_result'] = {"error": str(e)}
@@ -3461,7 +3910,7 @@ def run_cdc_pipeline_sync(job_id: str, ad_ids: list, client_id: str, client_secr
             print(f"\n   ⏭️ STEP 6: Skipped — no output file found for db update")
 
         print(f"\n{'='*80}")
-        print(f"CDC PIPELINE JOB {job_id} COMPLETE!")
+        print(f"CDC PIPELINE JOB {job_id} COMPLETE! [{env_label}]")
         print(f"{'='*80}")
         print(f"   Output Dir: {CDC_OUTPUT_DIR}")
         print(f"{'='*80}\n")
@@ -3482,12 +3931,17 @@ async def cdc_trigger(payload: dict, background_tasks: BackgroundTasks):
     Called by the cdc_pipeline/run_annotation.py script after the CDC consumer
     has collected filtered ads in filtered_ads.jsonl.
 
+    Supports both dev and prod environments via the "cdc_env" field.
+
     Accepts: {
         "ad_ids": ["123", "456", ...],
+        "cdc_env": "dev" | "prod",
         "db_api_base_url": "",
         "client_id": "...",
         "client_secret": "...",
-        "grant_type": ""
+        "grant_type": "",
+        "token_url": "" (prod only),
+        "update_base_url": "" (prod only)
     }
     Returns: {"job_id": "...", "total_ads": N, "status": "fetching"}
     """
@@ -3498,11 +3952,19 @@ async def cdc_trigger(payload: dict, background_tasks: BackgroundTasks):
     # Deduplicate
     ad_ids = list(dict.fromkeys(str(aid).strip() for aid in ad_ids))
 
-    # Dev DB API credentials from the request (sent by cdc_pipeline/.env)
+    # Environment flag
+    cdc_env = payload.get("cdc_env", "dev").strip().lower()
+    is_prod = (cdc_env == "prod")
+
+    # DB API credentials from the request (sent by cdc_pipeline/.env)
     db_api_base_url = payload.get("db_api_base_url", "").strip()
     client_id = payload.get("client_id", "").strip()
     client_secret = payload.get("client_secret", "").strip()
     grant_type = payload.get("grant_type", "client_credentials").strip()
+
+    # Prod-only fields
+    token_url = payload.get("token_url", "").strip()
+    update_base_url = payload.get("update_base_url", "").strip()
 
     if not db_api_base_url:
         raise HTTPException(status_code=400, detail="db_api_base_url is required")
@@ -3510,6 +3972,12 @@ async def cdc_trigger(payload: dict, background_tasks: BackgroundTasks):
         raise HTTPException(status_code=400, detail="client_id is required")
     if not client_secret:
         raise HTTPException(status_code=400, detail="client_secret is required")
+
+    if is_prod:
+        if not token_url:
+            raise HTTPException(status_code=400, detail="token_url is required for prod environment")
+        if not update_base_url:
+            raise HTTPException(status_code=400, detail="update_base_url is required for prod environment")
 
     job_id = str(uuid.uuid4())[:8]
 
@@ -3519,6 +3987,7 @@ async def cdc_trigger(payload: dict, background_tasks: BackgroundTasks):
         "total_ads": len(ad_ids),
         "created_at": datetime.now().isoformat(),
         "is_cdc_triggered": True,
+        "cdc_env": cdc_env,
     }
 
     background_tasks.add_task(
@@ -3529,13 +3998,18 @@ async def cdc_trigger(payload: dict, background_tasks: BackgroundTasks):
         client_secret,
         grant_type,
         db_api_base_url,
+        cdc_env,
+        token_url,
+        update_base_url,
     )
 
+    env_label = "PROD ⚠️" if is_prod else "DEV"
     return {
         "job_id": job_id,
         "total_ads": len(ad_ids),
         "status": "fetching",
-        "message": f"CDC pipeline started for {len(ad_ids)} ads. Output: cdc_ai_output_excels/",
+        "cdc_env": cdc_env,
+        "message": f"CDC pipeline [{env_label}] started for {len(ad_ids)} ads. Output: cdc_ai_output_excels/",
     }
 
 
@@ -3564,8 +4038,8 @@ async def list_cdc_outputs():
     os.makedirs(CDC_OUTPUT_DIR, exist_ok=True)
 
     annotation_files = []
-    db_update_files = []
     db_fetch_files = []
+    patch_summary_files = []
 
     for filepath in sorted(_glob.glob(os.path.join(CDC_OUTPUT_DIR, "*.xlsx")), key=os.path.getmtime, reverse=True):
         fname = os.path.basename(filepath)
@@ -3579,8 +4053,8 @@ async def list_cdc_outputs():
         except OSError:
             continue
 
-        if fname.startswith("CDC_DB_Update_"):
-            db_update_files.append(info)
+        if fname.startswith("CDC_Patch_Summary_"):
+            patch_summary_files.append(info)
         elif fname.startswith("CDC_Fetch_"):
             db_fetch_files.append(info)
         elif "annotated" in fname.lower() or fname.startswith("batch_"):
@@ -3588,8 +4062,8 @@ async def list_cdc_outputs():
 
     return {
         "annotation_files": annotation_files,
-        "db_update_files": db_update_files,
         "db_fetch_files": db_fetch_files,
+        "patch_summary_files": patch_summary_files,
     }
 
 
@@ -3615,12 +4089,12 @@ async def download_cdc_output(filename: str):
 async def delete_cdc_outputs(type: str):
     """
     Delete CDC output files by type.
-    type=annotation — deletes annotated output and batch files
-    type=db_update  — deletes CDC_DB_Update_*.xlsx files
-    type=db_fetch   — deletes CDC_Fetch_*.xlsx files
+    type=annotation      — deletes annotated output and batch files
+    type=db_fetch        — deletes CDC_Fetch_*.xlsx files
+    type=patch_summary   — deletes CDC_Patch_Summary_*.xlsx files
     """
-    if type not in ("annotation", "db_update", "db_fetch"):
-        raise HTTPException(status_code=400, detail="type must be 'annotation', 'db_update', or 'db_fetch'")
+    if type not in ("annotation", "db_fetch", "patch_summary"):
+        raise HTTPException(status_code=400, detail="type must be 'annotation', 'db_fetch', or 'patch_summary'")
 
     deleted = 0
     if not os.path.exists(CDC_OUTPUT_DIR):
@@ -3631,9 +4105,9 @@ async def delete_cdc_outputs(type: str):
             continue
 
         should_delete = False
-        if type == "db_update" and fname.startswith("CDC_DB_Update_"):
+        if type == "db_fetch" and fname.startswith("CDC_Fetch_"):
             should_delete = True
-        elif type == "db_fetch" and fname.startswith("CDC_Fetch_"):
+        elif type == "patch_summary" and fname.startswith("CDC_Patch_Summary_"):
             should_delete = True
         elif type == "annotation" and ("annotated" in fname.lower() or fname.startswith("batch_")):
             should_delete = True
@@ -3706,7 +4180,6 @@ async def fetch_from_db(request: DBFetchRequest):
         print(f"   🔑 Using credentials from: {'Request' if request.client_id else 'config.ini'}")
         print(f"   🔑 Client ID: {client_id[:10]}...")
         print(f"   🔑 Client Secret length: {len(client_secret)} chars")
-        print(f"   🔑 Client Secret first 10 chars: {client_secret[:10]}...")
         print(f"   🔑 Grant Type: {grant_type}\n")
         
         # Step 1: Get access token
@@ -3774,23 +4247,38 @@ async def fetch_from_db(request: DBFetchRequest):
         print(f"✅ FETCHING COMPLETE - Retrieved {len(all_trucks)} trucks")
         print(f"   Total available in DB for this date range: {total_available_in_db}")
         print("="*80 + "\n")
-        
+
+        # Step 3.5: Apply CTT Platform Filter
+        all_trucks, non_ctt_ids = filter_ctt_platform_trucks(all_trucks)
+
         # Step 4: Process truck data
         print("="*80)
         print("🔄 PROCESSING TRUCK DATA")
         print("="*80)
-        
+
         processed_trucks = []
         for i, truck in enumerate(all_trucks, 1):
             # Enable debug for first truck to see what we're getting
             debug = (i == 1)
             processed = process_truck_data(truck, debug=debug)
             processed_trucks.append(processed)
-            
+
             if i % 100 == 0:
                 print(f"   ✅ Processed {i}/{len(all_trucks)} trucks")
-        
-        print(f"   ✅ Processed all {len(processed_trucks)} trucks")
+
+        # Add non-CTT platform trucks to output (for tracking)
+        for ad_id in non_ctt_ids:
+            processed_trucks.append({
+                'Ad ID': ad_id,
+                'Breadcrumb_Top1': 'Non-CTT Platform',
+                'Breadcrumb_Top2': '',
+                'Breadcrumb_Top3': '',
+                'Image_URLs': ''
+            })
+
+        print(f"   ✅ Processed all {len(all_trucks)} CTT trucks")
+        if non_ctt_ids:
+            print(f"   ℹ️  Added {len(non_ctt_ids)} Non-CTT Platform entries to output")
         print("="*80 + "\n")
         
         # Step 5: Apply category filters if provided
@@ -4149,7 +4637,37 @@ async def fetch_by_ad_ids(
 
 # Category name -> ID mapping for the Trader API
 # Categories without a real dev ID use placeholder values (will be replaced with prod IDs later)
+# CATEGORY_ID_MAP = {
+#     "Flatbed Truck": "2000617",
+#     "Pickup Truck": "2000635",
+#     "Mechanics Truck": "644245525",
+#     "Utility Truck - Service Truck": "2002561",
+#     "Dump Truck": "2000609",
+#     "Flatbed Dump": "2011212",
+#     "Landscape Truck": "2000625",
+#     "Contractor Truck": "644247521",
+#     "Stake Bed": "2014892",
+#     "Hauler": "2005520",
+#     "Cab Chassis": "2000881",
+#     "Stepvan": "2013294",
+#     "Selfloader": "2007240",
+#     "Bucket Truck - Boom Truck": "2005161",
+#     "Cabover Truck - COE": "2000559",
+#     "Box Truck - Straight Truck": "2002281",
+#     "Moving Van": "2012012",
+#     "Refrigerated Truck": "2000641",
+#     "Cutaway-Cube Van": "644245665",
+#     "Van": "2000523",
+#     "Cargo Van": "2011732",
+#     "Passanger Van": "644245480",
+#     "Rollback - Tow Truck": "2009720",
+#     "Conventional Day Cab": "2000601",
+#     "Dually": "644245588",
+#     "Dry Van": "644245645",
+# }
+
 CATEGORY_ID_MAP = {
+    # Existing
     "Flatbed Truck": "2000617",
     "Pickup Truck": "2000635",
     "Mechanics Truck": "644245525",
@@ -4167,15 +4685,99 @@ CATEGORY_ID_MAP = {
     "Cabover Truck - COE": "2000559",
     "Box Truck - Straight Truck": "2002281",
     "Moving Van": "2012012",
-    "Refrigerated Truck": "2000641",
+    "Reefer/Refrigerated Truck": "2000641",
     "Cutaway-Cube Van": "644245665",
     "Van": "2000523",
     "Cargo Van": "2011732",
-    "Passanger Van": "644245480",
+    "Passanger Van": "644245480",  # (keeping your typo for compatibility)
     "Rollback - Tow Truck": "2009720",
     "Conventional Day Cab": "2000601",
     "Dually": "644245588",
     "Dry Van": "644245645",
+    # Added
+    "SUV": "644250031",
+    "Concrete Barricade Truck": "644248721",
+    "Food Truck": "644247060",
+    "Milk Truck": "644247926",
+    "Livestock Truck": "644248521",
+    "Frac Truck": "644247561",
+    "Stone Spreader Truck": "644247781",
+    "Transfer Truck": "644247541",
+    "Ambulance": "2000545",
+    "Animal Services": "644248102",
+    "Armored Truck": "2008200",
+    "Asphalt Distributor Truck": "644248845",
+    "Attenuator": "2014172",
+    "Auger": "2007482",
+    "Beverage Truck": "2000547",
+    "Bus": "2000551",
+    "Cable Dispenser": "2011652",
+    "Cable Scrapper - Cable Puller": "2008202",
+    "Cabover Truck - Sleeper": "2000563",
+    "Car Carrier": "2000683",
+    "Catering Truck - Food Truck": "2006526",
+    "Chipper Truck": "2008760",
+    "Concrete Pump Truck": "644247221",
+    "Conventional - Day Cab": "2000601",
+    "Conventional - Sleeper Truck": "2000603",
+    "Crane Truck": "2000605",
+    "Crew Van": "644245705",
+    "Curtain Side": "644247225",
+    "De-Icer": "644249982",
+    "Digger Derrick": "2005121",
+    "Expeditor-Hotshot": "2004120",
+    "Farm Truck - Grain Truck": "2000611",
+    "Fire Truck": "2000613",
+    "Fuel Truck - Lube Truck": "2012574",
+    "Garbage Truck": "2000623",
+    "Glass Truck": "2013172",
+    "Glider Kit": "644247323",
+    "Grapple Truck": "2007320",
+    "Hooklift Truck": "2013772",
+    "Hot Oil Truck": "644247389",
+    "Insulator Washer": "2007442",
+    "Knucklebooms": "644248201",
+    "Logging": "2000627",
+    "LPG Tank Truck": "644249963",
+    "Lugger": "644250006",
+    "Military": "2008000",
+    "Mini Truck": "2011452",
+    "Minibus": "644245706",
+    "Mixer Truck - Concrete Truck": "2000633",
+    "Mobility Van": "644247161",
+    "Oil Tank Truck": "644245685",
+    "Other Truck": "2012932",
+    "Passenger Van": "644245480",
+    "Plow Truck - Spreader Truck": "2000637",
+    "Plumber Service Truck": "644245653",
+    "Railroad Truck": "644249979",
+    "Recycle Truck": "644247390",
+    "Refuse": "644247398",
+    "Roll Off Truck": "2010814",
+    "Rollback Tow Truck": "2009720",
+    "Roustabout": "644248062",
+    "Salvage Truck": "644247388",
+    "Saw Body": "644248241",
+    "Septic": "2011932",
+    "Sewer Inspection Trucks": "644251143",
+    "Sewer Trucks": "2008206",
+    "Shredder Truck": "2014252",
+    "Sling Truck": "2015012",
+    "Spray Truck": "2015216",
+    "Street Cleaner": "2008800",
+    "Sweeper": "2001720",
+    "Tanker Truck": "2014462",
+    "Toter": "2010852",
+    "Tractor": "2008002",
+    "Truck Mounted Stripers": "644248001",
+    "Vacuum Truck": "2009082",
+    "Waste Oil Trucks": "2014372",
+    "Water Tank": "2014412",
+    "Water Truck": "2008240",
+    "Western Hauler": "644247084",
+    "Winch Truck": "2010456",
+    "Wrecker Tow Truck": "2006880",
+    "Yard Spotter Truck": "2006044",
 }
 
 def _normalize_category_key(name: str) -> str:
@@ -4211,6 +4813,7 @@ DB_UPDATE_SKIP_STATUSES = [
     "image not clear",
     "no change",
     "exclusion rule conflict",
+    "non-ctt platform",
 ]
 
 
