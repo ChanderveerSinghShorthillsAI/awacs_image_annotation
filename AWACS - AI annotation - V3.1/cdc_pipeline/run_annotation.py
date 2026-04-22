@@ -223,25 +223,15 @@ def poll_status(job_id: str):
 
         time.sleep(5)
 
-def archive_processed_file(filepath: str):
-    """Archive the processed jsonl file by renaming it with a timestamp,
-    then truncate the original so the next run starts fresh."""
-    import shutil
-    from datetime import datetime as _dt
-
-    ts = _dt.now().strftime("%Y%m%d_%H%M%S")
-    base, ext = os.path.splitext(filepath)
-    archive_path = f"{base}_{ts}{ext}"
-
+def clear_processed_file(filepath: str):
+    """Truncate the processed jsonl file so the next run starts fresh.
+    No backup/archive is created to avoid disk bloat."""
     try:
-        shutil.copy2(filepath, archive_path)
-        # Truncate the original file so next consumer run starts fresh
         with open(filepath, "w", encoding="utf-8") as f:
             pass  # empty
-        print(f"Archived processed ads to: {os.path.basename(archive_path)}")
         print(f"Cleared {os.path.basename(filepath)} for next run")
     except Exception as e:
-        print(f"Warning: Could not archive {filepath}: {e}")
+        print(f"Warning: Could not clear {filepath}: {e}")
 
 
 def main():
@@ -268,7 +258,7 @@ def main():
         poll_status(job_id)
         # Pipeline completed successfully — archive and clear the jsonl file
         # so the next run doesn't reprocess these ads
-        archive_processed_file(OUTPUT_FILE)
+        clear_processed_file(OUTPUT_FILE)
     except KeyboardInterrupt:
         print(f"\n\nStopped polling. Job {job_id} is still running in the backend.")
         print(f"Check status: curl {BACKEND_URL}/api/cdc-trigger/{job_id}/status")

@@ -109,6 +109,13 @@ def load_config():
         config.db_update_client_secret = config_parser.get('DB_Update_API', 'ClientSecret', fallback='')
         config.db_update_grant_type = config_parser.get('DB_Update_API', 'GrantType', fallback='client_credentials')
 
+        # Grafana Loki — CDC Audit Logging
+        config.enable_cdc_audit_log = config_parser.getboolean('Grafana_Loki', 'EnableCDCAuditLog', fallback=False)
+        config.loki_push_url = config_parser.get('Grafana_Loki', 'LokiPushUrl', fallback='')
+        config.loki_query_url = config_parser.get('Grafana_Loki', 'LokiQueryUrl', fallback='')
+        config.loki_user_id = config_parser.get('Grafana_Loki', 'LokiUserId', fallback='')
+        config.loki_api_key = config_parser.get('Grafana_Loki', 'LokiApiKey', fallback='')
+
         # API Keys - Now stores a list of dictionaries for rich data
         config.gemini_api_keys_info = []
         for i, (_, key) in enumerate(config_parser.items('API_Keys')):

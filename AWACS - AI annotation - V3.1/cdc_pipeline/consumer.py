@@ -78,7 +78,7 @@ def extract_summary(message: dict, filter_reason: str) -> dict:
     }
 
 
-def run(debug: bool = False, fresh: bool = False):
+def run(debug: bool = False, fresh: bool = False, timeout_minutes: int | None = None) -> int:
     print(f"Mode: {MODE}")
     print(f"Environment: {CDC_ENV.upper()} {'⚠️  PRODUCTION' if IS_PROD else '(dev)'}")
     print(f"Connecting to Kafka at {KAFKA_BOOTSTRAP_SERVERS}...")
@@ -87,6 +87,8 @@ def run(debug: bool = False, fresh: bool = False):
     if fresh:
         print(">>> FRESH mode: skipping backlog, listening for new messages only")
     print(f"Output: {OUTPUT_FILE}")
+    if timeout_minutes is not None:
+        print(f"Auto mode: consumer will stop after {timeout_minutes} minute(s)")
     print("-" * 60)
 
     consumer = KafkaConsumer(
@@ -132,15 +134,26 @@ def run(debug: bool = False, fresh: bool = False):
     signal.signal(signal.SIGINT, shutdown)
     signal.signal(signal.SIGTERM, shutdown)
 
+    start_time = time.monotonic()
     print("Listening for messages... (Ctrl+C to stop)\n")
 
-    outfile = open(OUTPUT_FILE, "a", encoding="utf-8")
+    # Truncate filtered_ads.jsonl so every consumer session starts fresh
+    outfile = open(OUTPUT_FILE, "w", encoding="utf-8")
     rawfile = open(RAW_MESSAGES_FILE, "a", encoding="utf-8") if SAVE_RAW_MESSAGES else None
     if SAVE_RAW_MESSAGES:
         print(f"Raw message logging: ENABLED -> {RAW_MESSAGES_FILE}")
 
     try:
         while running:
+            # Check if timeout has been reached (auto mode only)
+            if timeout_minutes is not None:
+                elapsed = time.monotonic() - start_time
+                if elapsed >= timeout_minutes * 60:
+                    print(f"\n{'=' * 60}")
+                    print(f"Timeout reached ({timeout_minutes} min). Stopping consumer...")
+                    running = False
+                    break
+
             records = consumer.poll(timeout_ms=1000)
             for tp, messages in records.items():
                 for record in messages:
@@ -330,6 +343,8 @@ def run(debug: bool = False, fresh: bool = False):
                 json.dump(summary_json, sf, indent=2, default=str)
 
             print(f"Session summary saved to: {SUMMARY_FILE}")
+
+        return matched
 
 
 if __name__ == "__main__":

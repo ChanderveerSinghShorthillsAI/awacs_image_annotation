@@ -38,7 +38,7 @@ from ai_tool.config_loader import config, load_config
 from ai_tool.rate_limiter import Yoda
 from ai_tool.main_processor import save_checkpoint, merge_all_session_reports
 from ai_tool.data_processing import load_rules, normalize_text
-from ai_tool import web_utils, classification, ad_tracker
+from ai_tool import web_utils, classification, ad_tracker, cdc_audit_logger
 import ai_module
 
 # Initialize config
@@ -59,6 +59,24 @@ if config.enable_ad_annotation_limit:
     print("="*60 + "\n")
 else:
     print("\n📊 AD ANNOTATION LIMIT TRACKER: ❌ DISABLED (bypassed)\n")
+
+# Initialize CDC Audit Logger (Grafana Cloud Loki)
+if config.enable_cdc_audit_log:
+    print("\n" + "="*60)
+    print("📋 CDC AUDIT LOGGER: ✅ ENABLED (Grafana Loki)")
+    print(f"   Push URL: {config.loki_push_url[:50]}...")
+    try:
+        cdc_audit_logger.init_audit_logger(
+            config.loki_push_url, config.loki_query_url,
+            config.loki_user_id, config.loki_api_key,
+        )
+    except Exception as e:
+        print(f"   ❌ Audit Logger initialization failed: {e}")
+        print(f"   ⚠️ Disabling CDC Audit Logging for this session")
+        config.enable_cdc_audit_log = False
+    print("="*60 + "\n")
+else:
+    print("\n📋 CDC AUDIT LOGGER: ❌ DISABLED\n")
 
 app = FastAPI(title="AWACS AI Annotation API", version="1.0.0")
 
@@ -3294,6 +3312,26 @@ def _cdc_dev_db_update(db_api_base_url: str, client_id: str, client_secret: str,
             print(f"   [{idx}/{total}] ✅ Ad {ad_id}: Updated")
         else:
             print(f"   [{idx}/{total}] ❌ Ad {ad_id}: {result.get('error', 'Unknown')}")
+
+        # ── CDC Audit Log: Record old vs new categories to Loki ──
+        if config.enable_cdc_audit_log:
+            try:
+                row_match = df[df["Ad ID"] == ad_id]
+                breadcrumbs = ["", "", ""]
+                if not row_match.empty:
+                    row_data = row_match.iloc[0]
+                    for i, col in enumerate(["Breadcrumb_Top1", "Breadcrumb_Top2", "Breadcrumb_Top3"]):
+                        val = row_data.get(col, "")
+                        breadcrumbs[i] = str(val).strip() if pd.notna(val) else ""
+                cdc_audit_logger.log_category_change(
+                    ad_id=ad_id, job_id=job_id, environment="dev",
+                    old_breadcrumbs=breadcrumbs, new_annotated=cat_names,
+                    old_patch_categories=[],
+                    success=result["success"], error=result.get("error", ""),
+                )
+            except Exception as e:
+                print(f"      [Audit] Warning: failed to log audit for Ad {ad_id}: {e}")
+
         return {
             "ad_id": ad_id,
             "success": result["success"],
@@ -3348,6 +3386,10 @@ def _cdc_dev_db_update(db_api_base_url: str, client_id: str, client_secret: str,
             print(f"   📋 Patch Summary report saved: {patch_report_filename}")
         except Exception as e:
             print(f"   ⚠️ Failed to save Patch Summary report: {e}")
+
+    # Flush any remaining audit log records to Loki
+    if config.enable_cdc_audit_log:
+        cdc_audit_logger.flush()
 
     return {
         "total_rows": total_rows,
@@ -3579,6 +3621,27 @@ def _cdc_prod_db_update(token_url: str, client_id: str, client_secret: str,
                 "patch_step": f"{patch_action} ({'OK' if patch_step_success else 'FAILED'})" if patch_action else "N/A",
             }
 
+        # ── CDC Audit Log: Record old vs new categories to Loki ──
+        if config.enable_cdc_audit_log:
+            try:
+                row_match = df[df["Ad ID"] == ad_id]
+                breadcrumbs = ["", "", ""]
+                if not row_match.empty:
+                    row_data = row_match.iloc[0]
+                    for i, col in enumerate(["Breadcrumb_Top1", "Breadcrumb_Top2", "Breadcrumb_Top3"]):
+                        val = row_data.get(col, "")
+                        breadcrumbs[i] = str(val).strip() if pd.notna(val) else ""
+                old_patch_cat_names = [c.get("name", c.get("id", "")) for c in old_patch_categories]
+                cdc_audit_logger.log_category_change(
+                    ad_id=ad_id, job_id=job_id, environment="prod",
+                    old_breadcrumbs=breadcrumbs, new_annotated=cat_names,
+                    old_patch_categories=old_patch_cat_names,
+                    success=result["success"], error=result.get("error", ""),
+                    patch_action=patch_action or "", patch_deleted=patch_deleted,
+                )
+            except Exception as e:
+                print(f"      [Audit] Warning: failed to log audit for Ad {ad_id}: {e}")
+
         return (result_dict, patch_summary)
 
     # Run with ThreadPoolExecutor
@@ -3639,6 +3702,10 @@ def _cdc_prod_db_update(token_url: str, client_id: str, client_secret: str,
             print(f"   📋 Patch Summary report saved: {patch_report_filename} ({len(patched_ads_summary)} patched ads)")
         except Exception as e:
             print(f"   ⚠️ Failed to save Patch Summary report: {e}")
+
+    # Flush any remaining audit log records to Loki
+    if config.enable_cdc_audit_log:
+        cdc_audit_logger.flush()
 
     return {
         "total_rows": total_rows,
@@ -4121,6 +4188,21 @@ async def delete_cdc_outputs(type: str):
 
     print(f"   🗑️ Deleted {deleted} CDC {type} file(s)")
     return {"deleted": deleted, "type": type}
+
+
+@app.get("/api/cdc-audit/{ad_id}")
+async def get_cdc_audit_log(ad_id: str, limit: int = 50):
+    """
+    Look up CDC category change history for a specific ad ID.
+
+    Use case: Dealer asks 'why were my categories changed?'
+    Returns all category changes with old/new values and timestamps from Grafana Loki.
+    """
+    if not config.enable_cdc_audit_log:
+        raise HTTPException(status_code=404, detail="CDC audit logging is not enabled")
+
+    records = cdc_audit_logger.query_ad_history(ad_id, limit=limit)
+    return {"ad_id": ad_id, "total_changes": len(records), "history": records}
 
 
 @app.post("/api/db-fetch")
@@ -5379,9 +5461,30 @@ async def db_update_categories(
                     "update_success": "Yes" if result["success"] else f"No ({result.get('error', 'Unknown')})",
                     "patch_step": f"{patch_action} ({'OK' if patch_step_success else 'FAILED'})" if patch_action else "N/A",
                 }
-            
+
+            # ── CDC Audit Log: Record old vs new categories to Loki ──
+            if config.enable_cdc_audit_log:
+                try:
+                    row_match = df[df["Ad ID"] == ad_id]
+                    breadcrumbs = ["", "", ""]
+                    if not row_match.empty:
+                        row_data = row_match.iloc[0]
+                        for bi, col in enumerate(["Breadcrumb_Top1", "Breadcrumb_Top2", "Breadcrumb_Top3"]):
+                            val = row_data.get(col, "")
+                            breadcrumbs[bi] = str(val).strip() if pd.notna(val) else ""
+                    old_patch_cat_names = [c.get("name", c.get("id", "")) for c in old_patch_categories]
+                    cdc_audit_logger.log_category_change(
+                        ad_id=ad_id, job_id=temp_id, environment="prod",
+                        old_breadcrumbs=breadcrumbs, new_annotated=cat_names,
+                        old_patch_categories=old_patch_cat_names,
+                        success=result["success"], error=result.get("error", ""),
+                        patch_action=patch_action or "", patch_deleted=patch_deleted,
+                    )
+                except Exception as e:
+                    print(f"      [Audit] Warning: failed to log audit for Ad {ad_id}: {e}")
+
             return (result_dict, patch_summary)
-        
+
         # ── Run with ThreadPoolExecutor ──
         results = list(pre_skip_results)  # Start with pre-skipped results
         patched_ads_summary = []
@@ -5444,6 +5547,10 @@ async def db_update_categories(
         print(f"   ⚡ Speed: {max_workers} concurrent workers")
         print("=" * 80 + "\n")
         
+        # Flush any remaining audit log records to Loki
+        if config.enable_cdc_audit_log:
+            cdc_audit_logger.flush()
+
         return {
             "status": "completed",
             "message": f"DB update completed in {update_elapsed:.1f}s. {success_count} successful, {failed_count} failed, {len(skipped_rows)} skipped. Patch step: {patches_created} created, {patches_updated} updated, {patches_failed} failed.",
@@ -5460,7 +5567,7 @@ async def db_update_categories(
             "results": results,
             "skipped": skipped_rows[:50],  # Limit for response size
         }
-    
+
     except HTTPException:
         raise
     except Exception as e:

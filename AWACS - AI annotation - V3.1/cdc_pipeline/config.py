@@ -69,6 +69,9 @@ SHOW_SUMMARY = os.environ.get("CDC_SHOW_SUMMARY", "false").strip().lower() == "t
 SUMMARY_FILE = "cdc_pipeline/session_summary.json"
 TRUCK_REALM_ID = 4
 
+# --- Auto mode: consumer timeout (minutes) ---
+CDC_CONSUMER_TIMEOUT_MINUTES = int(os.environ.get("CDC_CONSUMER_TIMEOUT_MINUTES", "5"))
+
 # --- Pipeline integration ---
 BACKEND_URL = os.environ.get("CDC_BACKEND_URL", "http://localhost:8000")
 
