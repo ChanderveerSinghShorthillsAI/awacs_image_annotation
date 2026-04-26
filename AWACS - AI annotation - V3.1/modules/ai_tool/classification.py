@@ -23,6 +23,7 @@ with open(os.devnull, 'w') as f, contextlib.redirect_stdout(f), contextlib.redir
 from .config_loader import config
 from .utils import log_msg
 from .cache_manager import get_cache_manager
+from .time_utils import now_ist
 from .awacs_logger import setup_logger
 
 logger = setup_logger("awacs.classification")
@@ -331,7 +332,7 @@ def save_mosaic_image(mosaic_bytes: bytes, ad_id: str, image_type: str):
         os.makedirs(config.mosaic_images_dir, exist_ok=True)
         
         # Create filename with timestamp for uniqueness
-        timestamp = time.strftime("%Y%m%d_%H%M%S")
+        timestamp = now_ist().strftime("%Y%m%d_%H%M%S")
         filename = f"{ad_id}_{image_type}_{timestamp}.jpg"
         filepath = os.path.join(config.mosaic_images_dir, filename)
         

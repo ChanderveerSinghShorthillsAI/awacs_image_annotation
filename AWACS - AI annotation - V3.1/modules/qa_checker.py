@@ -17,9 +17,10 @@ try:
     from ai_tool.web_utils import setup_driver
     from ai_tool.data_processing import load_rules, normalize_text
     from ai_tool.utils import fmt_secs
-    
+    from ai_tool.time_utils import now_ist
+
     # LINKING TO SCRAPER MODULE DIRECTLY
-    import scraper_module 
+    import scraper_module
 except ImportError as e:
     print(f"\n❌ CRITICAL IMPORT ERROR: {e}")
     input("Press Enter to exit...")
@@ -70,7 +71,7 @@ def run_qa_check():
     print(f"📊 Validating {total} ads... (Press Ctrl+C to stop)")
     
     # 4. Output Path
-    run_ts = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+    run_ts = now_ist().strftime("%Y-%m-%d_%H-%M-%S")
     output_filename = f"QA {run_ts}.xlsx"
     output_path = os.path.join(output_dir, output_filename)
 

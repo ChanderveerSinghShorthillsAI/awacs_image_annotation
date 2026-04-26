@@ -5,6 +5,7 @@ from datetime import datetime
 
 from ai_tool.config_loader import config
 from ai_tool.awacs_logger import setup_logger
+from ai_tool.time_utils import now_ist
 
 logger = setup_logger("awacs.merge_outputs")
 
@@ -83,7 +84,7 @@ def merge_excel_files():
 
     logger.info("Total unique ads after merging and sorting: %d", len(final_df))
     
-    run_ts = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+    run_ts = now_ist().strftime("%Y-%m-%d_%H-%M-%S")
     output_filename = f"Merged_{num_to_merge}_files_{run_ts}.xlsx"
     output_path = os.path.join(merged_dir, output_filename)
     

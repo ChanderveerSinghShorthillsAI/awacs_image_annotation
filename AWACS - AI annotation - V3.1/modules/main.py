@@ -20,6 +20,7 @@ from ai_tool.config_loader import config
 from ai_tool.main_processor import merge_all_session_reports, save_checkpoint
 from ai_tool.rate_limiter import Yoda
 from ai_tool.awacs_logger import setup_logger
+from ai_tool.time_utils import now_ist
 
 logger = setup_logger("awacs.main")
 
@@ -142,7 +143,7 @@ def run_parallel_ai(workers=10, high_accuracy=False, use_vision_v2=False):
 
     logger.info("Resume: Skipping %d already processed ads", len(done_set))
 
-    run_ts = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+    run_ts = now_ist().strftime("%Y-%m-%d_%H-%M-%S")
     m = Manager()
     job_q, res_q, stat_q, key_q = m.Queue(), m.Queue(), m.Queue(), m.Queue()
     

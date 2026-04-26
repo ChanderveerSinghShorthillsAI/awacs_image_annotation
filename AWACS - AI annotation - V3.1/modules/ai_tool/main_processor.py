@@ -13,6 +13,7 @@ from . import classification, web_utils, data_processing, utils, darth_vision
 from .cache_manager import get_cache_manager
 from ai_tool.rate_limiter import Yoda
 from .awacs_logger import setup_logger
+from .time_utils import now_ist
 
 logger = setup_logger("awacs.main_processor")
 
@@ -556,7 +557,7 @@ def run_single_process(input_file, fast_mode=False):
     """
     Runs the AI processing in a single thread (for debugging or slow mode).
     """
-    run_ts = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+    run_ts = now_ist().strftime("%Y-%m-%d_%H-%M-%S")
     utils.initialize_logging(run_ts, 0)
     if config.enable_thought_summaries:
         utils.initialize_thought_log(run_ts, 0)

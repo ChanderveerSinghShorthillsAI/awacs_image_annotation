@@ -3,6 +3,8 @@ import glob
 import pandas as pd
 from datetime import datetime
 
+from ai_tool.time_utils import now_ist
+
 # --- Configuration ---
 AI_OUTPUT_DIR = "AI output"
 MANUAL_FEEDBACK_DIR = "Manual Feedback"  # <-- New folder for your corrected files
@@ -122,7 +124,7 @@ def analyze_corrections():
         mistake_counts_df = pd.DataFrame([{"Message": "🎉 No mistakes found!"}])
 
     # 7. Save the report to an Excel file
-    ts = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+    ts = now_ist().strftime("%Y-%m-%d_%H-%M-%S")
     report_filename = f"Analysis_Report_{ts}.xlsx"
     report_path = os.path.join(ANALYSIS_OUTPUT_DIR, report_filename)
 

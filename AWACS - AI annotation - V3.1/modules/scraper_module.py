@@ -13,6 +13,7 @@ import urllib3
 
 from ai_tool.config_loader import config
 from ai_tool.web_utils import setup_driver
+from ai_tool.time_utils import now_ist
 
 def fmt_secs(seconds: float) -> str:
     return str(timedelta(seconds=int(seconds)))
@@ -271,11 +272,11 @@ def run_scraper(resume=False):
             else:
                 print("\n⚠️ No existing file to resume. Starting fresh.")
                 df = source_df.copy()
-                run_ts = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+                run_ts = now_ist().strftime("%Y-%m-%d_%H-%M-%S")
                 target_file = os.path.join(OUTPUT_DIR, f"Scrapper_{run_ts}.xlsx")
         else:
             df = source_df.copy()
-            run_ts = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+            run_ts = now_ist().strftime("%Y-%m-%d_%H-%M-%S")
             target_file = os.path.join(OUTPUT_DIR, f"Scrapper_{run_ts}.xlsx")
 
         required_cols = ["Breadcrumb_Top1", "Breadcrumb_Top2", "Breadcrumb_Top3", "Image_URLs"]

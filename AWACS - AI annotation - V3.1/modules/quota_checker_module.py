@@ -11,6 +11,7 @@ os.environ['GRPC_VERBOSITY'] = 'ERROR'
 import google.generativeai as genai
 
 from ai_tool.config_loader import config
+from ai_tool.time_utils import now_ist
 
 def run_quota_check():
     """
@@ -36,7 +37,7 @@ def run_quota_check():
     print("Scanning historical usage from Key Reports...")
 
     usage_today = {f"Key {i+1}": 0 for i in range(len(api_keys_info))}
-    today_str = datetime.now().strftime("%Y-%m-%d")
+    today_str = now_ist().strftime("%Y-%m-%d")
     
     report_files = glob.glob(os.path.join(key_report_dir, "Session_Report_*.xlsx"))
     

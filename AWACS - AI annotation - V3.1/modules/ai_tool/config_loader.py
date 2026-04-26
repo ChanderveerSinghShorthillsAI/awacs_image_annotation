@@ -30,6 +30,7 @@ def load_config():
         config.project_root = project_root
 
         # Settings
+        config.timezone = config_parser.get('Settings', 'Timezone', fallback='Asia/Kolkata')
         config.gemini_model = config_parser.get('Settings', 'GeminiModel')
         # Per-prompt model configuration (falls back to GeminiModel if not set)
         config.gemini_model_promo_check = config_parser.get('Settings', 'GeminiModelPromoCheck', fallback=config.gemini_model)

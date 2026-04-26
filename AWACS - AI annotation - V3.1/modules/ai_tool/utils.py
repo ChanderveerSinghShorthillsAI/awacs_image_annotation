@@ -5,6 +5,7 @@ import pandas as pd
 from datetime import datetime, timedelta
 from .config_loader import config
 from .awacs_logger import setup_logger
+from .time_utils import now_ist
 
 logger = setup_logger("awacs.utils")
 
@@ -35,7 +36,7 @@ def initialize_logging(run_ts: str, worker_id: int = 0):
             f.write(f"================================================================\n")
             f.write(f"LOG STARTED: Worker {worker_id}\n")
             f.write(f"Run ID: {run_ts}\n")
-            f.write(f"Start Time: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
+            f.write(f"Start Time: {now_ist().strftime('%Y-%m-%d %H:%M:%S')}\n")
             f.write(f"================================================================\n\n")
             
     except Exception as e:
@@ -47,7 +48,7 @@ def log_msg(msg: str, worker_id: int = -1):
     """
     if LOG_FILE:
         try:
-            timestamp = datetime.now().strftime("%H:%M:%S")
+            timestamp = now_ist().strftime("%H:%M:%S")
             prefix = f"[{timestamp}] [W-{worker_id:02d}] "
             
             # Indent multiline messages so they look clean
@@ -81,7 +82,7 @@ def merge_worker_logs(run_ts):
         with open(master_log_path, 'w', encoding='utf-8') as master:
             master.write(f"================================================================\n")
             master.write(f"MASTER SESSION LOG - RUN ID: {run_ts}\n")
-            master.write(f"Merged at: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
+            master.write(f"Merged at: {now_ist().strftime('%Y-%m-%d %H:%M:%S')}\n")
             master.write(f"================================================================\n\n")
             
             # Sort files so Worker 01 comes before Worker 02, etc.
@@ -282,7 +283,7 @@ def initialize_thought_log(run_ts: str, worker_id: int = 0):
             f.write(f"================================================================\n")
             f.write(f"THOUGHT SUMMARIES LOG - Worker {worker_id}\n")
             f.write(f"Run ID: {run_ts}\n")
-            f.write(f"Start Time: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
+            f.write(f"Start Time: {now_ist().strftime('%Y-%m-%d %H:%M:%S')}\n")
             f.write(f"================================================================\n\n")
     except Exception as e:
         logger.warning("WARNING: Failed to initialize thought log. Error: %s", e)
@@ -296,7 +297,7 @@ def save_thought_entry(ad_id: str, breadcrumb: str, thought_text: str,
     if not THOUGHT_LOG_FILE or not thought_text:
         return
     try:
-        timestamp = datetime.now().strftime("%H:%M:%S")
+        timestamp = now_ist().strftime("%H:%M:%S")
         with open(THOUGHT_LOG_FILE, "a", encoding="utf-8") as f:
             f.write(f"[{timestamp}] [W-{worker_id:02d}] Ad ID: {ad_id}\n")
             f.write(f"Model     : {model_name}\n")
@@ -327,7 +328,7 @@ def merge_thought_logs(run_ts: str):
         with open(master_path, 'w', encoding='utf-8') as master:
             master.write(f"================================================================\n")
             master.write(f"MASTER THOUGHT SUMMARIES - RUN ID: {run_ts}\n")
-            master.write(f"Merged at: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
+            master.write(f"Merged at: {now_ist().strftime('%Y-%m-%d %H:%M:%S')}\n")
             master.write(f"================================================================\n\n")
 
             for wf in worker_files:

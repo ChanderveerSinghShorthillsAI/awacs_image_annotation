@@ -25,6 +25,7 @@ try:
     from ai_tool.config_loader import config, load_config
     from ai_tool.data_processing import load_rules, normalize_text
     from ai_tool.awacs_logger import setup_logger
+    from ai_tool.time_utils import now_ist
 except ImportError as e:
     print(f"\n❌ CRITICAL IMPORT ERROR: {e}")
     print(f"   Current Path: {current_script_path}")
@@ -242,7 +243,7 @@ def run_audit():
         hall_of_shame = pd.DataFrame([{"Message": "No Rejections!"}])
 
     # 8. SAVE REPORT
-    timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+    timestamp = now_ist().strftime("%Y-%m-%d_%H-%M-%S")
     report_path = os.path.join(audit_dir, f"Audit_Report_{timestamp}.xlsx")
     
     try:

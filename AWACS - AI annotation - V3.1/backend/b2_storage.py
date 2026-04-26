@@ -14,6 +14,8 @@ from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 from typing import Optional
 
+from ai_tool.time_utils import now_ist
+
 logger = logging.getLogger("awacs.b2")
 
 # boto3 is imported lazily in init_b2() so the module can be imported
@@ -148,7 +150,7 @@ def b2_key_for_file(file_type: str, filename: str) -> str:
     prefix = _FOLDER_MAP.get(file_type)
     if not prefix:
         raise ValueError(f"Unknown file_type '{file_type}'. Valid: {list(_FOLDER_MAP.keys())}")
-    date_folder = datetime.now().strftime("%Y-%m-%d")
+    date_folder = now_ist().strftime("%Y-%m-%d")
     return f"{prefix}/{date_folder}/{filename}"
 
 

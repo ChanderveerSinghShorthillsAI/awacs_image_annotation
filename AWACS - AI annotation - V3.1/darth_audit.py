@@ -16,6 +16,7 @@ elif os.path.exists(os.path.join(current_dir, 'modules', 'ai_tool')):
 try:
     from ai_tool import darth_vision
     from ai_tool.config_loader import config, load_config
+    from ai_tool.time_utils import now_ist
 except ImportError:
     print("❌ Error: Could not import 'ai_tool'. Run this from the project root.")
     sys.exit(1)
@@ -96,7 +97,7 @@ def run_darth_audit():
         # Sort by score (Highest confidence first)
         report_df = report_df.sort_values(by="Darth Score", ascending=False)
         
-        timestamp = time.strftime("%Y-%m-%d_%H-%M-%S")
+        timestamp = now_ist().strftime("%Y-%m-%d_%H-%M-%S")
         save_path = f"Darth_Audit_{timestamp}.xlsx"
         
         report_df.to_excel(save_path, index=False)

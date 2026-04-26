@@ -45,6 +45,7 @@ from ai_tool.main_processor import save_checkpoint, merge_all_session_reports
 from ai_tool.data_processing import load_rules, normalize_text
 from ai_tool import web_utils, classification, ad_tracker, cdc_audit_logger
 from ai_tool.awacs_logger import setup_logger
+from ai_tool.time_utils import now_ist
 import ai_module
 
 logger = setup_logger("awacs.backend")
@@ -1167,7 +1168,7 @@ def verify_dually_listings(result_df: pd.DataFrame, job_id: str, yoda_instance):
 def run_job_pipeline_sync(job_id: str, file_path: str):
     """Main pipeline: Scraping -> Parallel AI Processing (runs synchronously)"""
     job = jobs[job_id]
-    run_ts = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+    run_ts = now_ist().strftime("%Y-%m-%d_%H-%M-%S")
     
     try:
         # Load input file
@@ -1323,7 +1324,7 @@ async def run_job_pipeline(job_id: str, file_path: str):
 def run_reannotation_pipeline_sync(job_id: str, file_path: str):
     """Reannotation pipeline: Skip scraping, go directly to AI annotation"""
     job = jobs[job_id]
-    run_ts = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+    run_ts = now_ist().strftime("%Y-%m-%d_%H-%M-%S")
     
     try:
         # Load already-scraped file
@@ -1461,7 +1462,7 @@ def run_db_annotation_pipeline_sync(job_id: str, file_path: str, b2_folder_overr
     """
     BATCH_SIZE = 500
     job = jobs[job_id]
-    run_ts = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+    run_ts = now_ist().strftime("%Y-%m-%d_%H-%M-%S")
     
     try:
         logger.info("=" * 80)
@@ -1736,7 +1737,7 @@ def run_db_fetch_pipeline_sync(
     3. Outputs annotated Excel (same format as before)
     """
     job = jobs[job_id]
-    run_ts = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+    run_ts = now_ist().strftime("%Y-%m-%d_%H-%M-%S")
     
     try:
         logger.info("=" * 80)
@@ -2512,7 +2513,7 @@ def run_audit_comparison(ai_df: pd.DataFrame, manual_df: pd.DataFrame, audit_id:
         hall_of_shame = pd.DataFrame([{"Message": "No Rejections! Perfect accuracy!"}])
     
     # Save Audit Report
-    timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+    timestamp = now_ist().strftime("%Y-%m-%d_%H-%M-%S")
     report_filename = f"Audit_Report_{timestamp}.xlsx"
     if getattr(config, 'enable_audit_reports', True):
         audit_dir = os.path.join(config.project_root, "Audit Reports")
@@ -3004,7 +3005,7 @@ def run_db_fetch_by_ids_sync(job_id: str, file_path: str, client_id: str, client
     4. Saves to Excel ready for annotation
     """
     job = jobs[job_id]
-    run_ts = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+    run_ts = now_ist().strftime("%Y-%m-%d_%H-%M-%S")
     
     try:
         logger.info("=" * 80)
@@ -3477,7 +3478,7 @@ def _cdc_dev_db_update(db_api_base_url: str, client_id: str, client_secret: str,
                 }
                 for r in results
             ])
-            run_ts = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+            run_ts = now_ist().strftime("%Y-%m-%d_%H-%M-%S")
             patch_report_filename = f"CDC_Patch_Summary_{run_ts}.xlsx"
             report_path = os.path.join(CDC_OUTPUT_DIR, patch_report_filename)
             os.makedirs(CDC_OUTPUT_DIR, exist_ok=True)
@@ -3794,7 +3795,7 @@ def _cdc_prod_db_update(token_url: str, client_id: str, client_secret: str,
             }
             patch_df.rename(columns=column_map, inplace=True)
 
-            run_ts = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+            run_ts = now_ist().strftime("%Y-%m-%d_%H-%M-%S")
             patch_report_filename = f"CDC_Patch_Summary_{run_ts}.xlsx"
             patch_report_path = os.path.join(CDC_OUTPUT_DIR, patch_report_filename)
             patch_df.to_excel(patch_report_path, index=False, engine="openpyxl")
@@ -3843,7 +3844,7 @@ def run_cdc_pipeline_sync(job_id: str, ad_ids: list, client_id: str, client_secr
     is_prod = (cdc_env == "prod")
     env_label = "PROD ⚠️" if is_prod else "DEV"
     job = jobs[job_id]
-    run_ts = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+    run_ts = now_ist().strftime("%Y-%m-%d_%H-%M-%S")
 
     try:
         logger.info("=" * 80)
@@ -4568,7 +4569,7 @@ async def fetch_from_db(request: DBFetchRequest):
         df["Ad ID"] = df["Ad ID"].astype(str).str.replace(r'\.0$', '', regex=True).str.strip()
         
         # Save to file (read back by start_db_annotation + download — must always be saved)
-        timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+        timestamp = now_ist().strftime("%Y-%m-%d_%H-%M-%S")
         fetch_id = str(uuid.uuid4())[:8]
         output_filename = f"DB_Fetch_{timestamp}.xlsx"
         if getattr(config, 'enable_scrapper_output', True):
@@ -5768,7 +5769,7 @@ async def download_patch_report(report_id: str, background_tasks: BackgroundTask
     df.rename(columns=column_map, inplace=True)
     
     # Write patch summary Excel (served immediately, not read back — always goes to temp)
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    timestamp = now_ist().strftime("%Y%m%d_%H%M%S")
     filename = f"patch_summary_{report_id}_{timestamp}.xlsx"
     if getattr(config, 'enable_uploads', True):
         report_dir = os.path.join(config.project_root, "uploads")
