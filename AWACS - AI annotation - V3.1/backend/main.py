@@ -17,7 +17,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from fastapi import FastAPI, UploadFile, File, HTTPException, BackgroundTasks, Form
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, RedirectResponse
 import pandas as pd
 
 # Add modules to path BEFORE any other imports
@@ -34,49 +34,57 @@ if sys.platform == 'win32':
     except RuntimeError:
         pass  # Already set
 
+from b2_storage import (
+    init_b2, shutdown_b2, upload_to_b2_async, get_download_url,
+    b2_key_for_file, list_b2_files, delete_b2_files, setup_lifecycle_rule,
+    is_enabled as b2_is_enabled, get_b2_key_for_cdc_file, flush_uploads,
+)
 from ai_tool.config_loader import config, load_config
 from ai_tool.rate_limiter import Yoda
 from ai_tool.main_processor import save_checkpoint, merge_all_session_reports
 from ai_tool.data_processing import load_rules, normalize_text
 from ai_tool import web_utils, classification, ad_tracker, cdc_audit_logger
+from ai_tool.awacs_logger import setup_logger
 import ai_module
+
+logger = setup_logger("awacs.backend")
 
 # Initialize config
 load_config()
 
 # Initialize Ad Annotation Limit Tracker (Turso DB)
 if config.enable_ad_annotation_limit:
-    print("\n" + "="*60)
-    print("📊 AD ANNOTATION LIMIT TRACKER: ✅ ENABLED")
-    print(f"   Max annotation runs per ad: {config.max_annotation_runs}")
-    print(f"   Turso DB URL: {config.turso_db_url[:40]}...")
+    logger.info("=" * 60)
+    logger.info("📊 AD ANNOTATION LIMIT TRACKER: ✅ ENABLED")
+    logger.info("   Max annotation runs per ad: %d", config.max_annotation_runs)
+    logger.info("   Turso DB URL: %s...", config.turso_db_url[:40])
     try:
         ad_tracker.init_tracker(config.turso_db_url, config.turso_auth_token)
     except Exception as e:
-        print(f"   ❌ Ad Tracker initialization failed: {e}")
-        print(f"   ⚠️ Disabling Ad Annotation Limit for this session")
+        logger.error("   ❌ Ad Tracker initialization failed: %s", e)
+        logger.warning("   ⚠️ Disabling Ad Annotation Limit for this session")
         config.enable_ad_annotation_limit = False
-    print("="*60 + "\n")
+    logger.info("=" * 60)
 else:
-    print("\n📊 AD ANNOTATION LIMIT TRACKER: ❌ DISABLED (bypassed)\n")
+    logger.info("📊 AD ANNOTATION LIMIT TRACKER: ❌ DISABLED (bypassed)")
 
 # Initialize CDC Audit Logger (Grafana Cloud Loki)
 if config.enable_cdc_audit_log:
-    print("\n" + "="*60)
-    print("📋 CDC AUDIT LOGGER: ✅ ENABLED (Grafana Loki)")
-    print(f"   Push URL: {config.loki_push_url[:50]}...")
+    logger.info("=" * 60)
+    logger.info("📋 CDC AUDIT LOGGER: ✅ ENABLED (Grafana Loki)")
+    logger.info("   Push URL: %s...", config.loki_push_url[:50])
     try:
         cdc_audit_logger.init_audit_logger(
             config.loki_push_url, config.loki_query_url,
             config.loki_user_id, config.loki_api_key,
         )
     except Exception as e:
-        print(f"   ❌ Audit Logger initialization failed: {e}")
-        print(f"   ⚠️ Disabling CDC Audit Logging for this session")
+        logger.error("   ❌ Audit Logger initialization failed: %s", e)
+        logger.warning("   ⚠️ Disabling CDC Audit Logging for this session")
         config.enable_cdc_audit_log = False
-    print("="*60 + "\n")
+    logger.info("=" * 60)
 else:
-    print("\n📋 CDC AUDIT LOGGER: ❌ DISABLED\n")
+    logger.info("📋 CDC AUDIT LOGGER: ❌ DISABLED")
 
 app = FastAPI(title="AWACS AI Annotation API", version="1.0.0")
 
@@ -118,7 +126,8 @@ _AWACS_TEMP_PREFIXES = (
 
 # How long (in hours) to keep temp output files before deleting them.
 # Files older than this are removed by the background cleanup thread.
-_TEMP_FILE_MAX_AGE_HOURS = 24
+# When B2 is enabled, files are backed up to cloud so local copies expire faster.
+_TEMP_FILE_MAX_AGE_HOURS = 1 if getattr(config, 'b2_enabled', False) else 24
 
 # How often (in seconds) the background cleanup thread runs.
 _TEMP_CLEANUP_INTERVAL_SECONDS = 3600  # every hour
@@ -134,7 +143,15 @@ def _register_temp_file(path: str):
     """Register a temp output file for periodic cleanup."""
     with _temp_files_lock:
         _temp_output_files.add(path)
-    print(f"   [TEMP] Registered for cleanup: {os.path.basename(path)}")
+    logger.info("   [TEMP] Registered for cleanup: %s", os.path.basename(path))
+
+
+def _upload_and_track(local_path: str, file_type: str, filename: str,
+                      delete_local: bool = True) -> str:
+    """Upload file to B2 (async) and return the B2 object key."""
+    b2_key = b2_key_for_file(file_type, filename)
+    upload_to_b2_async(local_path, b2_key, delete_local=delete_local)
+    return b2_key
 
 
 def _cleanup_old_temp_files():
@@ -152,13 +169,13 @@ def _cleanup_old_temp_files():
                 else:
                     _temp_output_files.discard(path)
             except Exception as e:
-                print(f"   [TEMP] Could not delete {os.path.basename(path)}: {e}")
+                logger.warning("   [TEMP] Could not delete %s: %s", os.path.basename(path), e)
     if deleted:
-        print(f"\n[TEMP CLEANUP] Deleted {len(deleted)} file(s) older than {_TEMP_FILE_MAX_AGE_HOURS}h:")
+        logger.info("[TEMP CLEANUP] Deleted %d file(s) older than %dh:", len(deleted), _TEMP_FILE_MAX_AGE_HOURS)
         for name in deleted:
-            print(f"   - {name}")
+            logger.info("   - %s", name)
     else:
-        print(f"[TEMP CLEANUP] No files older than {_TEMP_FILE_MAX_AGE_HOURS}h — nothing to delete.")
+        logger.info("[TEMP CLEANUP] No files older than %dh — nothing to delete.", _TEMP_FILE_MAX_AGE_HOURS)
 
 
 def _cleanup_leftover_awacs_temp_files():
@@ -171,36 +188,44 @@ def _cleanup_leftover_awacs_temp_files():
                 os.remove(os.path.join(tmp, fname))
                 deleted.append(fname)
             except Exception as e:
-                print(f"   [TEMP] Could not delete leftover {fname}: {e}")
+                logger.warning("   [TEMP] Could not delete leftover %s: %s", fname, e)
     if deleted:
-        print(f"[TEMP CLEANUP] Removed {len(deleted)} leftover file(s) from previous session:")
+        logger.info("[TEMP CLEANUP] Removed %d leftover file(s) from previous session:", len(deleted))
         for name in deleted:
-            print(f"   - {name}")
+            logger.info("   - %s", name)
     else:
-        print("[TEMP CLEANUP] No leftover files from previous session.")
+        logger.info("[TEMP CLEANUP] No leftover files from previous session.")
 
 
 def _temp_cleanup_loop():
     """Background thread: runs cleanup every _TEMP_CLEANUP_INTERVAL_SECONDS."""
     while True:
         time.sleep(_TEMP_CLEANUP_INTERVAL_SECONDS)
-        print(f"\n[TEMP CLEANUP] Background cleanup running (interval: {_TEMP_CLEANUP_INTERVAL_SECONDS // 3600}h)...")
+        logger.info("[TEMP CLEANUP] Background cleanup running (interval: %dh)...", _TEMP_CLEANUP_INTERVAL_SECONDS // 3600)
         _cleanup_old_temp_files()
 
 
 @app.on_event("startup")
 def on_startup():
-    print("\n[TEMP CLEANUP] Checking for leftover temp files from previous session...")
+    logger.info("[TEMP CLEANUP] Checking for leftover temp files from previous session...")
     _cleanup_leftover_awacs_temp_files()
     t = threading.Thread(target=_temp_cleanup_loop, daemon=True)
     t.start()
-    print(f"[TEMP CLEANUP] Background cleanup thread started — runs every {_TEMP_CLEANUP_INTERVAL_SECONDS // 3600}h, deletes files older than {_TEMP_FILE_MAX_AGE_HOURS}h\n")
+    logger.info("[TEMP CLEANUP] Background cleanup thread started — runs every %dh, deletes files older than %dh", _TEMP_CLEANUP_INTERVAL_SECONDS // 3600, _TEMP_FILE_MAX_AGE_HOURS)
+
+    # Initialize Backblaze B2 cloud storage
+    if init_b2(config):
+        setup_lifecycle_rule()
+        logger.info("[B2] Backblaze B2 cloud storage initialized")
+    else:
+        logger.info("[B2] Backblaze B2 disabled — using local storage only")
 
 
 @app.on_event("shutdown")
 def on_shutdown():
-    print("\n[TEMP CLEANUP] Server shutting down — running final cleanup...")
+    logger.info("[TEMP CLEANUP] Server shutting down — running final cleanup...")
     _cleanup_old_temp_files()
+    shutdown_b2()
 
 
 class JobStatus:
@@ -586,23 +611,23 @@ def run_parallel_ai(df: pd.DataFrame, run_ts: str, job_id: str, num_workers: int
     total = len(df)
     ai_start_time = time.time()
     
-    print(f"\n{'='*80}")
-    print(f"🤖 AI ANNOTATION PHASE STARTED (ULTRA-OPTIMIZED)")
-    print(f"{'='*80}")
-    print(f"   Total Ads: {total}")
-    print(f"   Workers: {num_workers}")
-    print(f"   Models:")
-    print(f"      📋 Promo Check:         {config.gemini_model_promo_check}")
-    print(f"      📋 Classification:      {config.gemini_model_classification}")
-    print(f"      📋 Dually Verification: {config.gemini_model_dually_verification}")
-    print(f"   API Keys: {len(config.gemini_api_keys)}")
-    print(f"   📋 [Rules.json] Will be loaded by each worker from: {config.rules_json}")
-    print(f"\n   🔧 DUALLY DETECTION SETTINGS:")
-    print(f"      🌑 Darth CV2 (OpenCV) Detection: {'✅ ENABLED' if config.enable_darth_cv2_dually else '❌ DISABLED'}")
+    logger.info("=" * 80)
+    logger.info("🤖 AI ANNOTATION PHASE STARTED (ULTRA-OPTIMIZED)")
+    logger.info("=" * 80)
+    logger.info("   Total Ads: %d", total)
+    logger.info("   Workers: %d", num_workers)
+    logger.info("   Models:")
+    logger.info("      📋 Promo Check:         %s", config.gemini_model_promo_check)
+    logger.info("      📋 Classification:      %s", config.gemini_model_classification)
+    logger.info("      📋 Dually Verification: %s", config.gemini_model_dually_verification)
+    logger.info("   API Keys: %d", len(config.gemini_api_keys))
+    logger.info("   📋 [Rules.json] Will be loaded by each worker from: %s", config.rules_json)
+    logger.info("   🔧 DUALLY DETECTION SETTINGS:")
+    logger.info("      🌑 Darth CV2 (OpenCV) Detection: %s", '✅ ENABLED' if config.enable_darth_cv2_dually else '❌ DISABLED')
     if config.enable_darth_cv2_dually:
-        print(f"         └─ Threshold: {config.darth_cv2_dually_threshold} (tire-like contours required)")
-    print(f"      🔍 Post-Processing LLM Verification: {'✅ ENABLED' if config.enable_dually_llm_verification else '❌ DISABLED'}")
-    print(f"{'='*80}\n")
+        logger.info("         └─ Threshold: %s (tire-like contours required)", config.darth_cv2_dually_threshold)
+    logger.info("      🔍 Post-Processing LLM Verification: %s", '✅ ENABLED' if config.enable_dually_llm_verification else '❌ DISABLED')
+    logger.info("=" * 80)
     
     # Initialize progress tracking
     job_progress[job_id] = {
@@ -628,7 +653,7 @@ def run_parallel_ai(df: pd.DataFrame, run_ts: str, job_id: str, num_workers: int
         job_q.put(row.to_dict())
     
     # Initialize Yoda rate limiter
-    print("🧙 Initializing Yoda (Rate Limiter)...")
+    logger.info("🧙 Initializing Yoda (Rate Limiter)...")
     yoda = Yoda(config.gemini_api_keys_info, config.rate_limit_rpm, m)
     
     start_time = time.time()
@@ -641,7 +666,7 @@ def run_parallel_ai(df: pd.DataFrame, run_ts: str, job_id: str, num_workers: int
         daemon=True
     )
     drain_thread.start()
-    print("   ✅ Status queue drainer started")
+    logger.info("   ✅ Status queue drainer started")
     
     # Start Workers
     procs = []
@@ -653,11 +678,11 @@ def run_parallel_ai(df: pd.DataFrame, run_ts: str, job_id: str, num_workers: int
         )
         p.start()
         procs.append(p)
-        print(f"   Started Worker-{i} (PID: {p.pid})")
+        logger.info("   Started Worker-%d (PID: %d)", i, p.pid)
         time.sleep(0.3)  # ULTRA-OPTIMIZED: Reduced from 0.5s to 0.3s
     
-    print(f"\n   All {num_workers} workers started. Processing...")
-    print(f"   📊 Real-time results will appear below:\n")
+    logger.info("   All %d workers started. Processing...", num_workers)
+    logger.info("   📊 Real-time results will appear below:")
     
     results = []
     last_print = 0
@@ -679,7 +704,7 @@ def run_parallel_ai(df: pd.DataFrame, run_ts: str, job_id: str, num_workers: int
                 elapsed_since_start = current_time - start_time
                 avg_time_per_listing = elapsed_since_start / len(results) if len(results) > 0 else 0
                 
-                print(f"   ✅ [{len(results)}/{total}] {ad_id}: {top1} | Status: {status} | ⏱️ Avg: {avg_time_per_listing:.2f}s/ad")
+                logger.info("   ✅ [%d/%d] %s: %s | Status: %s | ⏱️ Avg: %.2fs/ad", len(results), total, ad_id, top1, status, avg_time_per_listing)
                 last_print = len(results)
                 
                 # Update progress tracking
@@ -693,7 +718,7 @@ def run_parallel_ai(df: pd.DataFrame, run_ts: str, job_id: str, num_workers: int
                 elapsed = int(time.time() - start_time)
                 rate = len(results) / elapsed if elapsed > 0 else 0
                 eta = (total - len(results)) / rate if rate > 0 else 0
-                print(f"   ⏳ Progress: {len(results)}/{total} done | {alive} workers active | ⏱️ {elapsed}s elapsed | ETA: {eta:.0f}s")
+                logger.info("   ⏳ Progress: %d/%d done | %d workers active | ⏱️ %ds elapsed | ETA: %.0fs", len(results), total, alive, elapsed, eta)
             continue
     
     # Stop the drain thread
@@ -718,14 +743,14 @@ def run_parallel_ai(df: pd.DataFrame, run_ts: str, job_id: str, num_workers: int
     elapsed = time.time() - start_time
     avg_time = elapsed / len(results) if len(results) > 0 else 0
     
-    print(f"\n{'='*80}")
-    print(f"✅ AI ANNOTATION PHASE COMPLETE")
-    print(f"{'='*80}")
-    print(f"   Processed: {len(results)}/{total} ads")
-    print(f"   ⏱️ Total Time: {elapsed:.2f}s ({elapsed/60:.2f} minutes)")
-    print(f"   ⏱️ Average Time per Ad: {avg_time:.2f}s")
-    print(f"   📊 Processing Rate: {len(results)/elapsed*60:.1f} ads/minute")
-    print(f"{'='*80}\n")
+    logger.info("=" * 80)
+    logger.info("✅ AI ANNOTATION PHASE COMPLETE")
+    logger.info("=" * 80)
+    logger.info("   Processed: %d/%d ads", len(results), total)
+    logger.info("   ⏱️ Total Time: %.2fs (%.2f minutes)", elapsed, elapsed / 60)
+    logger.info("   ⏱️ Average Time per Ad: %.2fs", avg_time)
+    logger.info("   📊 Processing Rate: %.1f ads/minute", len(results) / elapsed * 60)
+    logger.info("=" * 80)
     
     # Update final progress
     if job_id in job_progress:
@@ -775,9 +800,9 @@ def verify_dually_listings(result_df: pd.DataFrame, job_id: str, yoda_instance):
     
     verification_start = time.time()
     
-    print("\n" + "="*80)
-    print("🔍 DUALLY VERIFICATION PHASE - Multi-Threaded with 5 Workers (ULTRA-OPTIMIZED)")
-    print("="*80)
+    logger.info("=" * 80)
+    logger.info("🔍 DUALLY VERIFICATION PHASE - Multi-Threaded with 5 Workers (ULTRA-OPTIMIZED)")
+    logger.info("=" * 80)
     
     # Find all rows that have "Dually" in any annotation column
     annotation_cols = ["Annotated_Top1", "Annotated_Top2", "Annotated_Top3"]
@@ -790,15 +815,15 @@ def verify_dually_listings(result_df: pd.DataFrame, job_id: str, yoda_instance):
     dually_listings = result_df[dually_mask].copy()
     
     if len(dually_listings) == 0:
-        print("   No listings marked as Dually. Skipping verification.")
+        logger.info("   No listings marked as Dually. Skipping verification.")
         return result_df, 0  # Return 0 cost when no verification needed
     
     total_dually = len(dually_listings)
     num_workers = 5  # Fixed to 5 workers as requested
     
-    print(f"   Found {total_dually} listings marked as Dually")
-    print(f"   🧵 Using {num_workers} workers for parallel verification")
-    print(f"   📊 Expected speedup: ~{num_workers}x faster than sequential processing")
+    logger.info("   Found %d listings marked as Dually", total_dually)
+    logger.info("   🧵 Using %d workers for parallel verification", num_workers)
+    logger.info("   📊 Expected speedup: ~%dx faster than sequential processing", num_workers)
     
     # Update job status for frontend
     if job_id in jobs:
@@ -808,7 +833,7 @@ def verify_dually_listings(result_df: pd.DataFrame, job_id: str, yoda_instance):
     
     # STEP 1: Pre-fetch all images first (PARALLEL for speed)
     if getattr(config, 'verbose_cache_logging', True):
-        print("\n   📥 STEP 1: Pre-fetching ALL images from cache...")
+        logger.info("   📥 STEP 1: Pre-fetching ALL images from cache...")
     prefetch_start = time.time()
     prefetched_images = {}
     
@@ -825,7 +850,7 @@ def verify_dually_listings(result_df: pd.DataFrame, job_id: str, yoda_instance):
                 # Filter out None/empty images
                 valid_images = [img for img in img_bytes_list if img]
                 if valid_images:
-                    print(f"   📸 Ad {ad_id}: Pre-fetched {len(valid_images)} image(s)")
+                    logger.info("   📸 Ad %s: Pre-fetched %d image(s)", ad_id, len(valid_images))
                     return (idx, ad_id, valid_images, row)
         return None
     
@@ -843,14 +868,14 @@ def verify_dually_listings(result_df: pd.DataFrame, job_id: str, yoda_instance):
                 prefetched_images[idx] = (ad_id, valid_images, row)
     
     prefetch_time = time.time() - prefetch_start
-    print(f"   ✅ Pre-fetched images for {len(prefetched_images)} listings in {prefetch_time:.2f}s (PARALLEL)")
-    
+    logger.info("   ✅ Pre-fetched images for %d listings in %.2fs (PARALLEL)", len(prefetched_images), prefetch_time)
+
     if len(prefetched_images) == 0:
-        print("   ⚠️ No images available for any dually listings. Skipping verification.")
+        logger.warning("   ⚠️ No images available for any dually listings. Skipping verification.")
         return result_df, 0
     
     # STEP 2: Setup multiprocessing resources
-    print(f"\n   🔧 STEP 2: Setting up {num_workers} workers...")
+    logger.info("   🔧 STEP 2: Setting up %d workers...", num_workers)
     m = Manager()
     job_q = m.Queue()
     res_q = m.Queue()
@@ -860,10 +885,10 @@ def verify_dually_listings(result_df: pd.DataFrame, job_id: str, yoda_instance):
     # Load Keys
     for k in config.gemini_api_keys_info:
         key_q.put(k)
-    print(f"   🔑 Loaded {len(config.gemini_api_keys_info)} API keys into queue")
-    
+    logger.info("   🔑 Loaded %d API keys into queue", len(config.gemini_api_keys_info))
+
     # Load verification jobs into queue (skip rule-based dually that shouldn't be verified)
-    print(f"   📋 Loading verification jobs into queue...")
+    logger.info("   📋 Loading verification jobs into queue...")
     skipped_rule_based = 0
     for idx, (ad_id, img_bytes_list, row) in prefetched_images.items():
         # Skip verification for Landscape + Cabover COE — always dually by rule
@@ -876,7 +901,7 @@ def verify_dually_listings(result_df: pd.DataFrame, job_id: str, yoda_instance):
         has_cabover_coe = any("cabover" in a and "coe" in a for a in annotations)
         if has_landscape and has_cabover_coe:
             skipped_rule_based += 1
-            print(f"   ⏭️ Ad {ad_id}: Skipping verification — Landscape + Cabover COE (always dually by rule)")
+            logger.info("   ⏭️ Ad %s: Skipping verification — Landscape + Cabover COE (always dually by rule)", ad_id)
             continue
 
         verification_job = {
@@ -886,20 +911,20 @@ def verify_dually_listings(result_df: pd.DataFrame, job_id: str, yoda_instance):
             'row_data': row.to_dict()
         }
         job_q.put(verification_job)
-        print(f"   ➕ Added verification job for Ad {ad_id} to queue")
+        logger.info("   ➕ Added verification job for Ad %s to queue", ad_id)
 
     if skipped_rule_based > 0:
-        print(f"   ⏭️ Skipped {skipped_rule_based} listings (rule-based dually, no verification needed)")
+        logger.info("   ⏭️ Skipped %d listings (rule-based dually, no verification needed)", skipped_rule_based)
     
     jobs_loaded = len(prefetched_images) - skipped_rule_based
-    print(f"   ✅ {jobs_loaded} jobs loaded into queue ({skipped_rule_based} skipped as rule-based dually)")
+    logger.info("   ✅ %d jobs loaded into queue (%d skipped as rule-based dually)", jobs_loaded, skipped_rule_based)
 
     if jobs_loaded == 0:
-        print("   ⚠️ No listings need dually verification after rule-based filtering. Skipping.")
+        logger.warning("   ⚠️ No listings need dually verification after rule-based filtering. Skipping.")
         return result_df, 0
 
     # STEP 3: Start worker processes
-    print(f"\n   🚀 STEP 3: Starting {num_workers} worker processes...")
+    logger.info("   🚀 STEP 3: Starting %d worker processes...", num_workers)
     procs = []
     for i in range(1, num_workers + 1):
         p = Process(
@@ -908,11 +933,11 @@ def verify_dually_listings(result_df: pd.DataFrame, job_id: str, yoda_instance):
         )
         p.start()
         procs.append(p)
-        print(f"   ✅ Started Dually Verification Worker-{i} (PID: {p.pid})")
+        logger.info("   ✅ Started Dually Verification Worker-%d (PID: %d)", i, p.pid)
         time.sleep(0.3)  # Small delay to avoid race conditions
     
-    print(f"\n   🏃 All {num_workers} workers started. Beginning parallel verification...")
-    print(f"   📊 Real-time results will appear below:\n")
+    logger.info("   🏃 All %d workers started. Beginning parallel verification...", num_workers)
+    logger.info("   📊 Real-time results will appear below:")
     
     # STEP 4: Collect results from workers
     verification_loop_start = time.time()
@@ -922,9 +947,9 @@ def verify_dually_listings(result_df: pd.DataFrame, job_id: str, yoda_instance):
     total_cost = 0
     results_collected = 0
     
-    print("="*80)
-    print("📊 REAL-TIME VERIFICATION RESULTS")
-    print("="*80 + "\n")
+    logger.info("=" * 80)
+    logger.info("📊 REAL-TIME VERIFICATION RESULTS")
+    logger.info("=" * 80)
     
     # Result Collector
     while any(p.is_alive() for p in procs) or not res_q.empty():
@@ -953,7 +978,7 @@ def verify_dually_listings(result_df: pd.DataFrame, job_id: str, yoda_instance):
             if not success:
                 error_count += 1
                 error_msg = result.get('error', 'Unknown error')
-                print(f"   [{current_num}/{total_dually}] ⚠️ {ad_id}: ERROR - {error_msg[:40]} | ⏱️ {listing_time:.2f}s | ETA: {eta:.0f}s")
+                logger.warning("   [%d/%d] ⚠️ %s: ERROR - %s | ⏱️ %.2fs | ETA: %.0fs", current_num, total_dually, ad_id, error_msg[:40], listing_time, eta)
             else:
                 # Update cost tracking
                 total_cost += cost
@@ -971,7 +996,7 @@ def verify_dually_listings(result_df: pd.DataFrame, job_id: str, yoda_instance):
                 if is_dually:
                     verified_count += 1
                     if getattr(config, 'verbose_cache_logging', True):
-                        print(f"   [{current_num}/{total_dually}] ✅ {ad_id}: CONFIRMED | Cost: {cost:.4f}¢ → Total: {new_cost:.4f}¢ | Time: {listing_time:.2f}s | Avg: {avg_time:.2f}s | Rate: {rate*60:.1f}/min | ETA: {eta:.0f}s")
+                        logger.info("   [%d/%d] ✅ %s: CONFIRMED | Cost: %.4f¢ → Total: %.4f¢ | Time: %.2fs | Avg: %.2fs | Rate: %.1f/min | ETA: %.0fs", current_num, total_dually, ad_id, cost, new_cost, listing_time, avg_time, rate * 60, eta)
                     
                     # RECALCULATE STATUS for confirmed dually
                     breadcrumbs = [
@@ -992,7 +1017,7 @@ def verify_dually_listings(result_df: pd.DataFrame, job_id: str, yoda_instance):
                 else:
                     removed_count += 1
                     if getattr(config, 'verbose_cache_logging', True):
-                        print(f"   [{current_num}/{total_dually}] ❌ {ad_id}: FALSE POSITIVE - REMOVING | Cost: {cost:.4f}¢ → Total: {new_cost:.4f}¢ | Time: {listing_time:.2f}s | Avg: {avg_time:.2f}s | Rate: {rate*60:.1f}/min | ETA: {eta:.0f}s")
+                        logger.info("   [%d/%d] ❌ %s: FALSE POSITIVE - REMOVING | Cost: %.4f¢ → Total: %.4f¢ | Time: %.2fs | Avg: %.2fs | Rate: %.1f/min | ETA: %.0fs", current_num, total_dually, ad_id, cost, new_cost, listing_time, avg_time, rate * 60, eta)
                     
                     # Remove "Dually" from each annotation column
                     for col in annotation_cols:
@@ -1036,20 +1061,20 @@ def verify_dually_listings(result_df: pd.DataFrame, job_id: str, yoda_instance):
             # Check if all workers are still alive
             alive = sum(1 for p in procs if p.is_alive())
             if alive == 0 and res_q.empty():
-                print(f"   ⏳ All workers finished. Breaking out of result collection loop.")
+                logger.info("   ⏳ All workers finished. Breaking out of result collection loop.")
                 break
             continue
     
     # Wait for all workers to finish
-    print(f"\n   ⏳ Waiting for all workers to complete...")
+    logger.info("   ⏳ Waiting for all workers to complete...")
     for i, p in enumerate(procs, 1):
         p.join(timeout=30)
         if p.is_alive():
-            print(f"   ⚠️ Worker-{i} did not finish in time, terminating...")
+            logger.warning("   ⚠️ Worker-%d did not finish in time, terminating...", i)
             p.terminate()
             p.join()
         else:
-            print(f"   ✅ Worker-{i} finished successfully")
+            logger.info("   ✅ Worker-%d finished successfully", i)
     
     verification_loop_elapsed = time.time() - verification_loop_start
     total_verification_elapsed = time.time() - verification_start
@@ -1063,30 +1088,30 @@ def verify_dually_listings(result_df: pd.DataFrame, job_id: str, yoda_instance):
     
     # VERIFICATION: Check that costs were actually added to the DataFrame
     if getattr(config, 'verbose_cache_logging', True):
-        print("\n" + "="*80)
-        print("📊 COST VERIFICATION: Checking Cost_Cents Updates")
-        print("="*80)
+        logger.info("=" * 80)
+        logger.info("📊 COST VERIFICATION: Checking Cost_Cents Updates")
+        logger.info("=" * 80)
         cost_sum_in_df = result_df['Cost_Cents'].sum() if 'Cost_Cents' in result_df.columns else 0
-        print(f"   Total Cost_Cents in DataFrame: {cost_sum_in_df:.4f}¢")
-        print(f"   Dually verification costs calculated: {total_cost:.4f}¢")
-        print("="*80 + "\n")
+        logger.info("   Total Cost_Cents in DataFrame: %.4f¢", cost_sum_in_df)
+        logger.info("   Dually verification costs calculated: %.4f¢", total_cost)
+        logger.info("=" * 80)
     
-    print("\n" + "="*80)
-    print("🔍 DUALLY VERIFICATION PHASE COMPLETE - MULTI-THREADED RESULTS")
-    print("="*80)
-    print(f"   🧵 Workers Used: {num_workers}")
-    print(f"   📋 Total Checked: {total_dually}")
-    print(f"   ✅ Confirmed: {verified_count}")
-    print(f"   ❌ Removed (False Positives): {removed_count}")
-    print(f"   ⚠️ Errors: {error_count}")
-    print(f"   💰 Dually Verification Cost: {total_cost:.4f}¢")
-    print(f"\n   ⏱️ PERFORMANCE METRICS:")
-    print(f"      Total Time: {total_verification_elapsed:.2f}s ({total_verification_elapsed/60:.2f} minutes)")
-    print(f"      Verification Loop Time: {verification_loop_elapsed:.2f}s")
-    print(f"      Average Time per Listing: {avg_verify_time:.2f}s")
-    print(f"      Verification Rate: {results_collected/verification_loop_elapsed*60:.1f} listings/minute")
-    print(f"      Speedup vs Sequential: ~{num_workers}x faster")
-    print("="*80 + "\n")
+    logger.info("=" * 80)
+    logger.info("🔍 DUALLY VERIFICATION PHASE COMPLETE - MULTI-THREADED RESULTS")
+    logger.info("=" * 80)
+    logger.info("   🧵 Workers Used: %d", num_workers)
+    logger.info("   📋 Total Checked: %d", total_dually)
+    logger.info("   ✅ Confirmed: %d", verified_count)
+    logger.info("   ❌ Removed (False Positives): %d", removed_count)
+    logger.warning("   ⚠️ Errors: %d", error_count)
+    logger.info("   💰 Dually Verification Cost: %.4f¢", total_cost)
+    logger.info("   ⏱️ PERFORMANCE METRICS:")
+    logger.info("      Total Time: %.2fs (%.2f minutes)", total_verification_elapsed, total_verification_elapsed / 60)
+    logger.info("      Verification Loop Time: %.2fs", verification_loop_elapsed)
+    logger.info("      Average Time per Listing: %.2fs", avg_verify_time)
+    logger.info("      Verification Rate: %.1f listings/minute", results_collected / verification_loop_elapsed * 60)
+    logger.info("      Speedup vs Sequential: ~%dx faster", num_workers)
+    logger.info("=" * 80)
     
     # Update job status back to processing for final save
     if job_id in jobs:
@@ -1096,7 +1121,7 @@ def verify_dually_listings(result_df: pd.DataFrame, job_id: str, yoda_instance):
         jobs[job_id]['dually_verification_cost'] = float(total_cost)
     
     # FINAL STEP: Recalculate ALL statuses after verification with proper normalization
-    print("   🔄 STEP 5: Recalculating all statuses after verification...")
+    logger.info("   🔄 STEP 5: Recalculating all statuses after verification...")
     
     # Load normalization rules
     from ai_tool.data_processing import load_rules, normalize_text
@@ -1134,7 +1159,7 @@ def verify_dually_listings(result_df: pd.DataFrame, job_id: str, yoda_instance):
             result_df.at[idx, "Status"] = new_status
             status_updated_count += 1
     
-    print(f"   ✅ Status recalculation complete: {status_updated_count} status(es) corrected\n")
+    logger.info("   ✅ Status recalculation complete: %d status(es) corrected", status_updated_count)
     
     return result_df, total_cost  # Return both dataframe and verification cost
 
@@ -1152,11 +1177,11 @@ def run_job_pipeline_sync(job_id: str, file_path: str):
         # ✅ FIX: Deduplicate Ad IDs BEFORE processing to prevent exponential growth
         duplicates_before = df[df.duplicated(subset=["Ad ID"], keep=False)]
         if not duplicates_before.empty:
-            print(f"   ⚠️ WARNING: Found {len(duplicates_before)} duplicate rows in input Excel!")
-            print(f"   ⚠️ Duplicate Ad IDs: {duplicates_before['Ad ID'].unique().tolist()}")
-            print(f"   ✅ Removing duplicates, keeping first occurrence...")
+            logger.warning("   ⚠️ WARNING: Found %d duplicate rows in input Excel!", len(duplicates_before))
+            logger.warning("   ⚠️ Duplicate Ad IDs: %s", duplicates_before['Ad ID'].unique().tolist())
+            logger.info("   ✅ Removing duplicates, keeping first occurrence...")
             df = df.drop_duplicates(subset=["Ad ID"], keep='first').reset_index(drop=True)
-            print(f"   ✅ After deduplication: {len(df)} unique Ad IDs")
+            logger.info("   ✅ After deduplication: %d unique Ad IDs", len(df))
         
         # Add required columns
         for col in ["Breadcrumb_Top1", "Breadcrumb_Top2", "Breadcrumb_Top3", "Image_URLs"]:
@@ -1166,24 +1191,24 @@ def run_job_pipeline_sync(job_id: str, file_path: str):
         job['total_ads'] = int(len(df))  # Convert numpy.int64 to native int
         job['status'] = JobStatus.SCRAPING
         
-        print(f"\n{'='*60}")
-        print(f"JOB {job_id} STARTED")
-        print(f"File: {job.get('filename')}")
-        print(f"Total Ads: {len(df)}")
-        print(f"{'='*60}\n")
+        logger.info("=" * 60)
+        logger.info("JOB %s STARTED", job_id)
+        logger.info("File: %s", job.get('filename'))
+        logger.info("Total Ads: %d", len(df))
+        logger.info("=" * 60)
         
         # ── Ad Annotation Limit: Pre-filter (before scraping) ──
         if config.enable_ad_annotation_limit:
             over_limit = ad_tracker.filter_over_limit_ads(df["Ad ID"].tolist(), config.max_annotation_runs)
             if over_limit:
-                print(f"   🚫 Ad Tracker: Skipping {len(over_limit)} ads (already annotated {config.max_annotation_runs}+ times)")
-                print(f"   🚫 Skipped Ad IDs: {sorted(over_limit)[:10]}{'...' if len(over_limit) > 10 else ''}")
+                logger.info("   🚫 Ad Tracker: Skipping %d ads (already annotated %d+ times)", len(over_limit), config.max_annotation_runs)
+                logger.info("   🚫 Skipped Ad IDs: %s", str(sorted(over_limit)[:10]) + ('...' if len(over_limit) > 10 else ''))
                 df = df[~df["Ad ID"].isin(over_limit)].reset_index(drop=True)
                 job['total_ads'] = int(len(df))
-                print(f"   ✅ Ad Tracker: {len(df)} ads remaining after filter\n")
+                logger.info("   ✅ Ad Tracker: %d ads remaining after filter", len(df))
             else:
-                print(f"   ✅ Ad Tracker: All {len(df)} ads are within annotation limit\n")
-        
+                logger.info("   ✅ Ad Tracker: All %d ads are within annotation limit", len(df))
+
         # Phase 1: MULTIPROCESSING Scraping with 3 workers (~3x faster)
         df = scrape_ads_parallel(df, job_id, num_workers=5)
         
@@ -1202,28 +1227,28 @@ def run_job_pipeline_sync(job_id: str, file_path: str):
         # Increase workers from 5 to 10 for 2x faster processing
         # num_workers = min(10, max(1, len(config.gemini_api_keys)))
         num_workers = 5
-        print(f"\n🤖 Using {num_workers} parallel workers for faster processing")
+        logger.info("🤖 Using %d parallel workers for faster processing", num_workers)
         result_df = run_parallel_ai(df, run_ts, job_id, num_workers)
-        
+
         # Phase 3: Dually Verification - LLM double-check for false positives
         # Controlled by config.enable_dually_llm_verification flag
         dually_verification_cost = 0
         if not result_df.empty:
             if config.enable_dually_llm_verification:
-                print("\n" + "="*60)
-                print("🔍 DUALLY LLM VERIFICATION: ✅ ENABLED")
-                print("   Starting post-processing verification for Dually annotations...")
-                print("="*60)
+                logger.info("=" * 60)
+                logger.info("🔍 DUALLY LLM VERIFICATION: ✅ ENABLED")
+                logger.info("   Starting post-processing verification for Dually annotations...")
+                logger.info("=" * 60)
                 # Create a new Yoda instance for verification
                 m_verify = Manager()
                 yoda_verify = Yoda(config.gemini_api_keys_info, config.rate_limit_rpm, m_verify)
                 result_df, dually_verification_cost = verify_dually_listings(result_df, job_id, yoda_verify)
             else:
-                print("\n" + "="*60)
-                print("🔍 DUALLY LLM VERIFICATION: ❌ DISABLED (Skipping)")
-                print("   Post-processing verification is turned OFF in config.ini")
-                print("   Set 'EnableDuallyLLMVerification = True' to enable")
-                print("="*60)
+                logger.info("=" * 60)
+                logger.info("🔍 DUALLY LLM VERIFICATION: ❌ DISABLED (Skipping)")
+                logger.info("   Post-processing verification is turned OFF in config.ini")
+                logger.info("   Set 'EnableDuallyLLMVerification = True' to enable")
+                logger.info("=" * 60)
         
         # ── Ad Annotation Limit: Post-increment for successful ads ──
         if config.enable_ad_annotation_limit and not result_df.empty:
@@ -1233,18 +1258,18 @@ def run_job_pipeline_sync(job_id: str, file_path: str):
                 successful_ids = result_df["Ad ID"].tolist()
             if successful_ids:
                 ad_tracker.increment_annotation_counts(successful_ids)
-                print(f"   📊 Ad Tracker: Updated annotation counts for {len(successful_ids)} successfully processed ads in Turso DB")
-        
+                logger.info("   📊 Ad Tracker: Updated annotation counts for %d successfully processed ads in Turso DB", len(successful_ids))
+
         # ✅ FIX: Deduplicate result DataFrame before saving to prevent duplicate entries
         if not result_df.empty:
             duplicates_final = result_df[result_df.duplicated(subset=["Ad ID"], keep=False)]
             if not duplicates_final.empty:
-                print(f"   ⚠️ WARNING: Found {len(duplicates_final)} duplicate rows in final result!")
-                print(f"   ⚠️ Duplicate Ad IDs: {duplicates_final['Ad ID'].unique().tolist()}")
-                print(f"   ✅ Removing duplicates, keeping first occurrence...")
+                logger.warning("   ⚠️ WARNING: Found %d duplicate rows in final result!", len(duplicates_final))
+                logger.warning("   ⚠️ Duplicate Ad IDs: %s", duplicates_final['Ad ID'].unique().tolist())
+                logger.info("   ✅ Removing duplicates, keeping first occurrence...")
                 result_df = result_df.drop_duplicates(subset=["Ad ID"], keep='first').reset_index(drop=True)
-                print(f"   ✅ After deduplication: {len(result_df)} unique rows")
-        
+                logger.info("   ✅ After deduplication: %d unique rows", len(result_df))
+
         # Save final output
         output_filename = f"output_annotated_{run_ts}.xlsx"
         if getattr(config, 'enable_ai_output', True):
@@ -1258,6 +1283,7 @@ def run_job_pipeline_sync(job_id: str, file_path: str):
         job['status'] = JobStatus.COMPLETED
         job['output_file'] = output_path
         job['output_filename'] = output_filename
+        job['b2_key'] = _upload_and_track(output_path, 'annotated', output_filename)
 
         # Calculate summary - Cost_Cents already includes dually verification costs (added in line 737)
         total_cost_in_df = result_df['Cost_Cents'].sum() if 'Cost_Cents' in result_df.columns else 0
@@ -1272,18 +1298,18 @@ def run_job_pipeline_sync(job_id: str, file_path: str):
         # Merge session reports
         merge_all_session_reports(run_ts)
         
-        print(f"\n{'='*60}")
-        print(f"🎉 JOB {job_id} COMPLETE!")
-        print(f"Output: {output_filename}")
-        print(f"💰 Annotation Cost: {annotation_cost_only}¢")
-        print(f"💰 Dually Verification Cost: {dually_verification_cost}¢")
-        print(f"💰 TOTAL COST: {total_cost_in_df}¢")
-        print(f"{'='*60}\n")
-        
+        logger.info("=" * 60)
+        logger.info("🎉 JOB %s COMPLETE!", job_id)
+        logger.info("Output: %s", output_filename)
+        logger.info("💰 Annotation Cost: %s¢", annotation_cost_only)
+        logger.info("💰 Dually Verification Cost: %s¢", dually_verification_cost)
+        logger.info("💰 TOTAL COST: %s¢", total_cost_in_df)
+        logger.info("=" * 60)
+
     except Exception as e:
         job['status'] = JobStatus.FAILED
         job['error'] = str(e)
-        print(f"\n❌ JOB {job_id} FAILED: {str(e)}\n")
+        logger.error("❌ JOB %s FAILED: %s", job_id, str(e))
         import traceback
         traceback.print_exc()
 
@@ -1318,46 +1344,46 @@ def run_reannotation_pipeline_sync(job_id: str, file_path: str):
         job['total_ads'] = int(len(df))  # Convert numpy.int64 to native int
         job['status'] = JobStatus.PROCESSING
         
-        print(f"\n{'='*60}")
-        print(f"🔄 RE-ANNOTATION JOB {job_id} STARTED")
-        print(f"File: {job.get('filename')}")
-        print(f"Total Ads: {len(df)}")
-        print(f"Skipping scraping - using existing data")
-        print(f"{'='*60}\n")
+        logger.info("=" * 60)
+        logger.info("🔄 RE-ANNOTATION JOB %s STARTED", job_id)
+        logger.info("File: %s", job.get('filename'))
+        logger.info("Total Ads: %d", len(df))
+        logger.info("Skipping scraping - using existing data")
+        logger.info("=" * 60)
         
         # ── Ad Annotation Limit: Pre-filter (before AI) ──
         if config.enable_ad_annotation_limit:
             over_limit = ad_tracker.filter_over_limit_ads(df["Ad ID"].tolist(), config.max_annotation_runs)
             if over_limit:
-                print(f"   🚫 Ad Tracker: Skipping {len(over_limit)} ads (already annotated {config.max_annotation_runs}+ times)")
-                print(f"   🚫 Skipped Ad IDs: {sorted(over_limit)[:10]}{'...' if len(over_limit) > 10 else ''}")
+                logger.info("   🚫 Ad Tracker: Skipping %d ads (already annotated %d+ times)", len(over_limit), config.max_annotation_runs)
+                logger.info("   🚫 Skipped Ad IDs: %s", str(sorted(over_limit)[:10]) + ('...' if len(over_limit) > 10 else ''))
                 df = df[~df["Ad ID"].isin(over_limit)].reset_index(drop=True)
                 job['total_ads'] = int(len(df))
-                print(f"   ✅ Ad Tracker: {len(df)} ads remaining after filter\n")
+                logger.info("   ✅ Ad Tracker: %d ads remaining after filter", len(df))
             else:
-                print(f"   ✅ Ad Tracker: All {len(df)} ads are within annotation limit\n")
-        
+                logger.info("   ✅ Ad Tracker: All %d ads are within annotation limit", len(df))
+
         # Phase 1: Parallel AI Processing (no scraping) - ULTRA-OPTIMIZED
         num_workers = min(10, max(1, len(config.gemini_api_keys)))
-        print(f"\n🤖 Using {num_workers} parallel workers for faster processing")
+        logger.info("🤖 Using %d parallel workers for faster processing", num_workers)
         result_df = run_parallel_ai(df, run_ts, job_id, num_workers)
-        
+
         # Phase 2: Dually Verification (if enabled)
         dually_verification_cost = 0
         if not result_df.empty:
             if config.enable_dually_llm_verification:
-                print("\n" + "="*60)
-                print("🔍 DUALLY LLM VERIFICATION: ✅ ENABLED")
-                print("   Starting post-processing verification for Dually annotations...")
-                print("="*60)
+                logger.info("=" * 60)
+                logger.info("🔍 DUALLY LLM VERIFICATION: ✅ ENABLED")
+                logger.info("   Starting post-processing verification for Dually annotations...")
+                logger.info("=" * 60)
                 m_verify = Manager()
                 yoda_verify = Yoda(config.gemini_api_keys_info, config.rate_limit_rpm, m_verify)
                 result_df, dually_verification_cost = verify_dually_listings(result_df, job_id, yoda_verify)
             else:
-                print("\n" + "="*60)
-                print("🔍 DUALLY LLM VERIFICATION: ❌ DISABLED (Skipping)")
-                print("="*60)
-        
+                logger.info("=" * 60)
+                logger.info("🔍 DUALLY LLM VERIFICATION: ❌ DISABLED (Skipping)")
+                logger.info("=" * 60)
+
         # ── Ad Annotation Limit: Post-increment for successful ads ──
         if config.enable_ad_annotation_limit and not result_df.empty:
             if "Status" in result_df.columns:
@@ -1366,7 +1392,7 @@ def run_reannotation_pipeline_sync(job_id: str, file_path: str):
                 successful_ids = result_df["Ad ID"].tolist()
             if successful_ids:
                 ad_tracker.increment_annotation_counts(successful_ids)
-                print(f"   📊 Ad Tracker: Updated annotation counts for {len(successful_ids)} successfully processed ads in Turso DB")
+                logger.info("   📊 Ad Tracker: Updated annotation counts for %d successfully processed ads in Turso DB", len(successful_ids))
         
         # Save final output
         output_filename = f"output_reannotated_{run_ts}.xlsx"
@@ -1381,6 +1407,7 @@ def run_reannotation_pipeline_sync(job_id: str, file_path: str):
         job['status'] = JobStatus.COMPLETED
         job['output_file'] = output_path
         job['output_filename'] = output_filename
+        job['b2_key'] = _upload_and_track(output_path, 'reannotated', output_filename)
 
         # Calculate summary
         # Calculate summary - Cost_Cents already includes dually verification costs (added in line 737)
@@ -1394,18 +1421,18 @@ def run_reannotation_pipeline_sync(job_id: str, file_path: str):
         # Merge session reports
         merge_all_session_reports(run_ts)
         
-        print(f"\n{'='*60}")
-        print(f"🎉 RE-ANNOTATION JOB {job_id} COMPLETE!")
-        print(f"Output: {output_filename}")
-        print(f"💰 Annotation Cost: {annotation_cost_only}¢")
-        print(f"💰 Dually Verification Cost: {dually_verification_cost}¢")
-        print(f"💰 TOTAL COST: {total_cost_in_df}¢")
-        print(f"{'='*60}\n")
-        
+        logger.info("=" * 60)
+        logger.info("🎉 RE-ANNOTATION JOB %s COMPLETE!", job_id)
+        logger.info("Output: %s", output_filename)
+        logger.info("💰 Annotation Cost: %s¢", annotation_cost_only)
+        logger.info("💰 Dually Verification Cost: %s¢", dually_verification_cost)
+        logger.info("💰 TOTAL COST: %s¢", total_cost_in_df)
+        logger.info("=" * 60)
+
     except Exception as e:
         job['status'] = JobStatus.FAILED
         job['error'] = str(e)
-        print(f"\n❌ RE-ANNOTATION JOB {job_id} FAILED: {str(e)}\n")
+        logger.error("❌ RE-ANNOTATION JOB %s FAILED: %s", job_id, str(e))
         import traceback
         traceback.print_exc()
 
@@ -1416,34 +1443,46 @@ async def run_reannotation_pipeline(job_id: str, file_path: str):
     await loop.run_in_executor(None, run_reannotation_pipeline_sync, job_id, file_path)
 
 
-def run_db_annotation_pipeline_sync(job_id: str, file_path: str):
+def run_db_annotation_pipeline_sync(job_id: str, file_path: str, b2_folder_override: str = None):
     """
     AI Annotation pipeline for already-fetched database data — BATCH MODE (500 per batch)
-    
+
     Processes in batches of 500 listings. Each batch runs the COMPLETE pipeline:
     1. AI annotation (promo check, refinement, classification)
     2. Dually verification (if enabled)
     3. Save batch Excel (downloadable immediately)
-    
+
     After all batches: combines into one final complete file.
     Handles any size: 700→[500,200], 300→[300], 1500→[500,500,500]
+
+    b2_folder_override: If set, batch files and final output upload to this B2 folder
+                        instead of the default 'batches'/'db-annotated'. Used by the CDC
+                        pipeline to route files directly to 'cdc/annotated'.
     """
-    BATCH_SIZE = 20
+    BATCH_SIZE = 500
     job = jobs[job_id]
     run_ts = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
     
     try:
-        print(f"\n{'='*80}")
-        print(f"🤖 AI ANNOTATION JOB {job_id} STARTED — BATCH MODE (DB Fetched Data)")
-        print(f"{'='*80}")
-        print(f"   Source File: {os.path.basename(file_path)}")
-        print(f"   Batch Size: {BATCH_SIZE}")
-        print(f"{'='*80}\n")
+        logger.info("=" * 80)
+        logger.info("🤖 AI ANNOTATION JOB %s STARTED — BATCH MODE (DB Fetched Data)", job_id)
+        logger.info("=" * 80)
+        logger.info("   Source File: %s", os.path.basename(file_path))
+        logger.info("   Batch Size: %d", BATCH_SIZE)
+        logger.info("=" * 80)
         
         # Load already-fetched data
         df = pd.read_excel(file_path, dtype={"Ad ID": str})
         df["Ad ID"] = df["Ad ID"].astype(str).str.replace(r'\.0$', '', regex=True).str.strip()
-        
+
+        # Fetch file fully loaded into DataFrame — delete local tmp copy (already on B2)
+        if os.path.exists(file_path):
+            try:
+                os.remove(file_path)
+                logger.info("   [CLEANUP] Deleted local fetch file: %s", os.path.basename(file_path))
+            except OSError:
+                pass
+
         # Validate required columns exist
         required_cols = ["Ad ID", "Breadcrumb_Top1", "Image_URLs"]
         missing = [col for col in required_cols if col not in df.columns]
@@ -1459,13 +1498,13 @@ def run_db_annotation_pipeline_sync(job_id: str, file_path: str):
         if config.enable_ad_annotation_limit:
             over_limit = ad_tracker.filter_over_limit_ads(df["Ad ID"].tolist(), config.max_annotation_runs)
             if over_limit:
-                print(f"   🚫 Ad Tracker: Skipping {len(over_limit)} ads (already annotated {config.max_annotation_runs}+ times)")
-                print(f"   🚫 Skipped Ad IDs: {sorted(over_limit)[:10]}{'...' if len(over_limit) > 10 else ''}")
+                logger.info("   🚫 Ad Tracker: Skipping %d ads (already annotated %d+ times)", len(over_limit), config.max_annotation_runs)
+                logger.info("   🚫 Skipped Ad IDs: %s", str(sorted(over_limit)[:10]) + ('...' if len(over_limit) > 10 else ''))
                 df = df[~df["Ad ID"].isin(over_limit)].reset_index(drop=True)
-                print(f"   ✅ Ad Tracker: {len(df)} ads remaining after filter\n")
+                logger.info("   ✅ Ad Tracker: %d ads remaining after filter", len(df))
             else:
-                print(f"   ✅ Ad Tracker: All {len(df)} ads are within annotation limit\n")
-        
+                logger.info("   ✅ Ad Tracker: All %d ads are within annotation limit", len(df))
+
         total_listings = len(df)
         job['total_ads'] = int(total_listings)
         
@@ -1475,13 +1514,9 @@ def run_db_annotation_pipeline_sync(job_id: str, file_path: str):
         job['total_batches'] = num_batches
         job['current_batch'] = 0
         
-        print(f"   ✅ Loaded {total_listings} ads from fetched data")
-        print(f"   📦 Will process in {num_batches} batch(es): ", end="")
-        for b in range(num_batches):
-            start = b * BATCH_SIZE
-            end = min(start + BATCH_SIZE, total_listings)
-            print(f"[{start+1}-{end}]", end=" ")
-        print("\n")
+        logger.info("   ✅ Loaded %d ads from fetched data", total_listings)
+        batch_ranges = " ".join(f"[{b * BATCH_SIZE + 1}-{min((b + 1) * BATCH_SIZE, total_listings)}]" for b in range(num_batches))
+        logger.info("   📦 Will process in %d batch(es): %s", num_batches, batch_ranges)
         
         # Track totals across all batches
         total_annotation_cost = 0
@@ -1500,34 +1535,34 @@ def run_db_annotation_pipeline_sync(job_id: str, file_path: str):
             
             job['current_batch'] = batch_num
             
-            print(f"\n{'#'*80}")
-            print(f"📦 BATCH {batch_num}/{num_batches} — Listings {batch_start+1} to {batch_end} ({batch_count} ads)")
-            print(f"{'#'*80}\n")
+            logger.info("#" * 80)
+            logger.info("📦 BATCH %d/%d — Listings %d to %d (%d ads)", batch_num, num_batches, batch_start + 1, batch_end, batch_count)
+            logger.info("#" * 80)
             
             # Use a unique run_ts per batch so session reports don't collide
             batch_run_ts = f"{run_ts}_batch{batch_num}"
             
             # --- PHASE A: AI ANNOTATION for this batch ---
-            print("="*80)
-            print(f"🤖 BATCH {batch_num} — PHASE A: AI ANNOTATION")
-            print("="*80)
-            print(f"   Ads in this batch: {batch_count}")
-            print(f"   Using {num_workers} parallel workers")
-            print("="*80 + "\n")
+            logger.info("=" * 80)
+            logger.info("🤖 BATCH %d — PHASE A: AI ANNOTATION", batch_num)
+            logger.info("=" * 80)
+            logger.info("   Ads in this batch: %d", batch_count)
+            logger.info("   Using %d parallel workers", num_workers)
+            logger.info("=" * 80)
             
             batch_result_df = run_parallel_ai(batch_df, batch_run_ts, job_id, num_workers)
             
             # --- PHASE B: DUALLY VERIFICATION for this batch ---
             batch_dually_cost = 0
             if not batch_result_df.empty and config.enable_dually_llm_verification:
-                print(f"\n{'='*60}")
-                print(f"🔍 BATCH {batch_num} — PHASE B: DUALLY LLM VERIFICATION")
-                print(f"{'='*60}")
+                logger.info("=" * 60)
+                logger.info("🔍 BATCH %d — PHASE B: DUALLY LLM VERIFICATION", batch_num)
+                logger.info("=" * 60)
                 m_verify = Manager()
                 yoda_verify = Yoda(config.gemini_api_keys_info, config.rate_limit_rpm, m_verify)
                 batch_result_df, batch_dually_cost = verify_dually_listings(batch_result_df, job_id, yoda_verify)
             elif not batch_result_df.empty:
-                print(f"\n   🔍 BATCH {batch_num} — Dually verification: ❌ DISABLED (Skipping)")
+                logger.info("   🔍 BATCH %d — Dually verification: ❌ DISABLED (Skipping)", batch_num)
             
             # ── Ad Annotation Limit: Post-increment for successful ads in this batch ──
             if config.enable_ad_annotation_limit and not batch_result_df.empty:
@@ -1537,12 +1572,12 @@ def run_db_annotation_pipeline_sync(job_id: str, file_path: str):
                     successful_ids = batch_result_df["Ad ID"].tolist()
                 if successful_ids:
                     ad_tracker.increment_annotation_counts(successful_ids)
-                    print(f"   📊 Ad Tracker: Updated annotation counts for {len(successful_ids)} ads (batch {batch_num}) in Turso DB")
-            
+                    logger.info("   📊 Ad Tracker: Updated annotation counts for %d ads (batch %d) in Turso DB", len(successful_ids), batch_num)
+
             # --- PHASE C: SAVE BATCH OUTPUT (atomic write) ---
-            print(f"\n{'='*80}")
-            print(f"💾 BATCH {batch_num} — PHASE C: SAVING BATCH OUTPUT")
-            print(f"{'='*80}")
+            logger.info("=" * 80)
+            logger.info("💾 BATCH %d — PHASE C: SAVING BATCH OUTPUT", batch_num)
+            logger.info("=" * 80)
             
             batch_filename = f"batch_{batch_num}_{batch_start+1}-{batch_end}_annotated_{run_ts}.xlsx"
             if getattr(config, 'enable_ai_output', True):
@@ -1558,7 +1593,7 @@ def run_db_annotation_pipeline_sync(job_id: str, file_path: str):
             
             # Calculate batch costs (with empty check)
             if len(batch_result_df) == 0:
-                print(f"   ⚠️ Batch {batch_num} returned no results!")
+                logger.warning("   ⚠️ Batch %d returned no results!", batch_num)
             batch_total_cost = batch_result_df['Cost_Cents'].sum() if 'Cost_Cents' in batch_result_df.columns else 0
             batch_annotation_cost = batch_total_cost - batch_dually_cost
             
@@ -1566,6 +1601,10 @@ def run_db_annotation_pipeline_sync(job_id: str, file_path: str):
             total_dually_cost += batch_dually_cost
             
             # Store batch metadata (thread-safe)
+            # Upload batch to B2 (keep local — combine step reads it later)
+            batch_b2_folder = b2_folder_override or 'batches'
+            batch_b2_key = _upload_and_track(batch_path, batch_b2_folder, batch_filename, delete_local=False)
+
             batch_info = {
                 'batch_index': batch_idx,
                 'batch_num': batch_num,
@@ -1574,6 +1613,7 @@ def run_db_annotation_pipeline_sync(job_id: str, file_path: str):
                 'row_count': int(len(batch_result_df)),
                 'filename': batch_filename,
                 'file_path': batch_path,
+                'b2_key': batch_b2_key,
                 'status': 'completed',
                 'annotation_cost': float(batch_annotation_cost),
                 'dually_cost': float(batch_dually_cost),
@@ -1585,18 +1625,18 @@ def run_db_annotation_pipeline_sync(job_id: str, file_path: str):
             # No need to keep batch DataFrame in memory — read from disk when combining
             del batch_result_df
             
-            print(f"   ✅ Batch {batch_num} saved: {batch_filename}")
-            print(f"   📊 Rows: {batch_info['row_count']} | Cost: {batch_total_cost:.2f}¢")
-            print(f"   📥 Available for download immediately!")
-            print(f"{'='*80}\n")
+            logger.info("   ✅ Batch %d saved: %s", batch_num, batch_filename)
+            logger.info("   📊 Rows: %d | Cost: %.2f¢", batch_info['row_count'], batch_total_cost)
+            logger.info("   📥 Available for download immediately!")
+            logger.info("=" * 80)
             
             # Merge session reports for this batch
             merge_all_session_reports(batch_run_ts)
         
         # ========== COMBINE ALL BATCHES INTO FINAL FILE ==========
-        print(f"\n{'='*80}")
-        print(f"💾 COMBINING ALL {num_batches} BATCHES INTO FINAL OUTPUT")
-        print(f"{'='*80}")
+        logger.info("=" * 80)
+        logger.info("💾 COMBINING ALL %d BATCHES INTO FINAL OUTPUT", num_batches)
+        logger.info("=" * 80)
         
         # Read from saved batch files instead of keeping in memory (memory-efficient)
         with jobs_lock:
@@ -1606,17 +1646,26 @@ def run_db_annotation_pipeline_sync(job_id: str, file_path: str):
             batch_dfs = [pd.read_excel(f, dtype={"Ad ID": str}) for f in batch_files]
             final_result_df = pd.concat(batch_dfs, ignore_index=True)
             del batch_dfs  # Free memory
-            
+
+            # Batch files combined into final output — delete local tmp copies (already on B2)
+            for bp in batch_files:
+                if os.path.exists(bp):
+                    try:
+                        os.remove(bp)
+                    except OSError:
+                        pass
+            logger.info("   [CLEANUP] Deleted %d local batch file(s)", len(batch_files))
+
             # ✅ FIX: Deduplicate when combining batches to prevent duplicate entries
             if not final_result_df.empty:
                 final_result_df["Ad ID"] = final_result_df["Ad ID"].astype(str).str.replace(r'\.0$', '', regex=True).str.strip()
                 duplicates_combined = final_result_df[final_result_df.duplicated(subset=["Ad ID"], keep=False)]
                 if not duplicates_combined.empty:
-                    print(f"   ⚠️ WARNING: Found {len(duplicates_combined)} duplicate rows when combining batches!")
-                    print(f"   ⚠️ Duplicate Ad IDs: {duplicates_combined['Ad ID'].unique().tolist()}")
-                    print(f"   ✅ Removing duplicates, keeping first occurrence...")
+                    logger.warning("   ⚠️ WARNING: Found %d duplicate rows when combining batches!", len(duplicates_combined))
+                    logger.warning("   ⚠️ Duplicate Ad IDs: %s", duplicates_combined['Ad ID'].unique().tolist())
+                    logger.info("   ✅ Removing duplicates, keeping first occurrence...")
                     final_result_df = final_result_df.drop_duplicates(subset=["Ad ID"], keep='first').reset_index(drop=True)
-                    print(f"   ✅ After deduplication: {len(final_result_df)} unique rows")
+                    logger.info("   ✅ After deduplication: %d unique rows", len(final_result_df))
         else:
             final_result_df = pd.DataFrame()
         
@@ -1633,35 +1682,37 @@ def run_db_annotation_pipeline_sync(job_id: str, file_path: str):
         job['status'] = JobStatus.COMPLETED
         job['output_file'] = output_path
         job['output_filename'] = output_filename
+        output_b2_folder = b2_folder_override or 'db-annotated'
+        job['b2_key'] = _upload_and_track(output_path, output_b2_folder, output_filename)
         job['total_cost'] = float(total_cost)
         job['annotation_cost'] = float(total_annotation_cost)
         job['dually_verification_cost'] = float(total_dually_cost)
 
-        print(f"   ✅ Final combined file saved: {output_filename}")
-        print(f"   📊 Total rows: {len(final_result_df)}")
-        print(f"   📁 Path: {output_path}")
-        print(f"{'='*80}\n")
-        
-        print(f"\n{'='*80}")
-        print(f"🎉 AI ANNOTATION JOB {job_id} COMPLETE! ({num_batches} batches)")
-        print(f"{'='*80}")
-        print(f"   🤖 Total Ads Annotated: {len(final_result_df)}")
-        print(f"   📦 Batches Completed: {num_batches}")
-        print(f"   📄 Final Output File: {output_filename}")
-        print(f"   💰 Annotation Cost: {total_annotation_cost:.2f}¢")
-        print(f"   💰 Dually Verification Cost: {total_dually_cost:.2f}¢")
-        print(f"   💰 TOTAL COST: {total_cost:.2f}¢")
-        print(f"{'='*80}\n")
-        
+        logger.info("   ✅ Final combined file saved: %s", output_filename)
+        logger.info("   📊 Total rows: %d", len(final_result_df))
+        logger.info("   📁 Path: %s", output_path)
+        logger.info("=" * 80)
+
+        logger.info("=" * 80)
+        logger.info("🎉 AI ANNOTATION JOB %s COMPLETE! (%d batches)", job_id, num_batches)
+        logger.info("=" * 80)
+        logger.info("   🤖 Total Ads Annotated: %d", len(final_result_df))
+        logger.info("   📦 Batches Completed: %d", num_batches)
+        logger.info("   📄 Final Output File: %s", output_filename)
+        logger.info("   💰 Annotation Cost: %.2f¢", total_annotation_cost)
+        logger.info("   💰 Dually Verification Cost: %.2f¢", total_dually_cost)
+        logger.info("   💰 TOTAL COST: %.2f¢", total_cost)
+        logger.info("=" * 80)
+
     except Exception as e:
         job['status'] = JobStatus.FAILED
         job['error'] = str(e)
         job['partial_completion'] = True
         job['completed_batches'] = len(job.get('batches', []))
         # Already-completed batches remain in job['batches'] and are still downloadable
-        print(f"\n❌ AI ANNOTATION JOB {job_id} FAILED: {str(e)}")
+        logger.error("❌ AI ANNOTATION JOB %s FAILED: %s", job_id, str(e))
         if job.get('batches'):
-            print(f"   📦 {len(job['batches'])} batch(es) completed before failure and are still downloadable.")
+            logger.info("   📦 %d batch(es) completed before failure and are still downloadable.", len(job['batches']))
         import traceback
         traceback.print_exc()
 
@@ -1688,45 +1739,45 @@ def run_db_fetch_pipeline_sync(
     run_ts = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
     
     try:
-        print(f"\n{'='*80}")
-        print(f"🗄️ DB FETCH + AI ANNOTATION JOB {job_id} STARTED (PRODUCTION)")
-        print(f"{'='*80}")
-        print(f"   Date Range: {min_last_update} → {max_last_update}")
-        print(f"   Listing Range: {listing_start} → {listing_end}")
-        print(f"{'='*80}\n")
-        
+        logger.info("=" * 80)
+        logger.info("🗄️ DB FETCH + AI ANNOTATION JOB %s STARTED (PRODUCTION)", job_id)
+        logger.info("=" * 80)
+        logger.info("   Date Range: %s → %s", min_last_update, max_last_update)
+        logger.info("   Listing Range: %s → %s", listing_start, listing_end)
+        logger.info("=" * 80)
+
         # ========== PHASE 1: FETCH DATA FROM DATABASE API (PRODUCTION) ==========
-        print("\n" + "="*80)
-        print("🗄️ PHASE 1: FETCHING DATA FROM DATABASE API (PRODUCTION)")
-        print("="*80)
-        
+        logger.info("=" * 80)
+        logger.info("🗄️ PHASE 1: FETCHING DATA FROM DATABASE API (PRODUCTION)")
+        logger.info("=" * 80)
+
         # Step 1: Get access token
-        print(f"\n   🔑 Using credentials from: {'Request' if client_id != config.db_api_client_id else 'config.ini'}")
-        print(f"   🔑 Client ID: {client_id[:10]}...")
-        print(f"   🔑 Grant Type: {grant_type}\n")
+        logger.info("   🔑 Using credentials from: %s", 'Request' if client_id != config.db_api_client_id else 'config.ini')
+        logger.info("   🔑 Client ID: %s...", client_id[:10])
+        logger.info("   🔑 Grant Type: %s", grant_type)
         
         token_data = get_access_token(client_id, client_secret, grant_type)
         access_token = token_data['access_token']
         
         # Step 2: Calculate how many trucks to fetch
         total_listings_needed = listing_end - listing_start
-        print(f"\n   📊 Need to fetch {total_listings_needed} listings")
-        print(f"   📦 Will use pagination with max 500 per request\n")
-        
+        logger.info("   📊 Need to fetch %d listings", total_listings_needed)
+        logger.info("   📦 Will use pagination with max 500 per request")
+
         # Step 3: Fetch trucks with pagination
         all_trucks = []
         current_offset = listing_start
         limit_per_request = 500
-        
-        print("="*80)
-        print("📦 FETCHING TRUCKS DATA WITH PAGINATION")
-        print("="*80)
+
+        logger.info("=" * 80)
+        logger.info("📦 FETCHING TRUCKS DATA WITH PAGINATION")
+        logger.info("=" * 80)
         
         while len(all_trucks) < total_listings_needed:
             remaining = total_listings_needed - len(all_trucks)
             current_limit = min(limit_per_request, remaining)
             
-            print(f"\n   🔄 Request {len(all_trucks) // 500 + 1}: Offset={current_offset}, Limit={current_limit}")
+            logger.info("   🔄 Request %d: Offset=%d, Limit=%d", len(all_trucks) // 500 + 1, current_offset, current_limit)
             
             batch_data = fetch_trucks_from_db(
                 access_token,
@@ -1741,68 +1792,68 @@ def run_db_fetch_pipeline_sync(
             total_available = pagination.get('total', 0)
             
             if not batch_trucks:
-                print(f"   ⚠️ No more trucks available")
+                logger.warning("   ⚠️ No more trucks available")
                 break
-            
+
             # Debug: Check for duplicates before extending
             existing_ids = set(truck.get('id') for truck in all_trucks)
             new_ids = [truck.get('id') for truck in batch_trucks]
             duplicate_count = sum(1 for tid in new_ids if tid in existing_ids)
-            
+
             if duplicate_count > 0:
-                print(f"   ⚠️ WARNING: {duplicate_count} duplicate Ad IDs detected in this batch!")
-            
+                logger.warning("   ⚠️ WARNING: %d duplicate Ad IDs detected in this batch!", duplicate_count)
+
             all_trucks.extend(batch_trucks)
             current_offset += len(batch_trucks)
-            
-            print(f"   ✅ Batch complete. Total fetched so far: {len(all_trucks)}")
-            print(f"   📊 API reports total available: {total_available}")
-            print(f"   📊 Unique Ad IDs so far: {len(set(truck.get('id') for truck in all_trucks))}")
-            
+
+            logger.info("   ✅ Batch complete. Total fetched so far: %d", len(all_trucks))
+            logger.info("   📊 API reports total available: %d", total_available)
+            logger.info("   📊 Unique Ad IDs so far: %d", len(set(truck.get('id') for truck in all_trucks)))
+
             if current_offset >= total_available:
-                print(f"   ℹ️  Reached end of available data (total: {total_available})")
+                logger.info("   ℹ️  Reached end of available data (total: %d)", total_available)
                 break
-        
-        print("\n" + "="*80)
-        print(f"✅ FETCHING COMPLETE - Retrieved {len(all_trucks)} trucks")
-        print("="*80 + "\n")
-        
+
+        logger.info("=" * 80)
+        logger.info("✅ FETCHING COMPLETE - Retrieved %d trucks", len(all_trucks))
+        logger.info("=" * 80)
+
         # Step 4: Process truck data into DataFrame
-        print("="*80)
-        print("🔄 PROCESSING TRUCK DATA INTO DATAFRAME")
-        print("="*80)
-        
-        print(f"\n   📊 Input: {len(all_trucks)} trucks from API")
-        print(f"   📊 Unique IDs in raw data: {len(set(truck.get('id') for truck in all_trucks))}")
-        
+        logger.info("=" * 80)
+        logger.info("🔄 PROCESSING TRUCK DATA INTO DATAFRAME")
+        logger.info("=" * 80)
+
+        logger.info("   📊 Input: %d trucks from API", len(all_trucks))
+        logger.info("   📊 Unique IDs in raw data: %d", len(set(truck.get('id') for truck in all_trucks)))
+
         processed_trucks = []
         for i, truck in enumerate(all_trucks, 1):
             processed = process_truck_data(truck)
             processed_trucks.append(processed)
-            
+
             if i % 100 == 0:
-                print(f"   ✅ Processed {i}/{len(all_trucks)} trucks")
-        
-        print(f"   ✅ Processed all {len(processed_trucks)} trucks")
-        print("="*80 + "\n")
-        
+                logger.info("   ✅ Processed %d/%d trucks", i, len(all_trucks))
+
+        logger.info("   ✅ Processed all %d trucks", len(processed_trucks))
+        logger.info("=" * 80)
+
         # Create DataFrame
         df = pd.DataFrame(processed_trucks)
-        
-        print(f"   📊 Before deduplication: {len(df)} rows")
-        
+
+        logger.info("   📊 Before deduplication: %d rows", len(df))
+
         df["Ad ID"] = df["Ad ID"].astype(str).str.replace(r'\.0$', '', regex=True).str.strip()
-        
+
         # Check for duplicates after processing
         duplicates = df[df.duplicated(subset=['Ad ID'], keep=False)]
         if not duplicates.empty:
-            print(f"   ⚠️ Found {len(duplicates)} duplicate rows!")
-            print(f"   ⚠️ Duplicate Ad IDs: {duplicates['Ad ID'].unique().tolist()}")
+            logger.warning("   ⚠️ Found %d duplicate rows!", len(duplicates))
+            logger.warning("   ⚠️ Duplicate Ad IDs: %s", duplicates['Ad ID'].unique().tolist())
             # Remove duplicates, keeping first occurrence
             df = df.drop_duplicates(subset=['Ad ID'], keep='first')
-            print(f"   ✅ After deduplication: {len(df)} rows")
+            logger.info("   ✅ After deduplication: %d rows", len(df))
         else:
-            print(f"   ✅ No duplicates found")
+            logger.info("   ✅ No duplicates found")
         
         # Save intermediate DB fetch output (read back by start_db_annotation — must always be saved)
         db_fetch_filename = f"DB_Fetch_{run_ts}.xlsx"
@@ -1815,52 +1866,55 @@ def run_db_fetch_pipeline_sync(
             _register_temp_file(db_fetch_path)
         df.to_excel(db_fetch_path, index=False)
 
-        print(f"   ✅ Intermediate DB Fetch file saved: {db_fetch_filename}")
-        print(f"   📁 Path: {db_fetch_path}\n")
+        # Upload to B2 (keep local — annotation pipeline reads it next)
+        _upload_and_track(db_fetch_path, 'db-fetch', db_fetch_filename, delete_local=False)
+
+        logger.info("   ✅ Intermediate DB Fetch file saved: %s", db_fetch_filename)
+        logger.info("   📁 Path: %s", db_fetch_path)
 
         job['total_ads'] = int(len(df))
         job['status'] = JobStatus.PROCESSING
-        
+
         # ── Ad Annotation Limit: Pre-filter (before AI annotation) ──
         if config.enable_ad_annotation_limit:
             over_limit = ad_tracker.filter_over_limit_ads(df["Ad ID"].tolist(), config.max_annotation_runs)
             if over_limit:
-                print(f"   🚫 Ad Tracker: Skipping {len(over_limit)} ads (already annotated {config.max_annotation_runs}+ times)")
-                print(f"   🚫 Skipped Ad IDs: {sorted(over_limit)[:10]}{'...' if len(over_limit) > 10 else ''}")
+                logger.info("   🚫 Ad Tracker: Skipping %d ads (already annotated %d+ times)", len(over_limit), config.max_annotation_runs)
+                logger.info("   🚫 Skipped Ad IDs: %s", str(sorted(over_limit)[:10]) + ('...' if len(over_limit) > 10 else ''))
                 df = df[~df["Ad ID"].isin(over_limit)].reset_index(drop=True)
                 job['total_ads'] = int(len(df))
-                print(f"   ✅ Ad Tracker: {len(df)} ads remaining after filter\n")
+                logger.info("   ✅ Ad Tracker: %d ads remaining after filter", len(df))
             else:
-                print(f"   ✅ Ad Tracker: All {len(df)} ads are within annotation limit\n")
-        
+                logger.info("   ✅ Ad Tracker: All %d ads are within annotation limit", len(df))
+
         # ========== PHASE 2: AI ANNOTATION ==========
-        print("\n" + "="*80)
-        print("🤖 PHASE 2: AI ANNOTATION (Same as existing feature)")
-        print("="*80)
-        print(f"   Total Ads to Annotate: {len(df)}")
-        print("="*80 + "\n")
-        
+        logger.info("=" * 80)
+        logger.info("🤖 PHASE 2: AI ANNOTATION (Same as existing feature)")
+        logger.info("=" * 80)
+        logger.info("   Total Ads to Annotate: %d", len(df))
+        logger.info("=" * 80)
+
         # Run parallel AI annotation (same as existing feature)
         num_workers = 5
-        print(f"\n🤖 Using {num_workers} parallel workers for AI annotation")
+        logger.info("🤖 Using %d parallel workers for AI annotation", num_workers)
         result_df = run_parallel_ai(df, run_ts, job_id, num_workers)
-        
+
         # ========== PHASE 3: DUALLY VERIFICATION ==========
         dually_verification_cost = 0
         if not result_df.empty:
             if config.enable_dually_llm_verification:
-                print("\n" + "="*60)
-                print("🔍 DUALLY LLM VERIFICATION: ✅ ENABLED")
-                print("   Starting post-processing verification for Dually annotations...")
-                print("="*60)
+                logger.info("=" * 60)
+                logger.info("🔍 DUALLY LLM VERIFICATION: ✅ ENABLED")
+                logger.info("   Starting post-processing verification for Dually annotations...")
+                logger.info("=" * 60)
                 m_verify = Manager()
                 yoda_verify = Yoda(config.gemini_api_keys_info, config.rate_limit_rpm, m_verify)
                 result_df, dually_verification_cost = verify_dually_listings(result_df, job_id, yoda_verify)
             else:
-                print("\n" + "="*60)
-                print("🔍 DUALLY LLM VERIFICATION: ❌ DISABLED (Skipping)")
-                print("="*60)
-        
+                logger.info("=" * 60)
+                logger.info("🔍 DUALLY LLM VERIFICATION: ❌ DISABLED (Skipping)")
+                logger.info("=" * 60)
+
         # ── Ad Annotation Limit: Post-increment for successful ads ──
         if config.enable_ad_annotation_limit and not result_df.empty:
             if "Status" in result_df.columns:
@@ -1869,13 +1923,13 @@ def run_db_fetch_pipeline_sync(
                 successful_ids = result_df["Ad ID"].tolist()
             if successful_ids:
                 ad_tracker.increment_annotation_counts(successful_ids)
-                print(f"   📊 Ad Tracker: Updated annotation counts for {len(successful_ids)} successfully processed ads in Turso DB")
-        
+                logger.info("   📊 Ad Tracker: Updated annotation counts for %d successfully processed ads in Turso DB", len(successful_ids))
+
         # ========== PHASE 4: SAVE FINAL OUTPUT ==========
-        print("\n" + "="*80)
-        print("💾 PHASE 4: SAVING FINAL ANNOTATED OUTPUT")
-        print("="*80)
-        
+        logger.info("=" * 80)
+        logger.info("💾 PHASE 4: SAVING FINAL ANNOTATED OUTPUT")
+        logger.info("=" * 80)
+
         output_filename = f"output_db_annotated_{run_ts}.xlsx"
         if getattr(config, 'enable_ai_output', True):
             os.makedirs(config.output_dir, exist_ok=True)
@@ -1885,14 +1939,15 @@ def run_db_fetch_pipeline_sync(
             _register_temp_file(output_path)
         result_df.to_excel(output_path, index=False)
 
-        print(f"   ✅ Final annotated file saved: {output_filename}")
-        print(f"   📁 Path: {output_path}")
-        print("="*80 + "\n")
+        logger.info("   ✅ Final annotated file saved: %s", output_filename)
+        logger.info("   📁 Path: %s", output_path)
+        logger.info("=" * 80)
 
         job['status'] = JobStatus.COMPLETED
         job['output_file'] = output_path
         job['output_filename'] = output_filename
-        
+        job['b2_key'] = _upload_and_track(output_path, 'db-annotated', output_filename)
+
         # Calculate summary costs - Cost_Cents already includes dually verification costs (added in line 737)
         total_cost_in_df = result_df['Cost_Cents'].sum() if 'Cost_Cents' in result_df.columns else 0
         annotation_cost_only = total_cost_in_df - dually_verification_cost  # Back-calculate annotation-only cost
@@ -1904,21 +1959,21 @@ def run_db_fetch_pipeline_sync(
         # Merge session reports
         merge_all_session_reports(run_ts)
         
-        print(f"\n{'='*80}")
-        print(f"🎉 DB FETCH + AI ANNOTATION JOB {job_id} COMPLETE!")
-        print(f"{'='*80}")
-        print(f"   📊 Total Trucks Fetched: {len(df)}")
-        print(f"   🤖 Total Ads Annotated: {len(result_df)}")
-        print(f"   📄 Output File: {output_filename}")
-        print(f"   💰 Annotation Cost: {annotation_cost_only}¢")
-        print(f"   💰 Dually Verification Cost: {dually_verification_cost}¢")
-        print(f"   💰 TOTAL COST: {total_cost_in_df}¢")
-        print(f"{'='*80}\n")
-        
+        logger.info("=" * 80)
+        logger.info("🎉 DB FETCH + AI ANNOTATION JOB %s COMPLETE!", job_id)
+        logger.info("=" * 80)
+        logger.info("   📊 Total Trucks Fetched: %d", len(df))
+        logger.info("   🤖 Total Ads Annotated: %d", len(result_df))
+        logger.info("   📄 Output File: %s", output_filename)
+        logger.info("   💰 Annotation Cost: %s¢", annotation_cost_only)
+        logger.info("   💰 Dually Verification Cost: %s¢", dually_verification_cost)
+        logger.info("   💰 TOTAL COST: %s¢", total_cost_in_df)
+        logger.info("=" * 80)
+
     except Exception as e:
         job['status'] = JobStatus.FAILED
         job['error'] = str(e)
-        print(f"\n❌ DB FETCH + AI ANNOTATION JOB {job_id} FAILED: {str(e)}\n")
+        logger.error("❌ DB FETCH + AI ANNOTATION JOB %s FAILED: %s", job_id, str(e))
         import traceback
         traceback.print_exc()
 
@@ -1954,6 +2009,9 @@ async def upload_file(file: UploadFile = File(...)):
     with open(file_path, "wb") as f:
         content = await file.read()
         f.write(content)
+
+    # Archive upload to B2 (keep local — pipeline needs it)
+    _upload_and_track(file_path, 'uploads', upload_filename, delete_local=False)
 
     # Validate file has Ad ID column
     try:
@@ -2029,11 +2087,14 @@ async def reannotate_file(file: UploadFile = File(...), background_tasks: Backgr
     else:
         file_path = _temp_path(upload_filename)
         _register_temp_file(file_path)
-    
+
     with open(file_path, "wb") as f:
         content = await file.read()
         f.write(content)
-    
+
+    # Archive upload to B2 (keep local — pipeline needs it)
+    _upload_and_track(file_path, 'uploads', upload_filename, delete_local=False)
+
     # Validate file structure
     try:
         df = pd.read_excel(file_path)
@@ -2175,6 +2236,14 @@ async def download_result(job_id: str):
     if job['status'] != JobStatus.COMPLETED:
         raise HTTPException(status_code=400, detail="Job is not completed yet")
 
+    # Try B2 pre-signed URL redirect first
+    b2_key = job.get('b2_key')
+    if b2_key and b2_is_enabled():
+        url = get_download_url(b2_key)
+        if url:
+            return RedirectResponse(url=url, status_code=302)
+
+    # Fallback to local file
     output_path = job.get('output_file')
     if not output_path or not os.path.exists(output_path):
         raise HTTPException(status_code=404, detail="Output file not found")
@@ -2235,6 +2304,14 @@ async def download_batch(job_id: str, batch_index: int):
     if not batch:
         raise HTTPException(status_code=404, detail=f"Batch {batch_index} not found")
 
+    # Try B2 pre-signed URL redirect first
+    b2_key = batch.get('b2_key')
+    if b2_key and b2_is_enabled():
+        url = get_download_url(b2_key)
+        if url:
+            return RedirectResponse(url=url, status_code=302)
+
+    # Fallback to local file
     file_path = batch.get('file_path')
     if not file_path or not os.path.exists(file_path):
         raise HTTPException(status_code=404, detail="Batch file not found")
@@ -2294,10 +2371,10 @@ def run_audit_comparison(ai_df: pd.DataFrame, manual_df: pd.DataFrame, audit_id:
     """
     # Load normalization rules
     try:
-        print(f"📋 [Rules.json] Loading for AUDIT comparison...")
+        logger.info("📋 [Rules.json] Loading for AUDIT comparison...")
         rules = load_rules(config.rules_json)
         norm_map = rules['normalize_map']
-        print(f"📋 [Rules.json] AUDIT using normalize_map with {len(norm_map)} entries")
+        logger.info("📋 [Rules.json] AUDIT using normalize_map with %d entries", len(norm_map))
     except Exception as e:
         return {"error": f"Could not load Rules.json: {str(e)}"}
     
@@ -2451,18 +2528,21 @@ def run_audit_comparison(ai_df: pd.DataFrame, manual_df: pd.DataFrame, audit_id:
             summary_df.to_excel(writer, sheet_name="Summary", index=False, startrow=0, startcol=0)
             hall_of_shame.to_excel(writer, sheet_name="Summary", index=False, startrow=len(summary_df)+3, startcol=0)
         
-        print(f"\n✅ Audit Complete!")
-        print(f"   Global Accuracy: {global_acc_pct:.2f}%")
-        print(f"   Active Accuracy: {active_acc_pct:.2f}%")
-        print(f"   Report Saved: {report_filename}")
+        logger.info("✅ Audit Complete!")
+        logger.info("   Global Accuracy: %.2f%%", global_acc_pct)
+        logger.info("   Active Accuracy: %.2f%%", active_acc_pct)
+        logger.info("   Report Saved: %s", report_filename)
         
     except Exception as e:
         return {"error": f"Error saving audit report: {str(e)}"}
     
+    b2_key = _upload_and_track(report_path, 'audit-reports', report_filename)
+
     return {
         "audit_id": audit_id,
         "report_path": report_path,
         "report_filename": report_filename,
+        "b2_key": b2_key,
         "summary": {
             "total_audited": total,
             "total_inactive": int(inactive_count),
@@ -2534,6 +2614,7 @@ async def run_audit(
             "manual_filename": manual_file.filename,
             "report_path": result["report_path"],
             "report_filename": result["report_filename"],
+            "b2_key": result.get("b2_key"),
             "created_at": datetime.now().isoformat()
         }
         
@@ -2572,8 +2653,16 @@ async def download_audit_report(audit_id: str, background_tasks: BackgroundTasks
         raise HTTPException(status_code=404, detail="Audit report not found")
 
     audit = audit_jobs[audit_id]
-    report_path = audit.get('report_path')
 
+    # Try B2 pre-signed URL redirect first
+    b2_key = audit.get('b2_key')
+    if b2_key and b2_is_enabled():
+        url = get_download_url(b2_key)
+        if url:
+            return RedirectResponse(url=url, status_code=302)
+
+    # Fallback to local file
+    report_path = audit.get('report_path')
     if not report_path or not os.path.exists(report_path):
         raise HTTPException(status_code=404, detail="Audit report file not found")
 
@@ -2617,9 +2706,9 @@ def get_access_token(client_id: str, client_secret: str, grant_type: str) -> dic
     """
     Get access token from the authentication API (PRODUCTION)
     """
-    print("\n" + "="*80)
-    print("🔑 FETCHING ACCESS TOKEN FROM DB API (PRODUCTION)")
-    print("="*80)
+    logger.info("=" * 80)
+    logger.info("🔑 FETCHING ACCESS TOKEN FROM DB API (PRODUCTION)")
+    logger.info("=" * 80)
 
     # Token URL from config.ini [DB_API] section
     token_url = config.db_api_token_url
@@ -2641,38 +2730,38 @@ def get_access_token(client_id: str, client_secret: str, grant_type: str) -> dic
     }
     
     try:
-        print(f"   📤 POST {token_url}")
-        print(f"   📝 Form Data: client_id={client_id}, grant_type={grant_type}")
-        print(f"   📝 Client Secret: {len(client_secret)} chars")
-        print(f"   📋 Headers: {headers}")
-        
+        logger.info("   📤 POST %s", token_url)
+        logger.info("   📝 Form Data: client_id=%s, grant_type=%s", client_id, grant_type)
+        logger.info("   📝 Client Secret: %d chars", len(client_secret))
+        logger.info("   📋 Headers: %s", headers)
+
         response = requests.post(token_url, data=form_data, headers=headers)
-        
+
         # Print detailed error information if request fails
         if not response.ok:
-            print(f"   ❌ HTTP {response.status_code}: {response.reason}")
-            print(f"   📋 Response Headers: {dict(response.headers)}")
+            logger.error("   ❌ HTTP %d: %s", response.status_code, response.reason)
+            logger.error("   📋 Response Headers: %s", dict(response.headers))
             try:
                 error_detail = response.json()
-                print(f"   📋 Error JSON: {error_detail}")
+                logger.error("   📋 Error JSON: %s", error_detail)
             except:
-                print(f"   📋 Response Text: {response.text}")
-            
+                logger.error("   📋 Response Text: %s", response.text)
+
         response.raise_for_status()
-        
+
         token_data = response.json()
-        print(f"   ✅ Access token received successfully")
-        print(f"   ⏱️  Expires in: {token_data['expires_in']} seconds")
-        print("="*80 + "\n")
-        
+        logger.info("   ✅ Access token received successfully")
+        logger.info("   ⏱️  Expires in: %s seconds", token_data['expires_in'])
+        logger.info("=" * 80)
+
         return token_data
     except requests.exceptions.HTTPError as e:
-        print(f"   ❌ HTTP Error: {str(e)}")
-        print("="*80 + "\n")
+        logger.error("   ❌ HTTP Error: %s", str(e))
+        logger.info("=" * 80)
         raise
     except Exception as e:
-        print(f"   ❌ Error fetching access token: {str(e)}")
-        print("="*80 + "\n")
+        logger.error("   ❌ Error fetching access token: %s", str(e))
+        logger.info("=" * 80)
         raise
 
 
@@ -2696,21 +2785,21 @@ def fetch_trucks_from_db(access_token: str, min_last_update: int, max_last_updat
     }
     
     try:
-        print(f"   📤 GET {trucks_url}")
-        print(f"   📝 Params: minLastUpdate={min_last_update}, maxLastUpdate={max_last_update}, limit={limit}, offset={offset}")
-        
+        logger.info("   📤 GET %s", trucks_url)
+        logger.info("   📝 Params: minLastUpdate=%s, maxLastUpdate=%s, limit=%d, offset=%d", min_last_update, max_last_update, limit, offset)
+
         response = requests.get(trucks_url, params=params, headers=headers)
         response.raise_for_status()
-        
+
         data = response.json()
         total = data.get('pagination', {}).get('total', 0)
         returned = len(data.get('result', []))
-        
-        print(f"   ✅ Fetched {returned} trucks (Total available: {total})")
-        
+
+        logger.info("   ✅ Fetched %d trucks (Total available: %d)", returned, total)
+
         return data
     except Exception as e:
-        print(f"   ❌ Error fetching trucks: {str(e)}")
+        logger.error("   ❌ Error fetching trucks: %s", str(e))
         raise
 
 
@@ -2751,11 +2840,11 @@ def process_truck_data(truck: dict, debug: bool = False) -> dict:
     
     # Debug logging for first truck
     if debug:
-        print(f"\n   🔍 DEBUG - Processing truck {ad_id}:")
-        print(f"      Photos array exists: {photos is not None}")
-        print(f"      Photos count: {len(photos) if photos else 0}")
+        logger.debug("   🔍 DEBUG - Processing truck %s:", ad_id)
+        logger.debug("      Photos array exists: %s", photos is not None)
+        logger.debug("      Photos count: %d", len(photos) if photos else 0)
         if photos:
-            print(f"      First photo data: {photos[0]}")
+            logger.debug("      First photo data: %s", photos[0])
     
     if photos:
         cdn_urls = []
@@ -2765,14 +2854,15 @@ def process_truck_data(truck: dict, debug: bool = False) -> dict:
             if photo_url:
                 cdn_urls.append(photo_url)
             elif debug:
-                print(f"      ⚠️ Photo missing url field: {photo}")
-        
+                logger.debug("      ⚠️ Photo missing url field: %s", photo)
+
         processed['Image_URLs'] = ','.join(cdn_urls)
-        
+
         if debug:
-            print(f"      Final Image_URLs: {processed['Image_URLs'][:100]}..." if len(processed['Image_URLs']) > 100 else f"      Final Image_URLs: {processed['Image_URLs']}")
+            urls_preview = processed['Image_URLs'][:100] + '...' if len(processed['Image_URLs']) > 100 else processed['Image_URLs']
+            logger.debug("      Final Image_URLs: %s", urls_preview)
     elif debug:
-        print(f"      ⚠️ No photos array in truck data")
+        logger.debug("      ⚠️ No photos array in truck data")
     
     return processed
 
@@ -2809,19 +2899,19 @@ def filter_ctt_platform_trucks(fetched_trucks: list) -> tuple:
             ad_id = truck.get('id', 'unknown')
             non_ctt_ids.append(str(ad_id))
 
-    print(f"\n   {'='*60}")
-    print(f"   CTT PLATFORM FILTER")
-    print(f"   {'='*60}")
-    print(f"   Feature ID checked: {ctt_feature_id}")
-    print(f"   Total trucks checked: {len(fetched_trucks)}")
-    print(f"   CTT platform (pass): {len(ctt_trucks)}")
-    print(f"   Non-CTT platform (filtered out): {len(non_ctt_ids)}")
+    logger.info("   %s", "=" * 60)
+    logger.info("   CTT PLATFORM FILTER")
+    logger.info("   %s", "=" * 60)
+    logger.info("   Feature ID checked: %s", ctt_feature_id)
+    logger.info("   Total trucks checked: %d", len(fetched_trucks))
+    logger.info("   CTT platform (pass): %d", len(ctt_trucks))
+    logger.info("   Non-CTT platform (filtered out): %d", len(non_ctt_ids))
     if non_ctt_ids:
         if len(non_ctt_ids) <= 20:
-            print(f"   Filtered Ad IDs: {non_ctt_ids}")
+            logger.info("   Filtered Ad IDs: %s", non_ctt_ids)
         else:
-            print(f"   Filtered Ad IDs (first 20): {non_ctt_ids[:20]}...")
-    print(f"   {'='*60}\n")
+            logger.info("   Filtered Ad IDs (first 20): %s...", non_ctt_ids[:20])
+    logger.info("   %s", "=" * 60)
 
     return ctt_trucks, non_ctt_ids
 
@@ -2858,13 +2948,13 @@ def fetch_single_truck_by_id(access_token: str, ad_id: str,
         return data.get('result', {})
     except requests.exceptions.HTTPError as e:
         if e.response.status_code == 404:
-            print(f"   ⚠️ Truck {ad_id} not found (404)")
+            logger.warning("   ⚠️ Truck %s not found (404)", ad_id)
             return None
         else:
-            print(f"   ❌ Error fetching truck {ad_id}: HTTP {e.response.status_code}")
+            logger.error("   ❌ Error fetching truck %s: HTTP %s", ad_id, e.response.status_code)
             raise
     except Exception as e:
-        print(f"   ❌ Error fetching truck {ad_id}: {str(e)}")
+        logger.error("   ❌ Error fetching truck %s: %s", ad_id, str(e))
         raise
 
 
@@ -2872,14 +2962,14 @@ def _fetch_single_truck_worker(ad_id: str, access_token: str, index: int, total:
                                base_url: str = None):
     """
     Worker function to fetch a single truck by Ad ID (for multithreading)
-    
+
     Args:
         ad_id: The truck Ad ID to fetch
         access_token: Bearer token for authentication
         index: Current index (for progress display)
         total: Total number of trucks to fetch
         base_url: Base URL for trucks endpoint
-        
+
     Returns:
         tuple: (status, ad_id, truck_data_or_error)
             status: 'success', 'not_found', or 'error'
@@ -2887,19 +2977,19 @@ def _fetch_single_truck_worker(ad_id: str, access_token: str, index: int, total:
             truck_data_or_error: Truck data dict if success, None if not found, error message if error
     """
     try:
-        print(f"   🔄 [{index}/{total}] Fetching truck {ad_id}...", end=" ", flush=True)
+        logger.info("   🔄 [%d/%d] Fetching truck %s...", index, total, ad_id)
         truck_data = fetch_single_truck_by_id(access_token, ad_id, base_url=base_url)
-        
+
         if truck_data:
-            print(f"✅")
+            logger.info("   ✅ [%d/%d] Truck %s: OK", index, total, ad_id)
             return ('success', ad_id, truck_data)
         else:
-            print(f"❌ Not Found")
+            logger.info("   [%d/%d] Truck %s: Not Found", index, total, ad_id)
             return ('not_found', ad_id, None)
-            
+
     except Exception as e:
         error_msg = str(e)[:50]
-        print(f"❌ Error: {error_msg}")
+        logger.error("   [%d/%d] Truck %s: Error: %s", index, total, ad_id, error_msg)
         return ('error', ad_id, str(e))
 
 
@@ -2917,71 +3007,79 @@ def run_db_fetch_by_ids_sync(job_id: str, file_path: str, client_id: str, client
     run_ts = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
     
     try:
-        print(f"\n{'='*80}")
-        print(f"🗄️ DB FETCH BY AD IDs JOB {job_id} STARTED (PRODUCTION)")
-        print(f"{'='*80}")
-        print(f"   Source File: {os.path.basename(file_path)}")
-        print(f"{'='*80}\n")
-        
+        logger.info("=" * 80)
+        logger.info("🗄️ DB FETCH BY AD IDs JOB %s STARTED (PRODUCTION)", job_id)
+        logger.info("   Source File: %s", os.path.basename(file_path))
+        logger.info("=" * 80)
+
         # ========== STEP 1: Load Ad IDs from Excel ==========
-        print("="*80)
-        print("📄 STEP 1: LOADING AD IDs FROM EXCEL")
-        print("="*80)
-        
+        logger.info("=" * 80)
+        logger.info("📄 STEP 1: LOADING AD IDs FROM EXCEL")
+        logger.info("=" * 80)
+
         df = pd.read_excel(file_path, dtype={"Ad ID": str})
-        
+
         # Standardize Ad ID column
         if "Ad ID" not in df.columns:
             raise ValueError("Excel file must have an 'Ad ID' column")
-        
+
         df["Ad ID"] = df["Ad ID"].astype(str).str.replace(r'\.0$', '', regex=True).str.strip()
-        
+
+        # Upload file fully loaded into DataFrame — delete local tmp copy (already on B2)
+        if os.path.exists(file_path):
+            try:
+                os.remove(file_path)
+                logger.info("   [CLEANUP] Deleted local upload file: %s", os.path.basename(file_path))
+            except OSError:
+                pass
+
         # ✅ FIX: Deduplicate Ad IDs BEFORE processing to prevent exponential growth
         duplicates_before = df[df.duplicated(subset=["Ad ID"], keep=False)]
         if not duplicates_before.empty:
-            print(f"   ⚠️ WARNING: Found {len(duplicates_before)} duplicate rows in input Excel!")
-            print(f"   ⚠️ Duplicate Ad IDs: {duplicates_before['Ad ID'].unique().tolist()}")
-            print(f"   ✅ Removing duplicates, keeping first occurrence...")
+            logger.warning("   ⚠️ WARNING: Found %d duplicate rows in input Excel!", len(duplicates_before))
+            logger.warning("   ⚠️ Duplicate Ad IDs: %s", duplicates_before['Ad ID'].unique().tolist())
+            logger.info("   ✅ Removing duplicates, keeping first occurrence...")
             df = df.drop_duplicates(subset=["Ad ID"], keep='first').reset_index(drop=True)
-            print(f"   ✅ After deduplication: {len(df)} unique Ad IDs")
-        
+            logger.info("   ✅ After deduplication: %d unique Ad IDs", len(df))
+
         ad_ids = df["Ad ID"].tolist()
-        
-        print(f"   ✅ Loaded {len(ad_ids)} unique Ad IDs from Excel")
-        print(f"   📊 First 5 Ad IDs: {ad_ids[:5]}")
-        print("="*80 + "\n")
-        
+
+        logger.info("   ✅ Loaded %d unique Ad IDs from Excel", len(ad_ids))
+        logger.info("   📊 First 5 Ad IDs: %s", ad_ids[:5])
+        logger.info("=" * 80)
+
         # ── Ad Annotation Limit: Pre-filter (BEFORE DB API calls — saves API bandwidth) ──
         if config.enable_ad_annotation_limit:
             over_limit = ad_tracker.filter_over_limit_ads(ad_ids, config.max_annotation_runs)
             if over_limit:
-                print(f"   🚫 Ad Tracker: Skipping {len(over_limit)} ads (already annotated {config.max_annotation_runs}+ times)")
-                print(f"   🚫 Skipped Ad IDs: {sorted(over_limit)[:10]}{'...' if len(over_limit) > 10 else ''}")
+                skipped_preview = sorted(over_limit)[:10]
+                ellipsis = '...' if len(over_limit) > 10 else ''
+                logger.info("   🚫 Ad Tracker: Skipping %d ads (already annotated %d+ times)", len(over_limit), config.max_annotation_runs)
+                logger.info("   🚫 Skipped Ad IDs: %s%s", skipped_preview, ellipsis)
                 df = df[~df["Ad ID"].isin(over_limit)].reset_index(drop=True)
                 ad_ids = df["Ad ID"].tolist()
-                print(f"   ✅ Ad Tracker: {len(ad_ids)} ads remaining — only these will be fetched from DB API\n")
+                logger.info("   ✅ Ad Tracker: %d ads remaining — only these will be fetched from DB API", len(ad_ids))
             else:
-                print(f"   ✅ Ad Tracker: All {len(ad_ids)} ads are within annotation limit\n")
+                logger.info("   ✅ Ad Tracker: All %d ads are within annotation limit", len(ad_ids))
         
         job['total_ads'] = int(len(ad_ids))
         job['status'] = JobStatus.PROCESSING
         
         # ========== STEP 2: Get Access Token ==========
-        print("="*80)
-        print("🔑 STEP 2: AUTHENTICATING WITH DB API")
-        print("="*80)
-        
+        logger.info("=" * 80)
+        logger.info("🔑 STEP 2: AUTHENTICATING WITH DB API")
+        logger.info("=" * 80)
+
         token_data = get_access_token(client_id, client_secret, grant_type)
         access_token = token_data['access_token']
-        print("="*80 + "\n")
-        
+        logger.info("=" * 80)
+
         # ========== STEP 3: Fetch Trucks by Ad ID (MULTITHREADED) ==========
-        print("="*80)
-        print(f"📦 STEP 3: FETCHING {len(ad_ids)} TRUCKS FROM DB API (MULTITHREADED)")
-        print("="*80)
-        print(f"   Using endpoint: {config.db_api_base_url}/{{ad_id}}")
-        print(f"   🚀 Using 5 concurrent workers for SUPER FAST fetching!")
-        print(f"   This is MUCH faster than scraping! (~1-2 seconds per truck)\n")
+        logger.info("=" * 80)
+        logger.info("📦 STEP 3: FETCHING %d TRUCKS FROM DB API (MULTITHREADED)", len(ad_ids))
+        logger.info("=" * 80)
+        logger.info("   Using endpoint: %s/{ad_id}", config.db_api_base_url)
+        logger.info("   🚀 Using 5 concurrent workers for SUPER FAST fetching!")
         
         fetched_trucks = []
         not_found_ids = []
@@ -2989,7 +3087,7 @@ def run_db_fetch_by_ids_sync(job_id: str, file_path: str, client_id: str, client
         
         # Use ThreadPoolExecutor with 5 workers for concurrent fetching
         max_workers = 5
-        print(f"⚡ Starting {max_workers} concurrent fetch workers...\n")
+        logger.info("⚡ Starting %d concurrent fetch workers...", max_workers)
         
         with ThreadPoolExecutor(max_workers=max_workers) as executor:
             # Submit all fetch tasks
@@ -3009,15 +3107,14 @@ def run_db_fetch_by_ids_sync(job_id: str, file_path: str, client_id: str, client
                 elif status == 'error':
                     error_ids.append(ad_id)
         
-        print("\n" + "="*80)
-        print(f"✅ FETCHING COMPLETE")
-        print("="*80)
-        print(f"   Successfully fetched: {len(fetched_trucks)}/{len(ad_ids)} trucks")
+        logger.info("=" * 80)
+        logger.info("✅ FETCHING COMPLETE")
+        logger.info("   Successfully fetched: %d/%d trucks", len(fetched_trucks), len(ad_ids))
         if not_found_ids:
-            print(f"   ⚠️ Not found: {len(not_found_ids)} trucks - {not_found_ids[:10]}")
+            logger.warning("   ⚠️ Not found: %d trucks - %s", len(not_found_ids), not_found_ids[:10])
         if error_ids:
-            print(f"   ❌ Errors: {len(error_ids)} trucks - {error_ids[:10]}")
-        print("="*80 + "\n")
+            logger.error("   ❌ Errors: %d trucks - %s", len(error_ids), error_ids[:10])
+        logger.info("=" * 80)
         
         # Apply CTT Platform Filter
         fetched_trucks, non_ctt_ids = filter_ctt_platform_trucks(fetched_trucks)
@@ -3026,9 +3123,9 @@ def run_db_fetch_by_ids_sync(job_id: str, file_path: str, client_id: str, client
             raise ValueError("No trucks were successfully fetched from the database")
 
         # ========== STEP 4: Process Truck Data ==========
-        print("="*80)
-        print("🔄 STEP 4: PROCESSING TRUCK DATA")
-        print("="*80)
+        logger.info("=" * 80)
+        logger.info("🔄 STEP 4: PROCESSING TRUCK DATA")
+        logger.info("=" * 80)
 
         processed_trucks = []
         for i, truck in enumerate(fetched_trucks, 1):
@@ -3037,7 +3134,7 @@ def run_db_fetch_by_ids_sync(job_id: str, file_path: str, client_id: str, client
             processed_trucks.append(processed)
 
             if i % 50 == 0:
-                print(f"   ✅ Processed {i}/{len(fetched_trucks)} trucks")
+                logger.info("   ✅ Processed %d/%d trucks", i, len(fetched_trucks))
 
         # Add not_found and error trucks with "Inactive ad" status
         for ad_id in not_found_ids:
@@ -3068,20 +3165,20 @@ def run_db_fetch_by_ids_sync(job_id: str, file_path: str, client_id: str, client
                 'Image_URLs': ''
             })
 
-        print(f"   ✅ Processed {len(fetched_trucks)} successful trucks")
+        logger.info("   ✅ Processed %d successful trucks", len(fetched_trucks))
         if not_found_ids:
-            print(f"   ⚠️ Added {len(not_found_ids)} inactive (not found) trucks")
+            logger.warning("   ⚠️ Added %d inactive (not found) trucks", len(not_found_ids))
         if error_ids:
-            print(f"   ⚠️ Added {len(error_ids)} inactive (error) trucks")
+            logger.warning("   ⚠️ Added %d inactive (error) trucks", len(error_ids))
         if non_ctt_ids:
-            print(f"   ℹ️  Added {len(non_ctt_ids)} Non-CTT Platform entries")
-        print(f"   ✅ Total processed: {len(processed_trucks)} trucks")
-        print("="*80 + "\n")
+            logger.info("   ℹ️  Added %d Non-CTT Platform entries", len(non_ctt_ids))
+        logger.info("   ✅ Total processed: %d trucks", len(processed_trucks))
+        logger.info("=" * 80)
         
         # ========== STEP 5: Save to Excel ==========
-        print("="*80)
-        print("💾 STEP 5: SAVING TO EXCEL")
-        print("="*80)
+        logger.info("=" * 80)
+        logger.info("💾 STEP 5: SAVING TO EXCEL")
+        logger.info("=" * 80)
         
         result_df = pd.DataFrame(processed_trucks)
         result_df["Ad ID"] = result_df["Ad ID"].astype(str).str.replace(r'\.0$', '', regex=True).str.strip()
@@ -3089,11 +3186,11 @@ def run_db_fetch_by_ids_sync(job_id: str, file_path: str, client_id: str, client
         # ✅ FIX: Deduplicate result DataFrame to prevent duplicate entries
         duplicates_after = result_df[result_df.duplicated(subset=["Ad ID"], keep=False)]
         if not duplicates_after.empty:
-            print(f"   ⚠️ WARNING: Found {len(duplicates_after)} duplicate rows in processed data!")
-            print(f"   ⚠️ Duplicate Ad IDs: {duplicates_after['Ad ID'].unique().tolist()}")
-            print(f"   ✅ Removing duplicates, keeping first occurrence...")
+            logger.warning("   ⚠️ WARNING: Found %d duplicate rows in processed data!", len(duplicates_after))
+            logger.warning("   ⚠️ Duplicate Ad IDs: %s", duplicates_after['Ad ID'].unique().tolist())
+            logger.info("   ✅ Removing duplicates, keeping first occurrence...")
             result_df = result_df.drop_duplicates(subset=["Ad ID"], keep='first').reset_index(drop=True)
-            print(f"   ✅ After deduplication: {len(result_df)} unique rows")
+            logger.info("   ✅ After deduplication: %d unique rows", len(result_df))
         
         # ✅ FIX: Preserve input order by merging with original df
         # Create a copy of the input df with just Ad ID to preserve the original order
@@ -3113,33 +3210,36 @@ def run_db_fetch_by_ids_sync(job_id: str, file_path: str, client_id: str, client
             db_fetch_path = _temp_path(db_fetch_filename)
             _register_temp_file(db_fetch_path)
         result_df.to_excel(db_fetch_path, index=False)
-        
-        print(f"   ✅ Excel file saved: {db_fetch_filename}")
-        print(f"   📁 Path: {db_fetch_path}")
-        print("="*80 + "\n")
-        
+
+        # Upload to B2 (keep local — annotation pipeline may read it)
+        b2_key = _upload_and_track(db_fetch_path, 'db-fetch', db_fetch_filename, delete_local=False)
+
+        logger.info("   ✅ Excel file saved: %s", db_fetch_filename)
+        logger.info("   📁 Path: %s", db_fetch_path)
+        logger.info("=" * 80)
+
         # Update job status
         job['status'] = 'fetched'
         job['file_path'] = db_fetch_path
         job['output_file'] = db_fetch_path
         job['output_filename'] = db_fetch_filename
+        job['b2_key'] = b2_key
         job['total_ads'] = int(len(result_df))
         job['preview_data'] = processed_trucks[:10]
         job['is_db_fetch_by_ids'] = True
         
-        print("="*80)
-        print("🎉 DB FETCH BY AD IDs COMPLETE!")
-        print("="*80)
-        print(f"   📊 Successfully fetched: {len(fetched_trucks)} trucks")
-        print(f"   📄 Excel file: {db_fetch_filename}")
-        print(f"   ✅ Ready for annotation!")
-        print(f"   📊 Preview available: First {len(processed_trucks[:10])} trucks")
-        print("="*80 + "\n")
-        
+        logger.info("=" * 80)
+        logger.info("🎉 DB FETCH BY AD IDs COMPLETE!")
+        logger.info("   📊 Successfully fetched: %d trucks", len(fetched_trucks))
+        logger.info("   📄 Excel file: %s", db_fetch_filename)
+        logger.info("   ✅ Ready for annotation!")
+        logger.info("   📊 Preview available: First %d trucks", len(processed_trucks[:10]))
+        logger.info("=" * 80)
+
     except Exception as e:
         job['status'] = JobStatus.FAILED
         job['error'] = str(e)
-        print(f"\n❌ DB FETCH BY AD IDs FAILED: {str(e)}\n")
+        logger.error("❌ DB FETCH BY AD IDs FAILED: %s", str(e))
         import traceback
         traceback.print_exc()
 
@@ -3153,7 +3253,7 @@ def _cdc_get_access_token(base_url: str, client_id: str, client_secret: str, gra
     """Get access token from the CDC dev DB API."""
     import requests as _requests
     token_url = f"{base_url}/token"
-    print(f"   POST {token_url}")
+    logger.info("   POST %s", token_url)
     resp = _requests.post(token_url, data={
         'client_id': client_id,
         'client_secret': client_secret,
@@ -3161,7 +3261,7 @@ def _cdc_get_access_token(base_url: str, client_id: str, client_secret: str, gra
     }, headers={'Content-Type': 'application/x-www-form-urlencoded'})
     resp.raise_for_status()
     token_data = resp.json()
-    print(f"   Access token received successfully")
+    logger.info("   Access token received successfully")
     return token_data
 
 
@@ -3180,16 +3280,16 @@ def _cdc_fetch_single_truck(base_url: str, access_token: str, ad_id: str) -> dic
 def _cdc_fetch_worker(base_url: str, ad_id: str, access_token: str, index: int, total: int):
     """Worker for concurrent CDC truck fetching."""
     try:
-        print(f"   [{index}/{total}] Fetching truck {ad_id}...", end=" ", flush=True)
+        logger.info("   [%d/%d] Fetching truck %s...", index, total, ad_id)
         truck_data = _cdc_fetch_single_truck(base_url, access_token, ad_id)
         if truck_data:
-            print("OK")
+            logger.info("   [%d/%d] Truck %s: OK", index, total, ad_id)
             return ('success', ad_id, truck_data)
         else:
-            print("Not Found")
+            logger.info("   [%d/%d] Truck %s: Not Found", index, total, ad_id)
             return ('not_found', ad_id, None)
     except Exception as e:
-        print(f"Error: {str(e)[:50]}")
+        logger.error("   [%d/%d] Truck %s: Error: %s", index, total, ad_id, str(e)[:50])
         return ('error', ad_id, str(e))
 
 
@@ -3204,12 +3304,11 @@ def _cdc_dev_db_update(db_api_base_url: str, client_id: str, client_secret: str,
 
     Returns a summary dict with counts and per-ad results.
     """
-    print(f"\n{'='*80}")
-    print(f"🔄 CDC DEV DB UPDATE — Job {job_id}")
-    print(f"{'='*80}")
-    print(f"   Excel: {os.path.basename(output_excel_path)}")
-    print(f"   Dev API: {db_api_base_url}")
-    print(f"{'='*80}\n")
+    logger.info("=" * 80)
+    logger.info("🔄 CDC DEV DB UPDATE — Job %s", job_id)
+    logger.info("   Excel: %s", os.path.basename(output_excel_path))
+    logger.info("   Dev API: %s", db_api_base_url)
+    logger.info("=" * 80)
 
     # 1. Read the annotated output Excel
     df = pd.read_excel(output_excel_path, dtype={"Ad ID": str})
@@ -3217,7 +3316,7 @@ def _cdc_dev_db_update(db_api_base_url: str, client_id: str, client_secret: str,
     total_rows = len(df)
 
     if "Status" not in df.columns or "Annotated_Top1" not in df.columns:
-        print(f"   ⚠️ Missing required columns (Status, Annotated_Top1) — skipping db update")
+        logger.warning("   ⚠️ Missing required columns (Status, Annotated_Top1) — skipping db update")
         return {"total_rows": total_rows, "update_count": 0, "success_count": 0,
                 "failed_count": 0, "skipped_count": total_rows, "results": []}
 
@@ -3263,7 +3362,7 @@ def _cdc_dev_db_update(db_api_base_url: str, client_id: str, client_secret: str,
 
         if not categories or unmapped:
             reason = f"unmapped: {unmapped}" if unmapped else "no categories"
-            print(f"   ⏭️ Ad {ad_id}: Skipped — {reason}")
+            logger.info("   ⏭️ Ad %s: Skipped — %s", ad_id, reason)
             skipped_count += 1
             continue
 
@@ -3271,13 +3370,13 @@ def _cdc_dev_db_update(db_api_base_url: str, client_id: str, client_secret: str,
         prepared_ads.append((ad_id, categories, cat_names))
 
     if not prepared_ads:
-        print(f"   ℹ️ No ads with 'Require Update' status to process")
-        print(f"   Total: {total_rows} | Skipped: {skipped_count}")
+        logger.info("   ℹ️ No ads with 'Require Update' status to process")
+        logger.info("   Total: %d | Skipped: %d", total_rows, skipped_count)
         return {"total_rows": total_rows, "update_count": 0, "success_count": 0,
                 "failed_count": 0, "skipped_count": skipped_count, "results": []}
 
     # 4. Get fresh dev token
-    print(f"   🔑 Getting fresh dev access token...")
+    logger.info("   🔑 Getting fresh dev access token...")
     token_data = _cdc_get_access_token(db_api_base_url, client_id, client_secret, grant_type)
     token_holder = {"access_token": token_data["access_token"]}
     token_lock = threading.Lock()
@@ -3289,7 +3388,7 @@ def _cdc_dev_db_update(db_api_base_url: str, client_id: str, client_secret: str,
         nonlocal token_expiry
         with token_lock:
             if time.time() >= token_expiry:
-                print("   🔄 Refreshing dev access token...")
+                logger.info("   🔄 Refreshing dev access token...")
                 new_data = _cdc_get_access_token(db_api_base_url, client_id, client_secret, grant_type)
                 token_holder["access_token"] = new_data["access_token"]
                 token_expiry = time.time() + new_data.get("expires_in", 3600) - 300
@@ -3298,7 +3397,7 @@ def _cdc_dev_db_update(db_api_base_url: str, client_id: str, client_secret: str,
     # 5. Multithreaded PUT updates
     update_base_url = f"{db_api_base_url}/trucks"
     max_workers = 5
-    print(f"\n   📝 Updating {len(prepared_ads)} ads in dev DB ({max_workers} workers)")
+    logger.info("   📝 Updating %d ads in dev DB (%d workers)", len(prepared_ads), max_workers)
 
     results = []
     update_start = time.time()
@@ -3306,12 +3405,12 @@ def _cdc_dev_db_update(db_api_base_url: str, client_id: str, client_secret: str,
     def _update_worker(ad_data, idx, total):
         ad_id, categories, cat_names = ad_data
         current_token = _get_valid_token()
-        print(f"   [{idx}/{total}] 📤 Ad {ad_id} → {cat_names}")
+        logger.info("   [%d/%d] 📤 Ad %s → %s", idx, total, ad_id, cat_names)
         result = update_ad_categories_in_db(update_base_url, ad_id, categories, current_token)
         if result["success"]:
-            print(f"   [{idx}/{total}] ✅ Ad {ad_id}: Updated")
+            logger.info("   [%d/%d] ✅ Ad %s: Updated", idx, total, ad_id)
         else:
-            print(f"   [{idx}/{total}] ❌ Ad {ad_id}: {result.get('error', 'Unknown')}")
+            logger.error("   [%d/%d] ❌ Ad %s: %s", idx, total, ad_id, result.get('error', 'Unknown'))
 
         # ── CDC Audit Log: Record old vs new categories to Loki ──
         if config.enable_cdc_audit_log:
@@ -3330,7 +3429,7 @@ def _cdc_dev_db_update(db_api_base_url: str, client_id: str, client_secret: str,
                     success=result["success"], error=result.get("error", ""),
                 )
             except Exception as e:
-                print(f"      [Audit] Warning: failed to log audit for Ad {ad_id}: {e}")
+                logger.warning("      [Audit] Warning: failed to log audit for Ad %s: %s", ad_id, e)
 
         return {
             "ad_id": ad_id,
@@ -3349,7 +3448,7 @@ def _cdc_dev_db_update(db_api_base_url: str, client_id: str, client_secret: str,
                 results.append(future.result())
             except Exception as e:
                 ad_data = future_to_ad[future]
-                print(f"   ❌ Worker exception for Ad {ad_data[0]}: {e}")
+                logger.error("   ❌ Worker exception for Ad %s: %s", ad_data[0], e)
                 results.append({
                     "ad_id": ad_data[0], "success": False,
                     "error": f"Worker exception: {str(e)}", "categories": ad_data[2],
@@ -3359,11 +3458,11 @@ def _cdc_dev_db_update(db_api_base_url: str, client_id: str, client_secret: str,
     success_count = sum(1 for r in results if r["success"])
     failed_count = sum(1 for r in results if not r["success"])
 
-    print(f"\n{'='*80}")
-    print(f"🔄 CDC DEV DB UPDATE COMPLETE ({elapsed:.1f}s)")
-    print(f"   Total rows: {total_rows} | To update: {len(prepared_ads)} | Skipped: {skipped_count}")
-    print(f"   ✅ Success: {success_count} | ❌ Failed: {failed_count}")
-    print(f"{'='*80}\n")
+    logger.info("=" * 80)
+    logger.info("🔄 CDC DEV DB UPDATE COMPLETE (%.1fs)", elapsed)
+    logger.info("   Total rows: %d | To update: %d | Skipped: %d", total_rows, len(prepared_ads), skipped_count)
+    logger.info("   ✅ Success: %d | ❌ Failed: %d", success_count, failed_count)
+    logger.info("=" * 80)
 
     # Save patch summary report as Excel to cdc_ai_output_excels/
     patch_report_filename = None
@@ -3383,9 +3482,10 @@ def _cdc_dev_db_update(db_api_base_url: str, client_id: str, client_secret: str,
             report_path = os.path.join(CDC_OUTPUT_DIR, patch_report_filename)
             os.makedirs(CDC_OUTPUT_DIR, exist_ok=True)
             report_df.to_excel(report_path, index=False)
-            print(f"   📋 Patch Summary report saved: {patch_report_filename}")
+            _upload_and_track(report_path, 'cdc/patch-summaries', patch_report_filename)
+            logger.info("   📋 Patch Summary report saved: %s", patch_report_filename)
         except Exception as e:
-            print(f"   ⚠️ Failed to save Patch Summary report: {e}")
+            logger.warning("   ⚠️ Failed to save Patch Summary report: %s", e)
 
     # Flush any remaining audit log records to Loki
     if config.enable_cdc_audit_log:
@@ -3421,13 +3521,12 @@ def _cdc_prod_db_update(token_url: str, client_id: str, client_secret: str,
 
     Returns a summary dict with counts and per-ad results.
     """
-    print(f"\n{'='*80}")
-    print(f"🔄 CDC PROD DB UPDATE — Job {job_id}")
-    print(f"{'='*80}")
-    print(f"   Excel: {os.path.basename(output_excel_path)}")
-    print(f"   Token URL: {token_url}")
-    print(f"   Update URL: {update_base_url}")
-    print(f"{'='*80}\n")
+    logger.info("=" * 80)
+    logger.info("🔄 CDC PROD DB UPDATE — Job %s", job_id)
+    logger.info("   Excel: %s", os.path.basename(output_excel_path))
+    logger.info("   Token URL: %s", token_url)
+    logger.info("   Update URL: %s", update_base_url)
+    logger.info("=" * 80)
 
     # 1. Read the annotated output Excel
     df = pd.read_excel(output_excel_path, dtype={"Ad ID": str})
@@ -3435,7 +3534,7 @@ def _cdc_prod_db_update(token_url: str, client_id: str, client_secret: str,
     total_rows = len(df)
 
     if "Status" not in df.columns or "Annotated_Top1" not in df.columns:
-        print(f"   ⚠️ Missing required columns (Status, Annotated_Top1) — skipping db update")
+        logger.warning("   ⚠️ Missing required columns (Status, Annotated_Top1) — skipping db update")
         return {"total_rows": total_rows, "update_count": 0, "success_count": 0,
                 "failed_count": 0, "skipped_count": total_rows, "results": [],
                 "patch_report_filename": None}
@@ -3482,7 +3581,7 @@ def _cdc_prod_db_update(token_url: str, client_id: str, client_secret: str,
 
         if not categories or unmapped:
             reason = f"unmapped: {unmapped}" if unmapped else "no categories"
-            print(f"   ⏭️ Ad {ad_id}: Skipped — {reason}")
+            logger.info("   ⏭️ Ad %s: Skipped — %s", ad_id, reason)
             skipped_count += 1
             continue
 
@@ -3490,14 +3589,14 @@ def _cdc_prod_db_update(token_url: str, client_id: str, client_secret: str,
         prepared_ads.append((ad_id, categories, cat_names))
 
     if not prepared_ads:
-        print(f"   ℹ️ No ads with 'Require Update' status to process")
-        print(f"   Total: {total_rows} | Skipped: {skipped_count}")
+        logger.info("   ℹ️ No ads with 'Require Update' status to process")
+        logger.info("   Total: %d | Skipped: %d", total_rows, skipped_count)
         return {"total_rows": total_rows, "update_count": 0, "success_count": 0,
                 "failed_count": 0, "skipped_count": skipped_count, "results": [],
                 "patch_report_filename": None}
 
     # 4. Get fresh prod bearer token
-    print(f"   🔑 Getting fresh PROD access token from {token_url}...")
+    logger.info("   🔑 Getting fresh PROD access token from %s...", token_url)
     token_info = get_db_update_bearer_token(token_url, client_id, client_secret, grant_type)
     token_holder = {"access_token": token_info["access_token"], "expires_at": token_info["expires_at"]}
     token_lock = threading.Lock()
@@ -3505,7 +3604,7 @@ def _cdc_prod_db_update(token_url: str, client_id: str, client_secret: str,
     def _get_valid_token():
         with token_lock:
             if time.time() >= token_holder["expires_at"]:
-                print("   🔄 Refreshing PROD access token...")
+                logger.info("   🔄 Refreshing PROD access token...")
                 new_info = get_db_update_bearer_token(token_url, client_id, client_secret, grant_type)
                 token_holder["access_token"] = new_info["access_token"]
                 token_holder["expires_at"] = new_info["expires_at"]
@@ -3513,12 +3612,12 @@ def _cdc_prod_db_update(token_url: str, client_id: str, client_secret: str,
 
     # Derive the ad-patches base URL
     patch_base_url = _derive_patch_base_url(update_base_url)
-    print(f"   📌 Patch API base URL: {patch_base_url}")
+    logger.info("   📌 Patch API base URL: %s", patch_base_url)
 
     # 5. Multithreaded update with full patch lifecycle
     max_workers = 5
-    print(f"\n   📝 Updating {len(prepared_ads)} ads in PROD DB ({max_workers} workers)")
-    print(f"   🩹 Using full patch lifecycle (check → delete → PUT → patch)\n")
+    logger.info("   📝 Updating %d ads in PROD DB (%d workers)", len(prepared_ads), max_workers)
+    logger.info("   🩹 Using full patch lifecycle (check → delete → PUT → patch)")
 
     results = []
     patched_ads_summary = []
@@ -3529,7 +3628,7 @@ def _cdc_prod_db_update(token_url: str, client_id: str, client_secret: str,
         ad_id, categories, cat_names = ad_data
         current_token = _get_valid_token()
 
-        print(f"\n   [{idx}/{total}] 🔎 Processing Ad {ad_id} ...")
+        logger.info("   [%d/%d] 🔎 Processing Ad %s ...", idx, total, ad_id)
 
         # Step A: Check for existing patch
         patch_info = check_ad_patch(patch_base_url, ad_id, current_token)
@@ -3542,15 +3641,15 @@ def _cdc_prod_db_update(token_url: str, client_id: str, client_secret: str,
         if patch_info.get("has_patch") and patch_info.get("has_categories"):
             old_patch_categories = patch_info["categories"]
             old_cat_names = [c.get("name", c.get("id", "?")) for c in old_patch_categories]
-            print(f"      ⚡ Ad {ad_id} has PATCHED categories: {old_cat_names}")
-            print(f"      🗑️ Deleting categories from patch before PUT update...")
+            logger.info("      ⚡ Ad %s has PATCHED categories: %s", ad_id, old_cat_names)
+            logger.info("      🗑️ Deleting categories from patch before PUT update...")
 
             current_token = _get_valid_token()
             delete_result = delete_patch_categories(patch_base_url, ad_id, current_token)
 
             if not delete_result["success"]:
                 error_msg = f"Failed to delete patch categories: {delete_result.get('error', 'Unknown error')}"
-                print(f"   [{idx}/{total}] ❌ Ad {ad_id}: {error_msg}")
+                logger.error("   [%d/%d] ❌ Ad %s: %s", idx, total, ad_id, error_msg)
                 return (
                     {"ad_id": ad_id, "success": False, "error": error_msg, "categories": cat_names},
                     {"ad_id": ad_id, "old_patched_categories": ", ".join(old_cat_names),
@@ -3560,21 +3659,21 @@ def _cdc_prod_db_update(token_url: str, client_id: str, client_secret: str,
                 )
 
             patch_deleted = True
-            print(f"      ✅ Patch categories deleted successfully for Ad {ad_id}")
+            logger.info("      ✅ Patch categories deleted successfully for Ad %s", ad_id)
         elif patch_info.get("has_patch") and not patch_info.get("has_categories"):
-            print(f"      ℹ️ Ad {ad_id} has a patch but NO categories in it — proceeding with direct PUT")
+            logger.info("      ℹ️ Ad %s has a patch but NO categories in it — proceeding with direct PUT", ad_id)
         else:
-            print(f"      ℹ️ Ad {ad_id} has no patch — proceeding with direct PUT")
+            logger.info("      ℹ️ Ad %s has no patch — proceeding with direct PUT", ad_id)
 
         # Step C: PUT update
         current_token = _get_valid_token()
-        print(f"      📤 Sending PUT to update Ad {ad_id} with categories: {cat_names}")
+        logger.info("      📤 Sending PUT to update Ad %s with categories: %s", ad_id, cat_names)
         result = update_ad_categories_in_db(update_base_url, ad_id, categories, current_token)
 
         if result["success"]:
-            print(f"   [{idx}/{total}] ✅ Ad {ad_id}: Updated -> {cat_names}")
+            logger.info("   [%d/%d] ✅ Ad %s: Updated -> %s", idx, total, ad_id, cat_names)
         else:
-            print(f"   [{idx}/{total}] ❌ Ad {ad_id}: {result.get('error', 'Unknown error')}")
+            logger.error("   [%d/%d] ❌ Ad %s: %s", idx, total, ad_id, result.get('error', 'Unknown error'))
 
         # Step D: Create or update ad-patch with new categories
         patch_action = None
@@ -3582,7 +3681,7 @@ def _cdc_prod_db_update(token_url: str, client_id: str, client_secret: str,
         patch_step_error = ""
 
         if result["success"]:
-            print(f"\n      🩹 [Patch Step] Ad {ad_id}: Ad update succeeded — now creating/updating patch...")
+            logger.info("      🩹 [Patch Step] Ad %s: Ad update succeeded — now creating/updating patch...", ad_id)
             current_token = _get_valid_token()
             patch_result = create_or_update_ad_patch_categories(
                 patch_base_url, ad_id, categories,
@@ -3593,11 +3692,11 @@ def _cdc_prod_db_update(token_url: str, client_id: str, client_secret: str,
             patch_action = patch_result.get("action")
             patch_step_error = patch_result.get("error", "")
             if patch_step_success:
-                print(f"   [{idx}/{total}] 🩹 Ad {ad_id}: Patch {patch_action} successfully with categories: {cat_names}")
+                logger.info("   [%d/%d] 🩹 Ad %s: Patch %s successfully with categories: %s", idx, total, ad_id, patch_action, cat_names)
             else:
-                print(f"   [{idx}/{total}] ⚠️ Ad {ad_id}: Ad updated OK but patch step failed — {patch_step_error}")
+                logger.warning("   [%d/%d] ⚠️ Ad %s: Ad updated OK but patch step failed — %s", idx, total, ad_id, patch_step_error)
         else:
-            print(f"      ⏭️ [Patch Step] Ad {ad_id}: Skipping patch step because ad update failed")
+            logger.info("      ⏭️ [Patch Step] Ad %s: Skipping patch step because ad update failed", ad_id)
 
         result_dict = {
             "ad_id": ad_id,
@@ -3640,7 +3739,7 @@ def _cdc_prod_db_update(token_url: str, client_id: str, client_secret: str,
                     patch_action=patch_action or "", patch_deleted=patch_deleted,
                 )
             except Exception as e:
-                print(f"      [Audit] Warning: failed to log audit for Ad {ad_id}: {e}")
+                logger.warning("      [Audit] Warning: failed to log audit for Ad %s: %s", ad_id, e)
 
         return (result_dict, patch_summary)
 
@@ -3658,7 +3757,7 @@ def _cdc_prod_db_update(token_url: str, client_id: str, client_secret: str,
                     patched_ads_summary.append(patch_summary)
             except Exception as e:
                 ad_data = future_to_ad[future]
-                print(f"   ❌ Worker exception for Ad {ad_data[0]}: {e}")
+                logger.error("   ❌ Worker exception for Ad %s: %s", ad_data[0], e)
                 results.append({
                     "ad_id": ad_data[0], "success": False,
                     "error": f"Worker exception: {str(e)}", "categories": ad_data[2],
@@ -3673,12 +3772,12 @@ def _cdc_prod_db_update(token_url: str, client_id: str, client_secret: str,
     patches_updated = sum(1 for r in results if r.get("patch_action") == "updated" and r.get("patch_step_success"))
     patches_failed = sum(1 for r in results if r.get("patch_action") and not r.get("patch_step_success"))
 
-    print(f"\n{'='*80}")
-    print(f"🔄 CDC PROD DB UPDATE COMPLETE ({elapsed:.1f}s)")
-    print(f"   Total rows: {total_rows} | To update: {len(prepared_ads)} | Skipped: {skipped_count}")
-    print(f"   ✅ Success: {success_count} | ❌ Failed: {failed_count}")
-    print(f"   🩹 Patches — created: {patches_created}, updated: {patches_updated}, failed: {patches_failed}")
-    print(f"{'='*80}\n")
+    logger.info("=" * 80)
+    logger.info("🔄 CDC PROD DB UPDATE COMPLETE (%.1fs)", elapsed)
+    logger.info("   Total rows: %d | To update: %d | Skipped: %d", total_rows, len(prepared_ads), skipped_count)
+    logger.info("   ✅ Success: %d | ❌ Failed: %d", success_count, failed_count)
+    logger.info("   🩹 Patches — created: %d, updated: %d, failed: %d", patches_created, patches_updated, patches_failed)
+    logger.info("=" * 80)
 
     # 6. Save patch summary Excel to cdc_ai_output_excels/
     patch_report_filename = None
@@ -3699,9 +3798,10 @@ def _cdc_prod_db_update(token_url: str, client_id: str, client_secret: str,
             patch_report_filename = f"CDC_Patch_Summary_{run_ts}.xlsx"
             patch_report_path = os.path.join(CDC_OUTPUT_DIR, patch_report_filename)
             patch_df.to_excel(patch_report_path, index=False, engine="openpyxl")
-            print(f"   📋 Patch Summary report saved: {patch_report_filename} ({len(patched_ads_summary)} patched ads)")
+            _upload_and_track(patch_report_path, 'cdc/patch-summaries', patch_report_filename)
+            logger.info("   📋 Patch Summary report saved: %s (%d patched ads)", patch_report_filename, len(patched_ads_summary))
         except Exception as e:
-            print(f"   ⚠️ Failed to save Patch Summary report: {e}")
+            logger.warning("   ⚠️ Failed to save Patch Summary report: %s", e)
 
     # Flush any remaining audit log records to Loki
     if config.enable_cdc_audit_log:
@@ -3746,16 +3846,15 @@ def run_cdc_pipeline_sync(job_id: str, ad_ids: list, client_id: str, client_secr
     run_ts = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
 
     try:
-        print(f"\n{'='*80}")
-        print(f"CDC PIPELINE JOB {job_id} STARTED [{env_label}]")
-        print(f"{'='*80}")
-        print(f"   Environment: {env_label}")
-        print(f"   Ad IDs: {len(ad_ids)}")
-        print(f"   Output Dir: {CDC_OUTPUT_DIR}")
+        logger.info("=" * 80)
+        logger.info("CDC PIPELINE JOB %s STARTED [%s]", job_id, env_label)
+        logger.info("   Environment: %s", env_label)
+        logger.info("   Ad IDs: %d", len(ad_ids))
+        logger.info("   Output Dir: %s", CDC_OUTPUT_DIR)
         if is_prod:
-            print(f"   Token URL: {token_url}")
-            print(f"   Update URL: {update_base_url}")
-        print(f"{'='*80}\n")
+            logger.info("   Token URL: %s", token_url)
+            logger.info("   Update URL: %s", update_base_url)
+        logger.info("=" * 80)
 
         os.makedirs(CDC_OUTPUT_DIR, exist_ok=True)
 
@@ -3763,9 +3862,9 @@ def run_cdc_pipeline_sync(job_id: str, ad_ids: list, client_id: str, client_secr
         if config.enable_ad_annotation_limit:
             over_limit = ad_tracker.filter_over_limit_ads(ad_ids, config.max_annotation_runs)
             if over_limit:
-                print(f"   Ad Tracker: Skipping {len(over_limit)} ads (already annotated {config.max_annotation_runs}+ times)")
+                logger.info("   Ad Tracker: Skipping %d ads (already annotated %d+ times)", len(over_limit), config.max_annotation_runs)
                 ad_ids = [aid for aid in ad_ids if aid not in over_limit]
-                print(f"   Ad Tracker: {len(ad_ids)} ads remaining\n")
+                logger.info("   Ad Tracker: %d ads remaining", len(ad_ids))
 
         if not ad_ids:
             raise ValueError("No ads to process after filtering")
@@ -3777,28 +3876,28 @@ def run_cdc_pipeline_sync(job_id: str, ad_ids: list, client_id: str, client_secr
             # ==================== PROD: Fetch via prod API ====================
 
             # ========== STEP 1: Get Access Token (Prod) ==========
-            print("="*80)
-            print(f"STEP 1: AUTHENTICATING WITH PROD DB API ({db_api_base_url})")
-            print("="*80)
+            logger.info("=" * 80)
+            logger.info("STEP 1: AUTHENTICATING WITH PROD DB API (%s)", db_api_base_url)
+            logger.info("=" * 80)
 
             token_data = _cdc_get_access_token(db_api_base_url, client_id, client_secret, grant_type)
             access_token = token_data['access_token']
-            print("="*80 + "\n")
+            logger.info("=" * 80)
 
             # ========== STEP 2: Fetch Trucks via Prod API (Multithreaded) ==========
             # Derive the trucks endpoint from the base URL
             prod_trucks_url = f"{db_api_base_url.rstrip('/')}/trucks"
-            print("="*80)
-            print(f"STEP 2: FETCHING {len(ad_ids)} TRUCKS FROM PROD DB API")
-            print("="*80)
-            print(f"   Using endpoint: {prod_trucks_url}/{{ad_id}}")
+            logger.info("=" * 80)
+            logger.info("STEP 2: FETCHING %d TRUCKS FROM PROD DB API", len(ad_ids))
+            logger.info("=" * 80)
+            logger.info("   Using endpoint: %s/{ad_id}", prod_trucks_url)
 
             fetched_trucks = []
             not_found_ids = []
             error_ids = []
 
             max_workers = 5
-            print(f"   Starting {max_workers} concurrent fetch workers...\n")
+            logger.info("   Starting %d concurrent fetch workers...", max_workers)
 
             with ThreadPoolExecutor(max_workers=max_workers) as executor:
                 future_to_ad_id = {
@@ -3819,25 +3918,25 @@ def run_cdc_pipeline_sync(job_id: str, ad_ids: list, client_id: str, client_secr
             # ==================== DEV: Fetch via dev API ====================
 
             # ========== STEP 1: Get Access Token (Dev DB API) ==========
-            print("="*80)
-            print(f"STEP 1: AUTHENTICATING WITH DEV DB API ({db_api_base_url})")
-            print("="*80)
+            logger.info("=" * 80)
+            logger.info("STEP 1: AUTHENTICATING WITH DEV DB API (%s)", db_api_base_url)
+            logger.info("=" * 80)
 
             token_data = _cdc_get_access_token(db_api_base_url, client_id, client_secret, grant_type)
             access_token = token_data['access_token']
-            print("="*80 + "\n")
+            logger.info("=" * 80)
 
             # ========== STEP 2: Fetch Trucks (Multithreaded) ==========
-            print("="*80)
-            print(f"STEP 2: FETCHING {len(ad_ids)} TRUCKS FROM DEV DB API")
-            print("="*80)
+            logger.info("=" * 80)
+            logger.info("STEP 2: FETCHING %d TRUCKS FROM DEV DB API", len(ad_ids))
+            logger.info("=" * 80)
 
             fetched_trucks = []
             not_found_ids = []
             error_ids = []
 
             max_workers = 5
-            print(f"   Starting {max_workers} concurrent fetch workers...\n")
+            logger.info("   Starting %d concurrent fetch workers...", max_workers)
 
             with ThreadPoolExecutor(max_workers=max_workers) as executor:
                 future_to_ad_id = {
@@ -3855,12 +3954,12 @@ def run_cdc_pipeline_sync(job_id: str, ad_ids: list, client_id: str, client_secr
 
         # ── Common steps from here ──
 
-        print(f"\n   Fetched: {len(fetched_trucks)}/{len(ad_ids)} trucks")
+        logger.info("   Fetched: %d/%d trucks", len(fetched_trucks), len(ad_ids))
         if not_found_ids:
-            print(f"   Not found: {len(not_found_ids)} - {not_found_ids[:10]}")
+            logger.info("   Not found: %d - %s", len(not_found_ids), not_found_ids[:10])
         if error_ids:
-            print(f"   Errors: {len(error_ids)} - {error_ids[:10]}")
-        print("="*80 + "\n")
+            logger.error("   Errors: %d - %s", len(error_ids), error_ids[:10])
+        logger.info("=" * 80)
 
         # Apply CTT Platform Filter
         fetched_trucks, non_ctt_ids = filter_ctt_platform_trucks(fetched_trucks)
@@ -3869,9 +3968,9 @@ def run_cdc_pipeline_sync(job_id: str, ad_ids: list, client_id: str, client_secr
             raise ValueError("No trucks were successfully fetched from the database")
 
         # ========== STEP 3: Process Truck Data ==========
-        print("="*80)
-        print("STEP 3: PROCESSING TRUCK DATA")
-        print("="*80)
+        logger.info("=" * 80)
+        logger.info("STEP 3: PROCESSING TRUCK DATA")
+        logger.info("=" * 80)
 
         processed_trucks = []
         for i, truck in enumerate(fetched_trucks, 1):
@@ -3897,10 +3996,10 @@ def run_cdc_pipeline_sync(job_id: str, ad_ids: list, client_id: str, client_secr
                 'Image_URLs': ''
             })
 
-        print(f"   Processed: {len(processed_trucks)} trucks total")
+        logger.info("   Processed: %d trucks total", len(processed_trucks))
         if non_ctt_ids:
-            print(f"   Non-CTT Platform: {len(non_ctt_ids)} ads filtered out")
-        print("="*80 + "\n")
+            logger.info("   Non-CTT Platform: %d ads filtered out", len(non_ctt_ids))
+        logger.info("=" * 80)
 
         # ========== STEP 4: Save Fetch Excel ==========
         result_df = pd.DataFrame(processed_trucks)
@@ -3911,28 +4010,32 @@ def run_cdc_pipeline_sync(job_id: str, ad_ids: list, client_id: str, client_secr
         fetch_path = os.path.join(CDC_OUTPUT_DIR, fetch_filename)
         result_df.to_excel(fetch_path, index=False)
 
-        print(f"   Fetch Excel saved: {fetch_path}")
+        # Upload to B2 (keep local — annotation pipeline reads it next)
+        _upload_and_track(fetch_path, 'cdc/fetch', fetch_filename, delete_local=False)
+
+        logger.info("   Fetch Excel saved: %s", fetch_path)
 
         job['status'] = 'fetched'
         job['file_path'] = fetch_path
 
         # ========== STEP 5: Run AI Annotation ==========
-        print(f"\n{'='*80}")
-        print("STEP 5: RUNNING AI ANNOTATION PIPELINE")
-        print(f"{'='*80}\n")
+        logger.info("=" * 80)
+        logger.info("STEP 5: RUNNING AI ANNOTATION PIPELINE")
+        logger.info("=" * 80)
 
         # Temporarily redirect output_dir to CDC folder
         original_output_dir = config.output_dir
         config.output_dir = CDC_OUTPUT_DIR
 
         try:
-            run_db_annotation_pipeline_sync(job_id, fetch_path)
+            run_db_annotation_pipeline_sync(job_id, fetch_path, b2_folder_override='cdc/annotated')
         finally:
             config.output_dir = original_output_dir
 
         # If enable_ai_output=False, the annotated output landed in temp instead of
         # CDC_OUTPUT_DIR (because load_config() re-reads config.ini mid-pipeline).
-        # Move it to CDC_OUTPUT_DIR so it persists for the data team.
+        # Move it to CDC_OUTPUT_DIR locally so the DB update step can read it.
+        # B2 upload is already handled by the annotation function via b2_folder_override='cdc/annotated'.
         output_excel = job.get('output_file', '')
         if output_excel and os.path.exists(output_excel):
             if CDC_OUTPUT_DIR not in os.path.dirname(os.path.abspath(output_excel)):
@@ -3940,7 +4043,7 @@ def run_cdc_pipeline_sync(job_id: str, ad_ids: list, client_id: str, client_secr
                 import shutil
                 shutil.move(output_excel, dest)
                 job['output_file'] = dest
-                print(f"   📁 Moved annotated output to CDC folder: {os.path.basename(dest)}")
+                logger.info("   📁 Moved annotated output to CDC folder: %s", os.path.basename(dest))
 
             # Also move any batch files that ended up in temp
             for batch_info in job.get('batches', []):
@@ -3969,23 +4072,34 @@ def run_cdc_pipeline_sync(job_id: str, ad_ids: list, client_id: str, client_secr
                 job['db_update_result'] = db_update_result
             except Exception as e:
                 update_type = "Prod" if is_prod else "Dev"
-                print(f"\n   ⚠️ STEP 6 {update_type} DB Update failed (non-fatal): {e}")
+                logger.warning("   ⚠️ STEP 6 %s DB Update failed (non-fatal): %s", update_type, e)
                 import traceback
                 traceback.print_exc()
                 job['db_update_result'] = {"error": str(e)}
         else:
-            print(f"\n   ⏭️ STEP 6: Skipped — no output file found for db update")
+            logger.info("   ⏭️ STEP 6: Skipped — no output file found for db update")
 
-        print(f"\n{'='*80}")
-        print(f"CDC PIPELINE JOB {job_id} COMPLETE! [{env_label}]")
-        print(f"{'='*80}")
-        print(f"   Output Dir: {CDC_OUTPUT_DIR}")
-        print(f"{'='*80}\n")
+        # Clean up local CDC files — they're already on B2
+        # Flush pending uploads first so local files aren't deleted mid-upload
+        if b2_is_enabled():
+            flush_uploads()
+            for f in os.listdir(CDC_OUTPUT_DIR):
+                fpath = os.path.join(CDC_OUTPUT_DIR, f)
+                if os.path.isfile(fpath):
+                    try:
+                        os.remove(fpath)
+                    except OSError:
+                        pass
+            logger.info("   [B2] Local CDC files cleaned up (backed up on B2)")
+
+        logger.info("=" * 80)
+        logger.info("CDC PIPELINE JOB %s COMPLETE! [%s]", job_id, env_label)
+        logger.info("=" * 80)
 
     except Exception as e:
         job['status'] = JobStatus.FAILED
         job['error'] = str(e)
-        print(f"\n CDC PIPELINE JOB {job_id} FAILED: {str(e)}\n")
+        logger.error("CDC PIPELINE JOB %s FAILED: %s", job_id, str(e))
         import traceback
         traceback.print_exc()
 
@@ -4099,7 +4213,17 @@ async def cdc_trigger_status(job_id: str):
 
 @app.get("/api/cdc-outputs")
 async def list_cdc_outputs():
-    """List all files in cdc_ai_output_excels/ for the CDC Outputs UI tab."""
+    """List all files in B2 cloud or local cdc_ai_output_excels/ for the CDC Outputs UI tab."""
+
+    # When B2 is enabled, list from cloud (recursive across date folders)
+    if b2_is_enabled():
+        return {
+            "annotation_files": list_b2_files("awacs-outputs/cdc/annotated/"),
+            "db_fetch_files": list_b2_files("awacs-outputs/cdc/fetch/"),
+            "patch_summary_files": list_b2_files("awacs-outputs/cdc/patch-summaries/"),
+        }
+
+    # Fallback: list from local filesystem
     import glob as _glob
 
     os.makedirs(CDC_OUTPUT_DIR, exist_ok=True)
@@ -4136,11 +4260,20 @@ async def list_cdc_outputs():
 
 @app.get("/api/cdc-outputs/download/{filename}")
 async def download_cdc_output(filename: str):
-    """Download a specific file from cdc_ai_output_excels/."""
+    """Download a specific file from B2 cloud or local cdc_ai_output_excels/."""
     # Prevent path traversal
     if ".." in filename or "/" in filename or "\\" in filename:
         raise HTTPException(status_code=400, detail="Invalid filename")
 
+    # Try B2 pre-signed URL redirect first
+    if b2_is_enabled():
+        b2_key = get_b2_key_for_cdc_file(filename)
+        if b2_key:
+            url = get_download_url(b2_key)
+            if url:
+                return RedirectResponse(url=url, status_code=302)
+
+    # Fallback to local file
     filepath = os.path.join(CDC_OUTPUT_DIR, filename)
     if not os.path.exists(filepath):
         raise HTTPException(status_code=404, detail="File not found")
@@ -4163,6 +4296,18 @@ async def delete_cdc_outputs(type: str):
     if type not in ("annotation", "db_fetch", "patch_summary"):
         raise HTTPException(status_code=400, detail="type must be 'annotation', 'db_fetch', or 'patch_summary'")
 
+    # When B2 is enabled, delete from cloud storage
+    if b2_is_enabled():
+        prefix_map = {
+            "annotation": "awacs-outputs/cdc/annotated/",
+            "db_fetch": "awacs-outputs/cdc/fetch/",
+            "patch_summary": "awacs-outputs/cdc/patch-summaries/",
+        }
+        deleted = delete_b2_files(prefix_map[type])
+        logger.info("   🗑️ Deleted %d CDC %s file(s) from B2", deleted, type)
+        return {"deleted": deleted, "type": type}
+
+    # Fallback: delete from local filesystem
     deleted = 0
     if not os.path.exists(CDC_OUTPUT_DIR):
         return {"deleted": 0, "type": type}
@@ -4186,7 +4331,7 @@ async def delete_cdc_outputs(type: str):
             except OSError:
                 pass
 
-    print(f"   🗑️ Deleted {deleted} CDC {type} file(s)")
+    logger.info("   🗑️ Deleted %d CDC %s file(s)", deleted, type)
     return {"deleted": deleted, "type": type}
 
 
@@ -4219,25 +4364,25 @@ async def fetch_from_db(request: DBFetchRequest):
     
     Credentials can be provided in the request or will be loaded from config.ini
     """
-    print("\n" + "="*80)
-    print("🗄️ DB FETCH - FETCHING DATA FROM DATABASE API (PRODUCTION)")
-    print("="*80)
-    
+    logger.info("=" * 80)
+    logger.info("🗄️ DB FETCH - FETCHING DATA FROM DATABASE API (PRODUCTION)")
+    logger.info("=" * 80)
+
     # If min and max timestamps are the same, expand to full day (24 hours)
     min_timestamp = request.min_last_update
     max_timestamp = request.max_last_update
-    
+
     if min_timestamp == max_timestamp:
         # Expand to full day: from 00:00:00 to 23:59:59
         max_timestamp = min_timestamp + 86399  # 86399 seconds = 23 hours, 59 minutes, 59 seconds
-        print(f"   ℹ️  Same timestamp detected - expanding to full day")
-        print(f"   📅 Original: {request.min_last_update}")
-        print(f"   📅 Expanded: {min_timestamp} → {max_timestamp} (full 24 hours)")
+        logger.info("   ℹ️  Same timestamp detected - expanding to full day")
+        logger.info("   📅 Original: %s", request.min_last_update)
+        logger.info("   📅 Expanded: %s → %s (full 24 hours)", min_timestamp, max_timestamp)
     else:
-        print(f"   📅 Date Range: {min_timestamp} → {max_timestamp}")
-    
-    print(f"   📊 Listing Range: {request.listing_start} → {request.listing_end}")
-    print("="*80 + "\n")
+        logger.info("   📅 Date Range: %s → %s", min_timestamp, max_timestamp)
+
+    logger.info("   📊 Listing Range: %s → %s", request.listing_start, request.listing_end)
+    logger.info("=" * 80)
     
     try:
         # Use provided credentials or fallback to config.ini
@@ -4259,10 +4404,10 @@ async def fetch_from_db(request: DBFetchRequest):
                 detail="DB API Client Secret not configured. Please add credentials to config.ini or provide them in the request."
             )
         
-        print(f"   🔑 Using credentials from: {'Request' if request.client_id else 'config.ini'}")
-        print(f"   🔑 Client ID: {client_id[:10]}...")
-        print(f"   🔑 Client Secret length: {len(client_secret)} chars")
-        print(f"   🔑 Grant Type: {grant_type}\n")
+        logger.info("   🔑 Using credentials from: %s", 'Request' if request.client_id else 'config.ini')
+        logger.info("   🔑 Client ID: %s...", client_id[:10])
+        logger.info("   🔑 Client Secret length: %d chars", len(client_secret))
+        logger.info("   🔑 Grant Type: %s", grant_type)
         
         # Step 1: Get access token
         token_data = get_access_token(
@@ -4275,27 +4420,27 @@ async def fetch_from_db(request: DBFetchRequest):
         # Step 2: Calculate how many trucks to fetch
         total_listings_needed = request.listing_end - request.listing_start
         
-        print(f"\n   📊 Need to fetch {total_listings_needed} listings")
-        print(f"   📦 Will use pagination with max 500 per request\n")
+        logger.info("   📊 Need to fetch %d listings", total_listings_needed)
+        logger.info("   📦 Will use pagination with max 500 per request")
         
         # Step 3: Fetch trucks with pagination
         all_trucks = []
         current_offset = request.listing_start
         limit_per_request = 500  # Max allowed by API
         
-        print("="*80)
-        print("📦 FETCHING TRUCKS DATA WITH PAGINATION")
-        print("="*80)
-        
+        logger.info("=" * 80)
+        logger.info("📦 FETCHING TRUCKS DATA WITH PAGINATION")
+        logger.info("=" * 80)
+
         # Track total available for pagination guidance
         total_available_in_db = 0
-        
+
         while len(all_trucks) < total_listings_needed:
             # Calculate how many more we need
             remaining = total_listings_needed - len(all_trucks)
             current_limit = min(limit_per_request, remaining)
-            
-            print(f"\n   🔄 Request {len(all_trucks) // 500 + 1}: Offset={current_offset}, Limit={current_limit}")
+
+            logger.info("   🔄 Request %d: Offset=%d, Limit=%d", len(all_trucks) // 500 + 1, current_offset, current_limit)
             
             # Fetch batch (use expanded timestamps)
             batch_data = fetch_trucks_from_db(
@@ -4309,34 +4454,34 @@ async def fetch_from_db(request: DBFetchRequest):
             batch_trucks = batch_data.get('result', [])
             
             if not batch_trucks:
-                print(f"   ⚠️ No more trucks available")
+                logger.warning("   ⚠️ No more trucks available")
                 break
-            
+
             all_trucks.extend(batch_trucks)
             current_offset += len(batch_trucks)
-            
-            print(f"   ✅ Batch complete. Total fetched so far: {len(all_trucks)}")
+
+            logger.info("   ✅ Batch complete. Total fetched so far: %d", len(all_trucks))
             
             # Check if we've reached the total available
             pagination = batch_data.get('pagination', {})
             total_available_in_db = pagination.get('total', 0)
             
             if current_offset >= total_available_in_db:
-                print(f"   ℹ️  Reached end of available data (total: {total_available_in_db})")
+                logger.info("   ℹ️  Reached end of available data (total: %d)", total_available_in_db)
                 break
-        
-        print("\n" + "="*80)
-        print(f"✅ FETCHING COMPLETE - Retrieved {len(all_trucks)} trucks")
-        print(f"   Total available in DB for this date range: {total_available_in_db}")
-        print("="*80 + "\n")
+
+        logger.info("=" * 80)
+        logger.info("✅ FETCHING COMPLETE - Retrieved %d trucks", len(all_trucks))
+        logger.info("   Total available in DB for this date range: %d", total_available_in_db)
+        logger.info("=" * 80)
 
         # Step 3.5: Apply CTT Platform Filter
         all_trucks, non_ctt_ids = filter_ctt_platform_trucks(all_trucks)
 
         # Step 4: Process truck data
-        print("="*80)
-        print("🔄 PROCESSING TRUCK DATA")
-        print("="*80)
+        logger.info("=" * 80)
+        logger.info("🔄 PROCESSING TRUCK DATA")
+        logger.info("=" * 80)
 
         processed_trucks = []
         for i, truck in enumerate(all_trucks, 1):
@@ -4346,7 +4491,7 @@ async def fetch_from_db(request: DBFetchRequest):
             processed_trucks.append(processed)
 
             if i % 100 == 0:
-                print(f"   ✅ Processed {i}/{len(all_trucks)} trucks")
+                logger.info("   ✅ Processed %d/%d trucks", i, len(all_trucks))
 
         # Add non-CTT platform trucks to output (for tracking)
         for ad_id in non_ctt_ids:
@@ -4358,17 +4503,17 @@ async def fetch_from_db(request: DBFetchRequest):
                 'Image_URLs': ''
             })
 
-        print(f"   ✅ Processed all {len(all_trucks)} CTT trucks")
+        logger.info("   ✅ Processed all %d CTT trucks", len(all_trucks))
         if non_ctt_ids:
-            print(f"   ℹ️  Added {len(non_ctt_ids)} Non-CTT Platform entries to output")
-        print("="*80 + "\n")
-        
+            logger.info("   ℹ️  Added %d Non-CTT Platform entries to output", len(non_ctt_ids))
+        logger.info("=" * 80)
+
         # Step 5: Apply category filters if provided
         if request.category_filters and len(request.category_filters) > 0:
-            print("="*80)
-            print("🔍 APPLYING CATEGORY FILTERS")
-            print("="*80)
-            print(f"   Filters: {request.category_filters}")
+            logger.info("=" * 80)
+            logger.info("🔍 APPLYING CATEGORY FILTERS")
+            logger.info("=" * 80)
+            logger.info("   Filters: %s", request.category_filters)
             
             # Convert filters to lowercase for case-insensitive matching
             filters_lower = [f.lower().strip() for f in request.category_filters]
@@ -4396,33 +4541,28 @@ async def fetch_from_db(request: DBFetchRequest):
                 if matches:
                     filtered_trucks.append(truck)
             
-            print(f"   Before filtering: {len(processed_trucks)} trucks")
-            print(f"   After filtering: {len(filtered_trucks)} trucks")
-            print(f"   Filtered out: {len(processed_trucks) - len(filtered_trucks)} trucks")
-            print("="*80 + "\n")
+            logger.info("   Before filtering: %d trucks", len(processed_trucks))
+            logger.info("   After filtering: %d trucks", len(filtered_trucks))
+            logger.info("   Filtered out: %d trucks", len(processed_trucks) - len(filtered_trucks))
+            logger.info("=" * 80)
             
             processed_trucks = filtered_trucks
         
         # Check if any data was fetched
         if len(processed_trucks) == 0:
-            print("="*80)
-            print("⚠️ NO DATA FOUND")
-            print("="*80)
-            print("   No trucks found for the specified date range and listing range.")
-            print("   Please try:")
-            print("   1. Different date range")
-            print("   2. Different listing range")
-            print("   3. Check if data exists in the database for this period")
-            print("="*80 + "\n")
+            logger.warning("=" * 80)
+            logger.warning("⚠️ NO DATA FOUND")
+            logger.warning("   No trucks found for the specified date range and listing range.")
+            logger.warning("=" * 80)
             raise HTTPException(
                 status_code=404,
                 detail=f"No trucks found for date range {min_timestamp} to {max_timestamp}. Please try a different date range or check if data exists for this period."
             )
         
         # Step 5: Create DataFrame and save intermediate file
-        print("="*80)
-        print("📄 CREATING INTERMEDIATE EXCEL FILE")
-        print("="*80)
+        logger.info("=" * 80)
+        logger.info("📄 CREATING INTERMEDIATE EXCEL FILE")
+        logger.info("=" * 80)
         
         df = pd.DataFrame(processed_trucks)
         df["Ad ID"] = df["Ad ID"].astype(str).str.replace(r'\.0$', '', regex=True).str.strip()
@@ -4440,15 +4580,19 @@ async def fetch_from_db(request: DBFetchRequest):
             _register_temp_file(output_path)
 
         df.to_excel(output_path, index=False)
-        
-        print(f"   ✅ Excel file created: {output_filename}")
-        print(f"   📁 Path: {output_path}")
-        print("="*80 + "\n")
-        
+
+        # Upload to B2 (keep local — may be used for annotation)
+        b2_key = _upload_and_track(output_path, 'db-fetch', output_filename, delete_local=False)
+
+        logger.info("   ✅ Excel file created: %s", output_filename)
+        logger.info("   📁 Path: %s", output_path)
+        logger.info("=" * 80)
+
         jobs[fetch_id] = {
             "id": fetch_id,
             "filename": output_filename,
             "file_path": output_path,
+            "b2_key": b2_key,
             "status": "fetched",  # New status: data fetched, ready for annotation
             "total_ads": int(len(df)),
             "created_at": datetime.now().isoformat(),
@@ -4468,27 +4612,26 @@ async def fetch_from_db(request: DBFetchRequest):
         fetched_before_filter = len(all_trucks)  # Count before filtering
         matched_after_filter = len(processed_trucks)  # Count after filtering
         
-        print("="*80)
-        print("🎉 DB FETCH COMPLETE - READY FOR PREVIEW!")
-        print("="*80)
-        print(f"   Total Trucks: {len(processed_trucks)}")
-        print(f"   File: {output_filename}")
-        print(f"   Fetch ID: {fetch_id}")
-        print(f"   Status: Ready for annotation")
-        print(f"\n   📊 PAGINATION INFO:")
-        print(f"   First Ad ID: {first_ad_id}")
-        print(f"   Last Ad ID: {last_ad_id}")
-        print(f"   Total Available in DB: {total_available_in_db}")
+        logger.info("=" * 80)
+        logger.info("🎉 DB FETCH COMPLETE - READY FOR PREVIEW!")
+        logger.info("   Total Trucks: %d", len(processed_trucks))
+        logger.info("   File: %s", output_filename)
+        logger.info("   Fetch ID: %s", fetch_id)
+        logger.info("   Status: Ready for annotation")
+        logger.info("   📊 PAGINATION INFO:")
+        logger.info("   First Ad ID: %s", first_ad_id)
+        logger.info("   Last Ad ID: %s", last_ad_id)
+        logger.info("   Total Available in DB: %d", total_available_in_db)
         if filters_applied:
-            print(f"   🔍 Category Filters Applied: {request.category_filters}")
-            print(f"   Fetched (before filter): {fetched_before_filter}")
-            print(f"   Matched (after filter): {matched_after_filter}")
-        print(f"   Has More Data: {has_more_data}")
+            logger.info("   🔍 Category Filters Applied: %s", request.category_filters)
+            logger.info("   Fetched (before filter): %d", fetched_before_filter)
+            logger.info("   Matched (after filter): %d", matched_after_filter)
+        logger.info("   Has More Data: %s", has_more_data)
         if has_more_data:
-            print(f"   Next Start: {next_start} (remaining: {remaining_listings})")
+            logger.info("   Next Start: %d (remaining: %d)", next_start, remaining_listings)
         else:
-            print(f"   ✅ This was the last batch!")
-        print("="*80 + "\n")
+            logger.info("   ✅ This was the last batch!")
+        logger.info("=" * 80)
         
         return {
             "success": True,
@@ -4518,7 +4661,7 @@ async def fetch_from_db(request: DBFetchRequest):
         }
         
     except Exception as e:
-        print(f"\n❌ DB FETCH FAILED: {str(e)}\n")
+        logger.error("❌ DB FETCH FAILED: %s", str(e))
         import traceback
         traceback.print_exc()
         raise HTTPException(status_code=500, detail=f"Failed to fetch data from database: {str(e)}")
@@ -4590,7 +4733,7 @@ async def start_db_annotation(fetch_id: str, background_tasks: BackgroundTasks):
     # Start annotation pipeline in background
     background_tasks.add_task(run_db_annotation_pipeline_sync, job_id, file_path)
     
-    print(f"\n🤖 Starting AI annotation for fetch {fetch_id} (job {job_id})")
+    logger.info("🤖 Starting AI annotation for fetch %s (job %s)", fetch_id, job_id)
     
     return {
         "job_id": job_id,
@@ -4604,15 +4747,23 @@ async def download_db_fetch_data(fetch_id: str):
     """Download the fetched database Excel file (before annotation)"""
     if fetch_id not in jobs:
         raise HTTPException(status_code=404, detail="Fetch ID not found")
-    
+
     fetch_job = jobs[fetch_id]
+
+    # Try B2 pre-signed URL redirect first
+    b2_key = fetch_job.get('b2_key')
+    if b2_key and b2_is_enabled():
+        url = get_download_url(b2_key)
+        if url:
+            return RedirectResponse(url=url, status_code=302)
+
+    # Fallback to local file
     file_path = fetch_job.get('file_path')
-    
     if not file_path or not os.path.exists(file_path):
         raise HTTPException(status_code=404, detail="Fetched data file not found")
-    
+
     filename = fetch_job.get('output_filename', fetch_job.get('filename', 'db_fetch_data.xlsx'))
-    
+
     return FileResponse(
         path=file_path,
         filename=filename,
@@ -4649,11 +4800,14 @@ async def fetch_by_ad_ids(
     else:
         file_path = _temp_path(upload_filename)
         _register_temp_file(file_path)
-    
+
     with open(file_path, "wb") as f:
         content = await file.read()
         f.write(content)
-    
+
+    # Archive upload to B2 (keep local — pipeline needs it)
+    _upload_and_track(file_path, 'uploads', upload_filename, delete_local=False)
+
     # Validate file has Ad ID column
     try:
         df = pd.read_excel(file_path)
@@ -4926,7 +5080,7 @@ def get_db_update_bearer_token(token_url: str, client_id: str, client_secret: st
     # Refresh 5 minutes before actual expiry as a safety buffer
     expires_at = time.time() + max(expires_in - 300, 60)
     
-    print(f"   ✅ Bearer token obtained successfully (expires in {expires_in}s, will refresh at {expires_in - 300}s)")
+    logger.info("   ✅ Bearer token obtained successfully (expires in %ds, will refresh at %ds)", expires_in, expires_in - 300)
     return {
         "access_token": access_token,
         "expires_at": expires_at,
@@ -5007,17 +5161,17 @@ def check_ad_patch(patch_base_url: str, ad_id: str, bearer_token: str) -> dict:
             result = data.get("result", {})
             categories = result.get("categories", [])
             has_categories = isinstance(categories, list) and len(categories) > 0
-            print(f"      🔍 Patch check for Ad {ad_id}: PATCH FOUND | categories in patch: {has_categories}")
+            logger.info("      🔍 Patch check for Ad %s: PATCH FOUND | categories in patch: %s", ad_id, has_categories)
             if has_categories:
                 cat_names = [c.get("name", c.get("id", "?")) for c in categories]
-                print(f"         Patched categories: {cat_names}")
+                logger.info("         Patched categories: %s", cat_names)
             return {
                 "has_patch": True,
                 "has_categories": has_categories,
                 "categories": categories,
             }
         elif response.status_code == 404:
-            print(f"      🔍 Patch check for Ad {ad_id}: NO PATCH (404)")
+            logger.info("      🔍 Patch check for Ad %s: NO PATCH (404)", ad_id)
             return {
                 "has_patch": False,
                 "has_categories": False,
@@ -5025,7 +5179,7 @@ def check_ad_patch(patch_base_url: str, ad_id: str, bearer_token: str) -> dict:
             }
         else:
             error_msg = f"Patch check returned HTTP {response.status_code}: {response.text[:200]}"
-            print(f"      ⚠️ Patch check for Ad {ad_id}: {error_msg}")
+            logger.warning("      ⚠️ Patch check for Ad %s: %s", ad_id, error_msg)
             return {
                 "has_patch": False,
                 "has_categories": False,
@@ -5034,7 +5188,7 @@ def check_ad_patch(patch_base_url: str, ad_id: str, bearer_token: str) -> dict:
             }
     except Exception as e:
         error_msg = f"Patch check request failed: {str(e)}"
-        print(f"      ⚠️ Patch check for Ad {ad_id}: {error_msg}")
+        logger.warning("      ⚠️ Patch check for Ad %s: %s", ad_id, error_msg)
         return {
             "has_patch": False,
             "has_categories": False,
@@ -5061,15 +5215,15 @@ def delete_patch_categories(patch_base_url: str, ad_id: str, bearer_token: str) 
     try:
         response = requests.delete(url, headers=headers, timeout=30)
         if response.status_code == 204:
-            print(f"      🗑️ Successfully deleted categories from patch for Ad {ad_id} (204)")
+            logger.info("      🗑️ Successfully deleted categories from patch for Ad %s (204)", ad_id)
             return {"success": True}
         else:
             error_msg = f"Patch category delete returned HTTP {response.status_code}: {response.text[:200]}"
-            print(f"      ❌ Failed to delete patch categories for Ad {ad_id}: {error_msg}")
+            logger.error("      ❌ Failed to delete patch categories for Ad %s: %s", ad_id, error_msg)
             return {"success": False, "error": error_msg}
     except Exception as e:
         error_msg = f"Patch category delete request failed: {str(e)}"
-        print(f"      ❌ Failed to delete patch categories for Ad {ad_id}: {error_msg}")
+        logger.error("      ❌ Failed to delete patch categories for Ad %s: %s", ad_id, error_msg)
         return {"success": False, "error": error_msg}
 
 
@@ -5105,7 +5259,7 @@ def create_or_update_ad_patch_categories(
     if had_patch:
         action = "updated"
         # ── GET existing patch fields so we can preserve them ──
-        print(f"      📥 [Patch Step] Ad {ad_id}: Patch exists — fetching current patch fields...")
+        logger.info("      📥 [Patch Step] Ad %s: Patch exists — fetching current patch fields...", ad_id)
         try:
             get_resp = requests.get(url, headers=headers, timeout=30)
             if get_resp.status_code == 200:
@@ -5127,15 +5281,15 @@ def create_or_update_ad_patch_categories(
                     patch_body[key] = str(value)
                 
                 copied_keys = list(patch_body.keys())
-                print(f"      📥 [Patch Step] Ad {ad_id}: Copied {len(patch_body)} existing patch fields: {copied_keys}")
+                logger.info("      📥 [Patch Step] Ad %s: Copied %d existing patch fields: %s", ad_id, len(patch_body), copied_keys)
                 if skipped_fields:
-                    print(f"      ⏭️ [Patch Step] Ad {ad_id}: Skipped fields: {skipped_fields}")
+                    logger.info("      ⏭️ [Patch Step] Ad %s: Skipped fields: %s", ad_id, skipped_fields)
             else:
-                print(f"      ⚠️ [Patch Step] Ad {ad_id}: GET patch returned HTTP {get_resp.status_code} — will PUT with categories only")
+                logger.warning("      ⚠️ [Patch Step] Ad %s: GET patch returned HTTP %d — will PUT with categories only", ad_id, get_resp.status_code)
         except Exception as e:
-            print(f"      ⚠️ [Patch Step] Ad {ad_id}: Failed to GET existing patch: {e} — will PUT with categories only")
+            logger.warning("      ⚠️ [Patch Step] Ad %s: Failed to GET existing patch: %s — will PUT with categories only", ad_id, e)
     else:
-        print(f"      📥 [Patch Step] Ad {ad_id}: No prior patch — will create new patch with categories only")
+        logger.info("      📥 [Patch Step] Ad %s: No prior patch — will create new patch with categories only", ad_id)
 
     # Append the new AI-annotated categories
     patch_body["categories"] = categories
@@ -5143,20 +5297,20 @@ def create_or_update_ad_patch_categories(
     # ── PUT the patch ──
     body = {"patch": patch_body}
     cat_names = [c.get("name", c.get("id", "?")) for c in categories]
-    print(f"      📤 [Patch Step] Ad {ad_id}: Sending PUT to {action} patch with categories: {cat_names}")
+    logger.info("      📤 [Patch Step] Ad %s: Sending PUT to %s patch with categories: %s", ad_id, action, cat_names)
 
     try:
         put_resp = requests.put(url, json=body, headers=headers, timeout=30)
         if put_resp.status_code in (200, 201, 204):
-            print(f"      ✅ [Patch Step] Ad {ad_id}: Patch {action} successfully (HTTP {put_resp.status_code})")
+            logger.info("      ✅ [Patch Step] Ad %s: Patch %s successfully (HTTP %d)", ad_id, action, put_resp.status_code)
             return {"success": True, "action": action}
         else:
             error_msg = f"Patch PUT returned HTTP {put_resp.status_code}: {put_resp.text[:200]}"
-            print(f"      ❌ [Patch Step] Ad {ad_id}: Failed to {action[:-1]}e patch — {error_msg}")
+            logger.error("      ❌ [Patch Step] Ad %s: Failed to %se patch — %s", ad_id, action[:-1], error_msg)
             return {"success": False, "error": error_msg, "action": action}
     except Exception as e:
         error_msg = f"Patch PUT request failed: {str(e)}"
-        print(f"      ❌ [Patch Step] Ad {ad_id}: Failed to {action[:-1]}e patch — {error_msg}")
+        logger.error("      ❌ [Patch Step] Ad %s: Failed to %se patch — %s", ad_id, action[:-1], error_msg)
         return {"success": False, "error": error_msg, "action": action}
 
 
@@ -5283,9 +5437,9 @@ async def db_update_categories(
             raise HTTPException(status_code=400, detail="DB Update API ClientSecret not configured. Please enter it manually or add it to config.ini")
         
         # Step 1: Get bearer token
-        print("\n" + "=" * 80)
-        print("🔑 DB CATEGORY UPDATE: OBTAINING BEARER TOKEN")
-        print("=" * 80)
+        logger.info("=" * 80)
+        logger.info("🔑 DB CATEGORY UPDATE: OBTAINING BEARER TOKEN")
+        logger.info("=" * 80)
         
         try:
             token_info = get_db_update_bearer_token(token_url, c_id, c_secret, c_grant)
@@ -5295,7 +5449,7 @@ async def db_update_categories(
         
         # Derive the ad-patches base URL from the update base URL
         patch_base_url = _derive_patch_base_url(base_url)
-        print(f"   📌 Patch API base URL: {patch_base_url}")
+        logger.info("   📌 Patch API base URL: %s", patch_base_url)
         
         # ── Pre-validate all rows (single-threaded, fast) ──
         # This separates category-lookup / validation from the network-bound work
@@ -5323,7 +5477,7 @@ async def db_update_categories(
                     "error": "No annotated categories found",
                     "categories": []
                 })
-                print(f"   [pre-check] ❌ Ad {ad_id}: No annotated categories found")
+                logger.error("   [pre-check] ❌ Ad %s: No annotated categories found", ad_id)
                 continue
             
             if unmapped_cats:
@@ -5334,7 +5488,7 @@ async def db_update_categories(
                     "error": error_msg,
                     "categories": [c["name"] for c in categories] + unmapped_cats
                 })
-                print(f"   [pre-check] ⚠️ Ad {ad_id}: {error_msg}")
+                logger.warning("   [pre-check] ⚠️ Ad %s: %s", ad_id, error_msg)
                 continue
             
             cat_names = [c["name"] for c in categories]
@@ -5342,11 +5496,11 @@ async def db_update_categories(
         
         # Step 2: Process prepared ads with MULTITHREADING
         max_workers = 5
-        print("\n" + "=" * 80)
-        print(f"📝 DB CATEGORY UPDATE: PROCESSING {len(prepared_ads)} ADS (MULTITHREADED, {max_workers} workers)")
-        print(f"   ⏭️ Pre-skipped: {len(pre_skip_results)} ads (validation failures)")
-        print(f"   🚀 Using {max_workers} concurrent workers for ~{max_workers}x speedup!")
-        print("=" * 80)
+        logger.info("=" * 80)
+        logger.info("📝 DB CATEGORY UPDATE: PROCESSING %d ADS (MULTITHREADED, %d workers)", len(prepared_ads), max_workers)
+        logger.info("   ⏭️ Pre-skipped: %d ads (validation failures)", len(pre_skip_results))
+        logger.info("   🚀 Using %d concurrent workers for ~%dx speedup!", max_workers, max_workers)
+        logger.info("=" * 80)
         
         # Thread-safe token holder with lock for refresh
         token_lock = threading.Lock()
@@ -5356,13 +5510,13 @@ async def db_update_categories(
             """Get current bearer token, refreshing if expired (thread-safe)."""
             with token_lock:
                 if time.time() >= token_holder["expires_at"]:
-                    print("   🔄 Bearer token expiring soon, refreshing...")
+                    logger.info("   🔄 Bearer token expiring soon, refreshing...")
                     try:
                         new_info = get_db_update_bearer_token(token_url, c_id, c_secret, c_grant)
                         token_holder["access_token"] = new_info["access_token"]
                         token_holder["expires_at"] = new_info["expires_at"]
                     except Exception as e:
-                        print(f"   ⚠️ Token refresh failed: {e} — continuing with old token")
+                        logger.warning("   ⚠️ Token refresh failed: %s — continuing with old token", e)
                 return token_holder["access_token"]
         
         def _process_single_ad(ad_data, idx, total):
@@ -5373,18 +5527,18 @@ async def db_update_categories(
             ad_id, categories, cat_names = ad_data
             current_token = _get_valid_token()
             
-            print(f"\n   [{idx}/{total}] 🔎 Processing Ad {ad_id} ...")
+            logger.info("   [%d/%d] 🔎 Processing Ad %s ...", idx, total, ad_id)
             patch_info = check_ad_patch(patch_base_url, ad_id, current_token)
-            
+
             patch_deleted = False
             old_patch_categories = []
             patch_summary = None
-            
+
             if patch_info.get("has_patch") and patch_info.get("has_categories"):
                 old_patch_categories = patch_info["categories"]
                 old_cat_names = [c.get("name", c.get("id", "?")) for c in old_patch_categories]
-                print(f"      ⚡ Ad {ad_id} has PATCHED categories: {old_cat_names}")
-                print(f"      🗑️ Deleting categories from patch before PUT update...")
+                logger.info("      ⚡ Ad %s has PATCHED categories: %s", ad_id, old_cat_names)
+                logger.info("      🗑️ Deleting categories from patch before PUT update...")
                 
                 # Re-fetch token in case it expired during previous calls
                 current_token = _get_valid_token()
@@ -5392,7 +5546,7 @@ async def db_update_categories(
                 
                 if not delete_result["success"]:
                     error_msg = f"Failed to delete patch categories: {delete_result.get('error', 'Unknown error')}"
-                    print(f"   [{idx}/{total}] ❌ Ad {ad_id}: {error_msg}")
+                    logger.error("   [%d/%d] ❌ Ad %s: %s", idx, total, ad_id, error_msg)
                     return (
                         {"ad_id": ad_id, "success": False, "error": error_msg, "categories": cat_names},
                         {"ad_id": ad_id, "old_patched_categories": ", ".join(old_cat_names),
@@ -5401,21 +5555,21 @@ async def db_update_categories(
                     )
                 
                 patch_deleted = True
-                print(f"      ✅ Patch categories deleted successfully for Ad {ad_id}")
+                logger.info("      ✅ Patch categories deleted successfully for Ad %s", ad_id)
             elif patch_info.get("has_patch") and not patch_info.get("has_categories"):
-                print(f"      ℹ️ Ad {ad_id} has a patch but NO categories in it — proceeding with direct PUT")
+                logger.info("      ℹ️ Ad %s has a patch but NO categories in it — proceeding with direct PUT", ad_id)
             else:
-                print(f"      ℹ️ Ad {ad_id} has no patch — proceeding with direct PUT")
-            
+                logger.info("      ℹ️ Ad %s has no patch — proceeding with direct PUT", ad_id)
+
             # ── PUT UPDATE ──
             current_token = _get_valid_token()
-            print(f"      📤 Sending PUT to update Ad {ad_id} with categories: {cat_names}")
+            logger.info("      📤 Sending PUT to update Ad %s with categories: %s", ad_id, cat_names)
             result = update_ad_categories_in_db(base_url, ad_id, categories, current_token)
-            
+
             if result["success"]:
-                print(f"   [{idx}/{total}] ✅ Ad {ad_id}: Updated -> {cat_names}")
+                logger.info("   [%d/%d] ✅ Ad %s: Updated -> %s", idx, total, ad_id, cat_names)
             else:
-                print(f"   [{idx}/{total}] ❌ Ad {ad_id}: {result.get('error', 'Unknown error')}")
+                logger.error("   [%d/%d] ❌ Ad %s: %s", idx, total, ad_id, result.get('error', 'Unknown error'))
             
             # ── PATCH STEP: Create or update ad-patch with new categories ──
             patch_action = None       # "created" | "updated" | None
@@ -5423,7 +5577,7 @@ async def db_update_categories(
             patch_step_error = ""
             
             if result["success"]:
-                print(f"\n      🩹 [Patch Step] Ad {ad_id}: Ad update succeeded — now creating/updating patch with categories...")
+                logger.info("      🩹 [Patch Step] Ad %s: Ad update succeeded — now creating/updating patch with categories...", ad_id)
                 current_token = _get_valid_token()
                 patch_result = create_or_update_ad_patch_categories(
                     patch_base_url, ad_id, categories,
@@ -5434,11 +5588,11 @@ async def db_update_categories(
                 patch_action = patch_result.get("action")
                 patch_step_error = patch_result.get("error", "")
                 if patch_step_success:
-                    print(f"   [{idx}/{total}] 🩹 Ad {ad_id}: Patch {patch_action} successfully with categories: {cat_names}")
+                    logger.info("   [%d/%d] 🩹 Ad %s: Patch %s successfully with categories: %s", idx, total, ad_id, patch_action, cat_names)
                 else:
-                    print(f"   [{idx}/{total}] ⚠️ Ad {ad_id}: Ad updated OK but patch step failed — {patch_step_error}")
+                    logger.warning("   [%d/%d] ⚠️ Ad %s: Ad updated OK but patch step failed — %s", idx, total, ad_id, patch_step_error)
             else:
-                print(f"      ⏭️ [Patch Step] Ad {ad_id}: Skipping patch step because ad update failed")
+                logger.info("      ⏭️ [Patch Step] Ad %s: Skipping patch step because ad update failed", ad_id)
             
             result_dict = {
                 "ad_id": ad_id,
@@ -5481,7 +5635,7 @@ async def db_update_categories(
                         patch_action=patch_action or "", patch_deleted=patch_deleted,
                     )
                 except Exception as e:
-                    print(f"      [Audit] Warning: failed to log audit for Ad {ad_id}: {e}")
+                    logger.warning("      [Audit] Warning: failed to log audit for Ad %s: %s", ad_id, e)
 
             return (result_dict, patch_summary)
 
@@ -5489,13 +5643,13 @@ async def db_update_categories(
         results = list(pre_skip_results)  # Start with pre-skipped results
         patched_ads_summary = []
         update_start = time.time()
-        
+
         with ThreadPoolExecutor(max_workers=max_workers) as executor:
             future_to_ad = {
                 executor.submit(_process_single_ad, ad_data, i, len(prepared_ads)): ad_data
                 for i, ad_data in enumerate(prepared_ads, 1)
             }
-            
+
             for future in as_completed(future_to_ad):
                 try:
                     result_dict, patch_summary = future.result()
@@ -5505,7 +5659,7 @@ async def db_update_categories(
                 except Exception as e:
                     ad_data = future_to_ad[future]
                     ad_id = ad_data[0]
-                    print(f"   ❌ Worker exception for Ad {ad_id}: {e}")
+                    logger.error("   ❌ Worker exception for Ad %s: %s", ad_id, e)
                     results.append({
                         "ad_id": ad_id,
                         "success": False,
@@ -5532,20 +5686,20 @@ async def db_update_categories(
                 "created_at": datetime.now().isoformat(),
                 "summary": patched_ads_summary,
             }
-            print(f"\n   📋 Patch summary report stored with ID: {patch_report_id} ({len(patched_ads_summary)} patched ads)")
-        
+            logger.info("   📋 Patch summary report stored with ID: %s (%d patched ads)", patch_report_id, len(patched_ads_summary))
+
         # Summary
-        print("\n" + "=" * 80)
-        print(f"🎉 DB CATEGORY UPDATE COMPLETE ({update_elapsed:.1f}s with {max_workers} workers)")
-        print(f"   Total rows in file: {total_rows}")
-        print(f"   Rows to update: {len(update_rows)}")
-        print(f"   ✅ Ad updates successful: {success_count}")
-        print(f"   ❌ Ad updates failed: {failed_count}")
-        print(f"   ⏭️ Skipped: {len(skipped_rows)}")
-        print(f"   🩹 Patched ads (had categories in patch): {len(patched_ads_summary)}")
-        print(f"   🩹 Patch step — created: {patches_created}, updated: {patches_updated}, failed: {patches_failed}")
-        print(f"   ⚡ Speed: {max_workers} concurrent workers")
-        print("=" * 80 + "\n")
+        logger.info("=" * 80)
+        logger.info("🎉 DB CATEGORY UPDATE COMPLETE (%.1fs with %d workers)", update_elapsed, max_workers)
+        logger.info("   Total rows in file: %d", total_rows)
+        logger.info("   Rows to update: %d", len(update_rows))
+        logger.info("   ✅ Ad updates successful: %d", success_count)
+        logger.info("   ❌ Ad updates failed: %d", failed_count)
+        logger.info("   ⏭️ Skipped: %d", len(skipped_rows))
+        logger.info("   🩹 Patched ads (had categories in patch): %d", len(patched_ads_summary))
+        logger.info("   🩹 Patch step — created: %d, updated: %d, failed: %d", patches_created, patches_updated, patches_failed)
+        logger.info("   ⚡ Speed: %d concurrent workers", max_workers)
+        logger.info("=" * 80)
         
         # Flush any remaining audit log records to Loki
         if config.enable_cdc_audit_log:
@@ -5571,7 +5725,7 @@ async def db_update_categories(
     except HTTPException:
         raise
     except Exception as e:
-        print(f"❌ DB Update error: {e}")
+        logger.error("❌ DB Update error: %s", e)
         import traceback
         traceback.print_exc()
         raise HTTPException(status_code=500, detail=f"DB Update failed: {str(e)}")
@@ -5585,7 +5739,7 @@ async def db_update_categories(
 
 
 @app.get("/api/db-update/patch-report/{report_id}/download")
-async def download_patch_report(report_id: str):
+async def download_patch_report(report_id: str, background_tasks: BackgroundTasks):
     """
     Downloads an Excel summary of all ads that had patched categories
     during a DB update run. Shows old patched categories, new updated
@@ -5625,8 +5779,21 @@ async def download_patch_report(report_id: str):
         _register_temp_file(file_path)
 
     df.to_excel(file_path, index=False, engine="openpyxl")
-    print(f"📥 Patch report Excel generated: {file_path} ({len(summary)} rows)")
-    
+    logger.info("📥 Patch report Excel generated: %s (%d rows)", file_path, len(summary))
+
+    # Upload to B2 in background for archival (keep local — we serve it directly below)
+    _upload_and_track(file_path, 'patch-summaries', filename, delete_local=False)
+
+    # Schedule cleanup after response is sent (file already on B2)
+    def _cleanup_patch_file(path: str):
+        try:
+            if os.path.exists(path):
+                os.remove(path)
+                logger.info("   [CLEANUP] Deleted local patch report: %s", os.path.basename(path))
+        except OSError:
+            pass
+    background_tasks.add_task(_cleanup_patch_file, file_path)
+
     return FileResponse(
         path=file_path,
         filename=filename,

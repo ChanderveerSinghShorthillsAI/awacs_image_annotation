@@ -24,11 +24,14 @@ else:
 try:
     from ai_tool.config_loader import config, load_config
     from ai_tool.data_processing import load_rules, normalize_text
+    from ai_tool.awacs_logger import setup_logger
 except ImportError as e:
     print(f"\n❌ CRITICAL IMPORT ERROR: {e}")
     print(f"   Current Path: {current_script_path}")
     input("Press Enter to exit...")
     sys.exit(1)
+
+logger = setup_logger("awacs.audit")
 
 def get_normalized_set(row, cols, norm_map):
     """Helper to extract columns, normalize them, and return a set."""
@@ -44,9 +47,9 @@ def get_normalized_set(row, cols, norm_map):
 def run_audit():
     load_config()
     os.system('cls' if os.name == 'nt' else 'clear')
-    print("============================================")
-    print("          AI ACCURACY AUDIT TOOL            ")
-    print("============================================")
+    logger.info("============================================")
+    logger.info("          AI ACCURACY AUDIT TOOL            ")
+    logger.info("============================================")
 
     # 1. SETUP PATHS
     ai_dir = os.path.abspath(config.output_dir) # Force absolute path
@@ -59,12 +62,12 @@ def run_audit():
         rules = load_rules(config.rules_json)
         norm_map = rules['normalize_map']
     except:
-        print("❌ Could not load Rules.json.")
+        logger.error("Could not load Rules.json.")
         return
 
     # 3. LOAD AI DATA
-    print("\n1️⃣  Loading AI Output Data...")
-    print(f"   📂 Looking in: {ai_dir}")
+    logger.info("1️⃣  Loading AI Output Data...")
+    logger.info("   📂 Looking in: %s", ai_dir)
     
     # Grab ALL Excel files
     all_files = glob.glob(os.path.join(ai_dir, "*.xlsx"))
@@ -73,11 +76,11 @@ def run_audit():
     ai_files = [f for f in all_files if not os.path.basename(f).startswith("~$")]
     
     if not ai_files:
-        print(f"❌ No Excel files found in: {ai_dir}")
+        logger.error("No Excel files found in: %s", ai_dir)
         return
 
     ai_dfs = []
-    print(f"   Scanning {len(ai_files)} files...")
+    logger.info("   Scanning %d files...", len(ai_files))
     
     for f in ai_files:
         try:
@@ -100,26 +103,26 @@ def run_audit():
         except: pass
     
     if not ai_dfs:
-        print("❌ Failed to read valid data from AI files.")
+        logger.error("Failed to read valid data from AI files.")
         return
 
     master_ai = pd.concat(ai_dfs, ignore_index=True)
     # Deduplicate: Keep the last occurrence (newest)
     master_ai = master_ai.drop_duplicates(subset=["Ad ID"], keep='last')
-    print(f"   -> Loaded {len(master_ai)} unique AI annotations.")
+    logger.info("   -> Loaded %d unique AI annotations.", len(master_ai))
 
     # 4. LOAD MANUAL FEEDBACK
-    print("\n2️⃣  Loading Manual Feedback Data...")
+    logger.info("2️⃣  Loading Manual Feedback Data...")
     manual_files = glob.glob(os.path.join(manual_dir, "*.xlsx"))
     # Filter temp files
     manual_files = [f for f in manual_files if not os.path.basename(f).startswith("~$")]
 
     if not manual_files:
-        print(f"❌ No files found in '{manual_dir}'.")
+        logger.error("No files found in '%s'.", manual_dir)
         return
     
     latest_manual = max(manual_files, key=os.path.getmtime)
-    print(f"   -> Using: {os.path.basename(latest_manual)}")
+    logger.info("   -> Using: %s", os.path.basename(latest_manual))
     
     try:
         human_df = pd.read_excel(latest_manual, dtype=str)
@@ -132,12 +135,12 @@ def run_audit():
                 break
             
         if "Ad ID" not in human_df.columns:
-            print("❌ Error: Manual Feedback file must have an 'Ad ID' column.")
+            logger.error("Manual Feedback file must have an 'Ad ID' column.")
             return
 
         human_df["Ad ID"] = human_df["Ad ID"].astype(str).str.replace(r'\.0$', '', regex=True).str.strip()
     except Exception as e:
-        print(f"❌ Error reading manual file: {e}")
+        logger.error("Error reading manual file: %s", e)
         return
 
     # 5. MERGE DATA
@@ -145,11 +148,11 @@ def run_audit():
     master_ai = master_ai.drop_duplicates(subset=["Ad ID"], keep='last')
     human_df = human_df.drop_duplicates(subset=["Ad ID"], keep='last')
 
-    print("\n3️⃣  Comparing Data...")
+    logger.info("3️⃣  Comparing Data...")
     merged = pd.merge(master_ai, human_df, on="Ad ID", how="inner", suffixes=('', '_manual'))
     
     if merged.empty:
-        print("❌ No matching Ad IDs found between AI Output and Manual Feedback.")
+        logger.error("No matching Ad IDs found between AI Output and Manual Feedback.")
         return
 
     # 6. COMPARISON LOGIC
@@ -248,13 +251,13 @@ def run_audit():
             summary_df.to_excel(writer, sheet_name="Summary", index=False, startrow=0, startcol=0)
             hall_of_shame.to_excel(writer, sheet_name="Summary", index=False, startrow=len(summary_df)+3, startcol=0)
             
-        print(f"\n✅ Audit Complete!")
-        print(f"   Global Accuracy: {global_acc_pct:.2f}%")
-        print(f"   Active Accuracy: {active_acc_pct:.2f}%")
-        print(f"   Report Saved: {os.path.basename(report_path)}")
+        logger.info("✅ Audit Complete!")
+        logger.info("   Global Accuracy: %.2f%%", global_acc_pct)
+        logger.info("   Active Accuracy: %.2f%%", active_acc_pct)
+        logger.info("   Report Saved: %s", os.path.basename(report_path))
         
     except Exception as e:
-        print(f"❌ Error saving report: {e}")
+        logger.error("Error saving report: %s", e)
 
 if __name__ == "__main__":
     run_audit()

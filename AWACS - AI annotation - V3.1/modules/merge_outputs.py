@@ -4,6 +4,9 @@ import pandas as pd
 from datetime import datetime
 
 from ai_tool.config_loader import config
+from ai_tool.awacs_logger import setup_logger
+
+logger = setup_logger("awacs.merge_outputs")
 
 def merge_excel_files():
     """
@@ -18,15 +21,15 @@ def merge_excel_files():
     
     all_files = glob.glob(os.path.join(source_dir, "output_annotated_*.xlsx"))
     if not all_files:
-        print(f"❌ No output files found in '{os.path.basename(source_dir)}'.")
+        logger.error("❌ No output files found in '%s'.", os.path.basename(source_dir))
         input("\nPress Enter to return to the main menu.")
         return
 
     all_files.sort(key=os.path.getmtime, reverse=True)
     
-    print("Found the following output files (newest first):")
+    logger.info("Found the following output files (newest first):")
     for i, file_path in enumerate(all_files, 1):
-        print(f"  {i}. {os.path.basename(file_path)}")
+        logger.info("  %d. %s", i, os.path.basename(file_path))
 
     num_to_merge = 0
     while True:
@@ -39,7 +42,7 @@ def merge_excel_files():
             
     files_to_merge = all_files[:num_to_merge]
     
-    print("\nReading files...")
+    logger.info("Reading files...")
         
     df_list = []
     for file in files_to_merge:
@@ -49,10 +52,10 @@ def merge_excel_files():
             df[ad_id_column] = df[ad_id_column].str.replace(r'\.0$', '', regex=True).str.strip()
             df_list.append(df)
         except Exception as e:
-            print(f"⚠️ Warning: Could not read file '{os.path.basename(file)}'. Skipping. Error: {e}")
+            logger.warning("⚠️ Warning: Could not read file '%s'. Skipping. Error: %s", os.path.basename(file), e)
             
     if not df_list:
-        print("❌ No valid files could be read. Aborting.")
+        logger.error("❌ No valid files could be read. Aborting.")
         input("\nPress Enter to return to the main menu.")
         return
 
@@ -71,14 +74,14 @@ def merge_excel_files():
         master_order_df[ad_id_column] = master_order_df[ad_id_column].str.replace(r'\.0$', '', regex=True).str.strip()
         master_order_df.dropna(inplace=True)
     except Exception as e:
-        print(f"❌ CRITICAL ERROR: Could not read the master order from 'Scrapper.xlsx'. Error: {e}")
+        logger.error("❌ CRITICAL ERROR: Could not read the master order from 'Scrapper.xlsx'. Error: %s", e)
         input("\nPress Enter to exit.")
         return
         
     # Step 3: Use a LEFT MERGE to sort the data.
     final_df = pd.merge(master_order_df, correct_data_df, on=ad_id_column, how='left')
 
-    print(f"\nTotal unique ads after merging and sorting: {len(final_df)}")
+    logger.info("Total unique ads after merging and sorting: %d", len(final_df))
     
     run_ts = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
     output_filename = f"Merged_{num_to_merge}_files_{run_ts}.xlsx"
@@ -102,9 +105,9 @@ def merge_excel_files():
         final_df = final_df.reindex(columns=final_columns)
         
         final_df.to_excel(output_path, index=False)
-        print(f"\n✅ Merge complete! File saved to: {output_path}")
+        logger.info("✅ Merge complete! File saved to: %s", output_path)
     except Exception as e:
-        print(f"\n❌ An error occurred while saving the file: {e}")
+        logger.error("❌ An error occurred while saving the file: %s", e)
 
     input("\nPress Enter to return to the main menu.")
 
@@ -114,4 +117,4 @@ if __name__ == "__main__":
         load_config()
         merge_excel_files()
     except ImportError:
-        print("This script is intended to be run from main.py.")
+        print("This script is intended to be run from main.py.")  # Keep as print - logger not available

@@ -19,14 +19,17 @@ if MODULES_PATH not in sys.path:
 
 from ai_tool.config_loader import config, load_config
 from ai_tool import cdc_audit_logger
+from ai_tool.awacs_logger import setup_logger
+
+logger = setup_logger("awacs.cdc.lookup_audit")
 
 
 def main():
     load_config()
 
     if not config.enable_cdc_audit_log:
-        print("Error: CDC audit logging is disabled in config.ini")
-        print("Set EnableCDCAuditLog = True in [Grafana_Loki] section")
+        logger.error("CDC audit logging is disabled in config.ini")
+        logger.info("Set EnableCDCAuditLog = True in [Grafana_Loki] section")
         sys.exit(1)
 
     # Parse args
@@ -38,7 +41,7 @@ def main():
     limit = int(sys.argv[2]) if len(sys.argv) > 2 else 50
 
     if not ad_id:
-        print("No ad ID provided.")
+        logger.error("No ad ID provided.")
         sys.exit(1)
 
     # Initialize Loki connection (query-only, no flush thread needed)
@@ -47,42 +50,42 @@ def main():
         config.loki_user_id, config.loki_api_key,
     )
 
-    print(f"\nQuerying Loki for ad ID: {ad_id} (limit={limit})...\n")
+    logger.info("Querying Loki for ad ID: %s (limit=%d)...", ad_id, limit)
     results = cdc_audit_logger.query_ad_history(ad_id, limit=limit)
 
     if not results:
-        print(f"No audit records found for ad ID: {ad_id}")
-        print("\nPossible reasons:")
-        print("  - The ad was never updated through the CDC pipeline")
-        print("  - Audit records have expired (Loki retention is 14 days on free tier)")
-        print("  - Loki credentials may be incorrect")
+        logger.warning("No audit records found for ad ID: %s", ad_id)
+        logger.info("Possible reasons:")
+        logger.info("  - The ad was never updated through the CDC pipeline")
+        logger.info("  - Audit records have expired (Loki retention is 14 days on free tier)")
+        logger.info("  - Loki credentials may be incorrect")
         sys.exit(1)
 
-    print(f"Found {len(results)} category change(s) for ad ID: {ad_id}\n")
+    logger.info("Found %d category change(s) for ad ID: %s", len(results), ad_id)
 
     for i, rec in enumerate(results, 1):
         old_cats = [c for c in rec.get("old_categories", []) if c]
         new_cats = [c for c in rec.get("new_categories", []) if c]
 
-        print(f"{'=' * 70}")
+        logger.info("=" * 70)
         if len(results) > 1:
-            print(f"  Change {i} of {len(results)}")
-        print(f"{'=' * 70}")
-        print(f"  Timestamp       : {rec.get('timestamp', 'N/A')}")
-        print(f"  Environment     : {rec.get('environment', 'N/A')}")
-        print(f"  Job ID          : {rec.get('job_id', 'N/A')}")
-        print(f"  Old Categories  : {', '.join(old_cats) if old_cats else '(none)'}")
-        print(f"  New Categories  : {', '.join(new_cats) if new_cats else '(none)'}")
+            logger.info("  Change %d of %d", i, len(results))
+        logger.info("=" * 70)
+        logger.info("  Timestamp       : %s", rec.get('timestamp', 'N/A'))
+        logger.info("  Environment     : %s", rec.get('environment', 'N/A'))
+        logger.info("  Job ID          : %s", rec.get('job_id', 'N/A'))
+        logger.info("  Old Categories  : %s", ', '.join(old_cats) if old_cats else '(none)')
+        logger.info("  New Categories  : %s", ', '.join(new_cats) if new_cats else '(none)')
         if rec.get("old_patch_categories"):
-            print(f"  Old Patch Cats   : {rec['old_patch_categories']}")
-        print(f"  Update Status   : {rec.get('update_status', 'N/A')}")
+            logger.info("  Old Patch Cats   : %s", rec['old_patch_categories'])
+        logger.info("  Update Status   : %s", rec.get('update_status', 'N/A'))
         if rec.get("error_message"):
-            print(f"  Error           : {rec['error_message']}")
+            logger.error("  Error           : %s", rec['error_message'])
         if rec.get("patch_action"):
-            print(f"  Patch Action    : {rec['patch_action']}")
+            logger.info("  Patch Action    : %s", rec['patch_action'])
         if rec.get("patch_deleted") == "true":
-            print(f"  Patch Deleted   : Yes")
-        print()
+            logger.info("  Patch Deleted   : Yes")
+        logger.info("")
 
     cdc_audit_logger.close_audit_logger()
 

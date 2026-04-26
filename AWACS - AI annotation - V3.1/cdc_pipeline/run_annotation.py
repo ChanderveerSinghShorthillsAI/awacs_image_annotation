@@ -22,6 +22,16 @@ import time
 
 import requests
 
+# Add project root to path so we can import from modules/ai_tool
+PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+MODULES_PATH = os.path.join(PROJECT_ROOT, "modules")
+if MODULES_PATH not in sys.path:
+    sys.path.insert(0, MODULES_PATH)
+
+from ai_tool.awacs_logger import setup_logger
+
+logger = setup_logger("awacs.cdc.annotation")
+
 from cdc_pipeline.config import (
     BACKEND_URL,
     CDC_ENV,
@@ -54,7 +64,7 @@ def read_unique_ad_ids(filepath: str) -> list[str]:
         with open(filepath, encoding="utf-8") as f:
             content = f.read().strip()
     except FileNotFoundError:
-        print(f"File not found: {filepath}")
+        logger.error("File not found: %s", filepath)
         sys.exit(1)
 
     if not content:
@@ -91,7 +101,7 @@ def read_unique_ad_ids(filepath: str) -> list[str]:
         try:
             data = json.loads(f"[{content}]")
         except json.JSONDecodeError:
-            print(f"Warning: Could not parse {filepath} as JSONL or JSON")
+            logger.warning("Could not parse %s as JSONL or JSON", filepath)
             return ad_ids
 
     # data could be a single dict or a list
@@ -111,8 +121,8 @@ def read_unique_ad_ids(filepath: str) -> list[str]:
 def trigger_pipeline(ad_ids: list[str]) -> str:
     """POST ad IDs + DB API credentials to the backend CDC trigger endpoint."""
     url = f"{BACKEND_URL}/api/cdc-trigger"
-    print(f"Sending {len(ad_ids)} ad IDs to {url}...")
-    print(f"Environment: {CDC_ENV.upper()}")
+    logger.info("Sending %d ad IDs to %s...", len(ad_ids), url)
+    logger.info("Environment: %s", CDC_ENV.upper())
 
     if IS_PROD:
         # ── Prod mode ──
@@ -123,13 +133,13 @@ def trigger_pipeline(ad_ids: list[str]) -> str:
         token_url = PROD_DB_API_TOKEN_URL
         update_base_url = PROD_DB_API_UPDATE_BASE_URL
 
-        print(f"Using PROD DB API: {base_url}")
-        print(f"Using PROD Token URL: {token_url}")
-        print(f"Using PROD Update URL: {update_base_url}")
+        logger.info("Using PROD DB API: %s", base_url)
+        logger.info("Using PROD Token URL: %s", token_url)
+        logger.info("Using PROD Update URL: %s", update_base_url)
 
         if not client_id or not client_secret:
-            print("\nError: Prod DB API credentials not set in cdc_pipeline/.env")
-            print("Set PROD_DB_API_CLIENT_ID and PROD_DB_API_CLIENT_SECRET")
+            logger.error("Prod DB API credentials not set in cdc_pipeline/.env")
+            logger.error("Set PROD_DB_API_CLIENT_ID and PROD_DB_API_CLIENT_SECRET")
             sys.exit(1)
 
         payload = {
@@ -149,11 +159,11 @@ def trigger_pipeline(ad_ids: list[str]) -> str:
         grant_type = DB_API_GRANT_TYPE
         base_url = DB_API_BASE_URL
 
-        print(f"Using DEV DB API: {base_url}")
+        logger.info("Using DEV DB API: %s", base_url)
 
         if not client_id or not client_secret:
-            print("\nError: Dev DB API credentials not set in cdc_pipeline/.env")
-            print("Set CDC_DB_API_CLIENT_ID and CDC_DB_API_CLIENT_SECRET")
+            logger.error("Dev DB API credentials not set in cdc_pipeline/.env")
+            logger.error("Set CDC_DB_API_CLIENT_ID and CDC_DB_API_CLIENT_SECRET")
             sys.exit(1)
 
         payload = {
@@ -169,24 +179,24 @@ def trigger_pipeline(ad_ids: list[str]) -> str:
         resp = requests.post(url, json=payload, timeout=30)
         resp.raise_for_status()
     except requests.ConnectionError:
-        print(f"\nError: Cannot connect to backend at {BACKEND_URL}")
-        print("Make sure the backend is running: cd backend && python main.py")
+        logger.error("Cannot connect to backend at %s", BACKEND_URL)
+        logger.error("Make sure the backend is running: cd backend && python main.py")
         sys.exit(1)
     except requests.HTTPError as e:
-        print(f"\nError from backend: {e.response.status_code} - {e.response.text}")
+        logger.error("Error from backend: %d - %s", e.response.status_code, e.response.text)
         sys.exit(1)
 
     result = resp.json()
     job_id = result["job_id"]
-    print(f"Pipeline triggered: job_id={job_id}, {result['total_ads']} ads")
-    print(f"Output will be saved to: cdc_ai_output_excels/")
+    logger.info("Pipeline triggered: job_id=%s, %d ads", job_id, result["total_ads"])
+    logger.info("Output will be saved to: cdc_ai_output_excels/")
     return job_id
 
 
 def poll_status(job_id: str):
     """Poll the backend for job status until completion or failure."""
     url = f"{BACKEND_URL}/api/cdc-trigger/{job_id}/status"
-    print(f"\nPolling job status (Ctrl+C to stop polling — job continues in backend)...\n")
+    logger.info("Polling job status (Ctrl+C to stop polling — job continues in backend)...")
 
     while True:
         try:
@@ -196,30 +206,31 @@ def poll_status(job_id: str):
             status = data.get("status", "unknown")
 
             if status == "completed":
-                print(f"\nJob {job_id} COMPLETED!")
+                logger.info("Job %s COMPLETED!", job_id)
                 if data.get("output_file"):
-                    print(f"Output: cdc_ai_output_excels/{data['output_file']}")
+                    logger.info("Output: cdc_ai_output_excels/%s", data["output_file"])
                 # Show DB update result if present
                 db_update = data.get("db_update_result")
                 if db_update:
-                    print(f"\nDB Update: {db_update.get('success_count', 0)} updated, "
-                          f"{db_update.get('failed_count', 0)} failed, "
-                          f"{db_update.get('skipped_count', 0)} skipped")
+                    logger.info(
+                        "DB Update: %d updated, %d failed, %d skipped",
+                        db_update.get("success_count", 0),
+                        db_update.get("failed_count", 0),
+                        db_update.get("skipped_count", 0),
+                    )
                     if db_update.get("report_filename"):
-                        print(f"DB Update Report: cdc_ai_output_excels/{db_update['report_filename']}")
+                        logger.info("DB Update Report: cdc_ai_output_excels/%s", db_update["report_filename"])
                     if db_update.get("patch_report_filename"):
-                        print(f"Patch Summary: cdc_ai_output_excels/{db_update['patch_report_filename']}")
+                        logger.info("Patch Summary: cdc_ai_output_excels/%s", db_update["patch_report_filename"])
                 return
             elif status == "failed":
-                print(f"\nJob {job_id} FAILED: {data.get('error', 'unknown error')}")
+                logger.error("Job %s FAILED: %s", job_id, data.get("error", "unknown error"))
                 sys.exit(1)
             else:
-                sys.stdout.write(f"\r  Status: {status} | Ads: {data.get('total_ads', '?')}  ")
-                sys.stdout.flush()
+                logger.info("Status: %s | Ads: %s", status, data.get("total_ads", "?"))
 
         except requests.RequestException:
-            sys.stdout.write(f"\r  Status: polling error (retrying)...  ")
-            sys.stdout.flush()
+            logger.warning("Polling error (retrying)...")
 
         time.sleep(5)
 
@@ -229,26 +240,26 @@ def clear_processed_file(filepath: str):
     try:
         with open(filepath, "w", encoding="utf-8") as f:
             pass  # empty
-        print(f"Cleared {os.path.basename(filepath)} for next run")
+        logger.info("Cleared %s for next run", os.path.basename(filepath))
     except Exception as e:
-        print(f"Warning: Could not clear {filepath}: {e}")
+        logger.warning("Could not clear %s: %s", filepath, e)
 
 
 def main():
-    print("=" * 60)
-    print(f"CDC Pipeline -> AI Annotation [{CDC_ENV.upper()}]")
-    print("=" * 60)
+    logger.info("=" * 60)
+    logger.info("CDC Pipeline -> AI Annotation [%s]", CDC_ENV.upper())
+    logger.info("=" * 60)
 
     # Step 1: Read unique ad IDs
     ad_ids = read_unique_ad_ids(OUTPUT_FILE)
-    print(f"Found {len(ad_ids)} unique ad IDs from {OUTPUT_FILE}")
+    logger.info("Found %d unique ad IDs from %s", len(ad_ids), OUTPUT_FILE)
 
     if not ad_ids:
-        print("No ads to process. Run the CDC consumer first.")
+        logger.info("No ads to process. Run the CDC consumer first.")
         return
 
-    print(f"Ad IDs: {ad_ids[:10]}{'...' if len(ad_ids) > 10 else ''}")
-    print("-" * 60)
+    logger.info("Ad IDs: %s%s", ad_ids[:10], "..." if len(ad_ids) > 10 else "")
+    logger.info("-" * 60)
 
     # Step 2: Trigger pipeline
     job_id = trigger_pipeline(ad_ids)
@@ -260,9 +271,9 @@ def main():
         # so the next run doesn't reprocess these ads
         clear_processed_file(OUTPUT_FILE)
     except KeyboardInterrupt:
-        print(f"\n\nStopped polling. Job {job_id} is still running in the backend.")
-        print(f"Check status: curl {BACKEND_URL}/api/cdc-trigger/{job_id}/status")
-        print(f"Note: {OUTPUT_FILE} was NOT cleared (job may still be running).")
+        logger.info("Stopped polling. Job %s is still running in the backend.", job_id)
+        logger.info("Check status: curl %s/api/cdc-trigger/%s/status", BACKEND_URL, job_id)
+        logger.info("Note: %s was NOT cleared (job may still be running).", OUTPUT_FILE)
 
 
 if __name__ == "__main__":

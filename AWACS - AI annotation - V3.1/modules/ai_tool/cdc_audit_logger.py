@@ -17,6 +17,10 @@ from datetime import datetime, timezone
 
 import requests
 
+from .awacs_logger import setup_logger
+
+logger = setup_logger("awacs.cdc_audit_logger")
+
 
 # ── Singleton state ──
 _push_url = None
@@ -56,17 +60,17 @@ def init_audit_logger(push_url: str, query_url: str, user_id: str, api_key: str)
             timeout=10,
         )
         if resp.status_code in (200, 204):
-            print(f"   [Audit] Grafana Loki connected successfully")
+            logger.info("   [Audit] Grafana Loki connected successfully")
         else:
-            print(f"   [Audit] Loki returned status {resp.status_code} — logging may not work")
+            logger.warning("   [Audit] Loki returned status %s — logging may not work", resp.status_code)
     except Exception as e:
-        print(f"   [Audit] Warning: Could not reach Loki ({e}) — will retry on first push")
+        logger.warning("   [Audit] Warning: Could not reach Loki (%s) — will retry on first push", e)
 
     # Start background flush thread
     _shutdown_event.clear()
     _flush_thread = threading.Thread(target=_flush_loop, daemon=True, name="loki-audit-flush")
     _flush_thread.start()
-    print(f"   [Audit] Background flush thread started (batch={BATCH_SIZE}, interval={FLUSH_INTERVAL_SEC}s)")
+    logger.info("   [Audit] Background flush thread started (batch=%d, interval=%ds)", BATCH_SIZE, FLUSH_INTERVAL_SEC)
 
 
 def close_audit_logger():
@@ -83,7 +87,7 @@ def close_audit_logger():
     _push_url = None
     _query_url = None
     _flush_thread = None
-    print("   [Audit] Loki audit logger closed")
+    logger.info("   [Audit] Loki audit logger closed")
 
 
 # ── Public API: Log a category change ──
@@ -217,7 +221,7 @@ def query_ad_history(ad_id: str, limit: int = 50) -> list:
         return results
 
     except Exception as e:
-        print(f"   [Audit] Error querying Loki for ad {ad_id}: {e}")
+        logger.error("   [Audit] Error querying Loki for ad %s: %s", ad_id, e)
         return []
 
 
@@ -302,6 +306,6 @@ def _flush_batch(records: list):
             timeout=10,
         )
         if resp.status_code not in (200, 204):
-            print(f"   [Audit] Loki push returned {resp.status_code}: {resp.text[:200]}")
+            logger.warning("   [Audit] Loki push returned %s: %s", resp.status_code, resp.text[:200])
     except Exception as e:
-        print(f"   [Audit] Warning: Failed to push {len(records)} audit records to Loki: {e}")
+        logger.warning("   [Audit] Warning: Failed to push %d audit records to Loki: %s", len(records), e)

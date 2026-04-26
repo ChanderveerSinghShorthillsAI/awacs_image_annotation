@@ -11,7 +11,10 @@ from .config_loader import config
 # ADDED darth_vision TO IMPORTS
 from . import classification, web_utils, data_processing, utils, darth_vision
 from .cache_manager import get_cache_manager
-from ai_tool.rate_limiter import Yoda 
+from ai_tool.rate_limiter import Yoda
+from .awacs_logger import setup_logger
+
+logger = setup_logger("awacs.main_processor")
 
 
 def merge_all_session_reports(run_ts):
@@ -118,21 +121,21 @@ def _process_single_ad(ad_row: dict, category_data: dict, rules: dict,
     image_urls = [url.strip() for url in raw_urls.split(",") if url.strip()]  # Strip whitespace and filter empty URLs
     
     # Initial image fetch attempt
-    print(f"[W-{worker_id}] 🔄 Ad {ad_id}: Initial image fetch attempt ({len(image_urls)} URLs)...")
+    logger.info("[W-%d] 🔄 Ad %s: Initial image fetch attempt (%d URLs)...", worker_id, ad_id, len(image_urls))
     img_bytes_list = web_utils.get_images_with_caching(image_urls, retry_count=0, timeout=5)
     
     # Check if we have any valid images
     has_valid_images = bool(img_bytes_list and any(img_bytes_list))
     
     if has_valid_images:
-        print(f"[W-{worker_id}] ✅ Ad {ad_id}: Initial fetch successful - {len(img_bytes_list)} image(s) loaded")
+        logger.info("[W-%d] ✅ Ad %s: Initial fetch successful - %d image(s) loaded", worker_id, ad_id, len(img_bytes_list))
     else:
-        print(f"[W-{worker_id}] ⚠️ Ad {ad_id}: Initial fetch failed - {len(img_bytes_list)} image(s) loaded from {len(image_urls)} URLs")
+        logger.warning("[W-%d] ⚠️ Ad %s: Initial fetch failed - %d image(s) loaded from %d URLs", worker_id, ad_id, len(img_bytes_list), len(image_urls))
     
     # RETRY MECHANISM: If images failed to load but URLs exist, retry with enhanced settings
     if not has_valid_images and image_urls:
-        print(f"[W-{worker_id}] 🔁 RETRY MECHANISM TRIGGERED for Ad {ad_id}: {len(image_urls)} URLs exist but images failed to load")
-        print(f"[W-{worker_id}] 🔁 Retrying with enhanced settings (timeout: 8s, retry_count: 1)...")
+        logger.info("[W-%d] 🔁 RETRY MECHANISM TRIGGERED for Ad %s: %d URLs exist but images failed to load", worker_id, ad_id, len(image_urls))
+        logger.info("[W-%d] 🔁 Retrying with enhanced settings (timeout: 8s, retry_count: 1)...", worker_id)
         utils.log_msg(f" [W-{worker_id}] ⚠️ Initial image fetch failed for Ad {ad_id} ({len(image_urls)} URLs). Retrying with enhanced settings...", worker_id)
         time.sleep(0.5)  # Brief delay before retry
         # Retry with longer timeout and retry logic
@@ -140,10 +143,10 @@ def _process_single_ad(ad_row: dict, category_data: dict, rules: dict,
         has_valid_images = bool(img_bytes_list and any(img_bytes_list))
         
         if has_valid_images:
-            print(f"[W-{worker_id}] ✅ RETRY SUCCESSFUL for Ad {ad_id}: {len(img_bytes_list)} image(s) loaded after retry")
+            logger.info("[W-%d] ✅ RETRY SUCCESSFUL for Ad %s: %d image(s) loaded after retry", worker_id, ad_id, len(img_bytes_list))
             utils.log_msg(f" [W-{worker_id}] ✅ Retry successful - {len(img_bytes_list)} image(s) loaded for Ad {ad_id}", worker_id)
         else:
-            print(f"[W-{worker_id}] ❌ RETRY FAILED for Ad {ad_id}: No images loaded after 2 attempts (initial + retry)")
+            logger.error("[W-%d] ❌ RETRY FAILED for Ad %s: No images loaded after 2 attempts (initial + retry)", worker_id, ad_id)
             utils.log_msg(f" [W-{worker_id}] ❌ Retry failed - no images loaded for Ad {ad_id} after 2 attempts", worker_id)
     
     # Early return if no images available - set appropriate status
@@ -233,7 +236,7 @@ def _process_single_ad(ad_row: dict, category_data: dict, rules: dict,
 
     annotated = [(data_processing.normalize_text(c, rules['normalize_map'], worker_id), s) for c, s in result]
     
-    print(f"[W-{worker_id}] Ad {ad_id}: Initial AI classification result: {[(c, round(s, 1)) for c, s in annotated[:3]]}")
+    logger.info("[W-%d] Ad %s: Initial AI classification result: %s", worker_id, ad_id, [(c, round(s, 1)) for c, s in annotated[:3]])
     
     # Log Super-Group usage and cross-group results
     new_categories = ["Tractor", "Auger", "Lugger", "Conveyor Truck", "Emergency Vehicle", "Specialty Tank Truck"]
@@ -262,7 +265,7 @@ def _process_single_ad(ad_row: dict, category_data: dict, rules: dict,
     # skip all further processing and set status appropriately
     if annotated and annotated[0][0] == "Image Not Clear":
         utils.log_msg(f" [W-{worker_id}] 🚫 Placeholder/Coming Soon detected - skipping classification", worker_id)
-        print(f"[W-{worker_id}] Ad {ad_id}: Image Not Clear detected - skipping further processing")
+        logger.info("[W-%d] Ad %s: Image Not Clear detected - skipping further processing", worker_id, ad_id)
         filtered = annotated  # Keep as-is, no filtering needed
         status = data_processing.determine_status(breadcrumb, filtered, annotated, has_images=has_valid_images)
         
@@ -336,7 +339,7 @@ def _process_single_ad(ad_row: dict, category_data: dict, rules: dict,
     
     # Simple dually demotion: If Dually is #1, swap with #2 (safety check only)
     if len(annotated) >= 2 and annotated[0][0].lower() == "dually":
-        print(f"[W-{worker_id}] Ad {ad_id}: Dually detected as #1, swapping with #2 (safety check)")
+        logger.info("[W-%d] Ad %s: Dually detected as #1, swapping with #2 (safety check)", worker_id, ad_id)
         annotated[0], annotated[1] = annotated[1], annotated[0]
 
     # REFINEMENT (Overlap Rules) - Standard JSON overlap rules only (dually safeguard removed)
@@ -344,7 +347,7 @@ def _process_single_ad(ad_row: dict, category_data: dict, rules: dict,
         overlap_result = data_processing.find_overlap_rule(annotated, rules.get('truck_overlaps', []), worker_id)
         if overlap_result:
             rule_dict, pair = overlap_result
-            print(f"[W-{worker_id}] Ad {ad_id}: Overlap rule triggered for {pair}")
+            logger.info("[W-%d] Ad %s: Overlap rule triggered for %s", worker_id, ad_id, pair)
             
             refined, t_in, t_out, t_cached = classification.classify_with_refinement(
                 pair, rule_dict, img_bytes_list[0],
@@ -356,7 +359,7 @@ def _process_single_ad(ad_row: dict, category_data: dict, rules: dict,
             
             if refined:
                 refined_norm = data_processing.normalize_text(refined, rules['normalize_map'], worker_id)
-                print(f"[W-{worker_id}] Ad {ad_id}: Refinement result: {refined_norm}")
+                logger.info("[W-%d] Ad %s: Refinement result: %s", worker_id, ad_id, refined_norm)
                 annotated = data_processing.apply_refinement_fix(annotated, refined_norm, pair, worker_id)
 
     filtered = data_processing.filter_by_exclusion_rules(annotated, rules['exclusion_rules'], worker_id)
@@ -364,16 +367,16 @@ def _process_single_ad(ad_row: dict, category_data: dict, rules: dict,
     # Check if dually was detected in the main classification
     has_dually = any("dually" in c[0].lower() for c in filtered)
     if has_dually:
-        print(f"[W-{worker_id}] Ad {ad_id}: ✅ Dually detected in main classification: {[c[0] for c in filtered if 'dually' in c[0].lower()]}")
+        logger.info("[W-%d] Ad %s: ✅ Dually detected in main classification: %s", worker_id, ad_id, [c[0] for c in filtered if 'dually' in c[0].lower()])
     else:
-        print(f"[W-{worker_id}] Ad {ad_id}: ❌ No Dually detected in main classification")
+        logger.info("[W-%d] Ad %s: ❌ No Dually detected in main classification", worker_id, ad_id)
 
     # AUTO-DUALLY RULE: Landscape + Cabover (COE) = always Dually
     # Landscape trucks with nets/cages on cabover chassis are always dually
     has_landscape = any("landscape" in c[0].lower() for c in filtered)
     has_cabover_coe = any("cabover" in c[0].lower() and "coe" in c[0].lower() for c in filtered)
     if has_landscape and has_cabover_coe and not has_dually:
-        print(f"[W-{worker_id}] Ad {ad_id}: 🔧 Auto-Dually: Landscape + Cabover COE detected → adding Dually")
+        logger.info("[W-%d] Ad %s: 🔧 Auto-Dually: Landscape + Cabover COE detected → adding Dually", worker_id, ad_id)
         filtered.append(("Dually", 95.0))
         has_dually = True
     
@@ -439,8 +442,8 @@ def _process_single_ad(ad_row: dict, category_data: dict, rules: dict,
     # Determine status - pass has_images flag to properly handle no-image cases
     status = data_processing.determine_status(breadcrumb, filtered, annotated, has_images=has_valid_images)
     
-    print(f"[W-{worker_id}] Ad {ad_id}: Final filtered results: {[(c, round(s, 1)) for c, s in filtered[:3]]}")
-    print(f"[W-{worker_id}] Ad {ad_id}: Status: {status}")
+    logger.info("[W-%d] Ad %s: Final filtered results: %s", worker_id, ad_id, [(c, round(s, 1)) for c, s in filtered[:3]])
+    logger.info("[W-%d] Ad %s: Status: %s", worker_id, ad_id, status)
 
     # --- CALCULATE COST --- (separate pricing for each model)
     promo_cost = utils.calculate_cost_cents(promo_in_tokens, promo_out_tokens, config.gemini_model_promo_check, promo_cached_tokens)
@@ -539,8 +542,8 @@ def run_worker_process(worker_id, run_ts, job_queue: Queue, results_queue: Queue
             cache_mgr = get_cache_manager()
             cache_mgr.print_total_savings()
         except Exception as e:
-            print(f"⚠️  Could not print cache savings report: {e}")
-        
+            logger.warning("⚠️  Could not print cache savings report: %s", e)
+
         utils.generate_session_reports(
             classification.get_key_usage_stats(),
             classification.get_token_usage_stats(),
@@ -559,7 +562,7 @@ def run_single_process(input_file, fast_mode=False):
         utils.initialize_thought_log(run_ts, 0)
     classification.initialize_all_trackers()
     
-    print(f"Starting Single Process Mode on: {os.path.basename(input_file)}")
+    logger.info("Starting Single Process Mode on: %s", os.path.basename(input_file))
     
     df = pd.read_excel(input_file, dtype={"Ad ID": str})
     df["Ad ID"] = df["Ad ID"].astype(str).str.replace(r'\.0$', '', regex=True).str.strip()
@@ -579,7 +582,7 @@ def run_single_process(input_file, fast_mode=False):
     
     for i, row in df.iterrows():
         ad_id = str(row.get("Ad ID", "")).strip()
-        print(f"[{i+1}/{len(df)}] Processing {ad_id}...")
+        logger.info("[%d/%d] Processing %s...", i+1, len(df), ad_id)
         
         try:
             _process_single_ad(
@@ -596,10 +599,10 @@ def run_single_process(input_file, fast_mode=False):
             while not results_queue.empty():
                 res = results_queue.get()
                 results.append(res)
-                print(f"   -> Result: {res.get('Annotated_Top1')} ({res.get('Status')}) | Cost: {res.get('Cost_Cents')}¢")
+                logger.info("   -> Result: %s (%s) | Cost: %s¢", res.get('Annotated_Top1'), res.get('Status'), res.get('Cost_Cents'))
         
         except Exception as e:
-            print(f"Error on {ad_id}: {e}")
+            logger.error("Error on %s: %s", ad_id, e)
             
     save_checkpoint(run_ts, results, df)
     
@@ -608,6 +611,6 @@ def run_single_process(input_file, fast_mode=False):
         cache_mgr = get_cache_manager()
         cache_mgr.print_total_savings()
     except Exception as e:
-        print(f"⚠️  Could not print cache savings report: {e}")
-    
-    print("\nSingle Process Run Completed.")
+        logger.warning("⚠️  Could not print cache savings report: %s", e)
+
+    logger.info("Single Process Run Completed.")

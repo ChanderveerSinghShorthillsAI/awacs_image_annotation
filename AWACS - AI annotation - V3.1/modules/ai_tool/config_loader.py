@@ -116,6 +116,15 @@ def load_config():
         config.loki_user_id = config_parser.get('Grafana_Loki', 'LokiUserId', fallback='')
         config.loki_api_key = config_parser.get('Grafana_Loki', 'LokiApiKey', fallback='')
 
+        # Backblaze B2 Cloud Storage
+        config.b2_enabled = config_parser.getboolean('Backblaze_B2', 'Enabled', fallback=False)
+        config.b2_key_id = config_parser.get('Backblaze_B2', 'KeyId', fallback='')
+        config.b2_application_key = config_parser.get('Backblaze_B2', 'ApplicationKey', fallback='')
+        config.b2_bucket_name = config_parser.get('Backblaze_B2', 'BucketName', fallback='awacs-outputs')
+        config.b2_region = config_parser.get('Backblaze_B2', 'Region', fallback='us-west-004')
+        config.b2_endpoint_url = config_parser.get('Backblaze_B2', 'EndpointUrl', fallback='')
+        config.b2_presigned_url_expiry = config_parser.getint('Backblaze_B2', 'PresignedUrlExpiry', fallback=3600)
+
         # API Keys - Now stores a list of dictionaries for rich data
         config.gemini_api_keys_info = []
         for i, (_, key) in enumerate(config_parser.items('API_Keys')):

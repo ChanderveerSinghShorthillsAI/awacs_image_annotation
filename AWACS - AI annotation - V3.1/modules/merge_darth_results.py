@@ -12,12 +12,16 @@ if parent_dir not in sys.path: sys.path.append(parent_dir)
 
 try:
     from ai_tool.config_loader import config, load_config
+    from ai_tool.awacs_logger import setup_logger
+    logger = setup_logger("awacs.merge_darth_results")
 except ImportError:
     # Fallback if config can't be loaded, define minimal paths
     class Config: pass
     config = Config()
     config.output_dir = os.path.join(parent_dir, "AI output")
     config.project_root = parent_dir
+    import logging
+    logger = logging.getLogger("awacs.merge_darth_results")
 
 def select_file(directory, pattern, prompt_name):
     files = glob.glob(os.path.join(directory, pattern))
@@ -25,15 +29,15 @@ def select_file(directory, pattern, prompt_name):
     files = [f for f in files if not os.path.basename(f).startswith("~$")]
     
     if not files:
-        print(f"❌ No {prompt_name} files found in: {directory}")
+        logger.error("❌ No %s files found in: %s", prompt_name, directory)
         return None
     
     # Sort by newest
     files.sort(key=os.path.getmtime, reverse=True)
     
-    print(f"\nSelect {prompt_name}:")
+    logger.info("Select %s:", prompt_name)
     for i, f in enumerate(files[:5]): # Show top 5
-        print(f"  {i+1}. {os.path.basename(f)}")
+        logger.info("  %d. %s", i+1, os.path.basename(f))
         
     choice = input(f"Enter choice (1-{len(files[:5])}) or 'q' to quit: ")
     if choice.lower() == 'q': return None
@@ -44,7 +48,7 @@ def select_file(directory, pattern, prompt_name):
             return files[idx]
     except:
         pass
-    print("Invalid choice.")
+    logger.warning("Invalid choice.")
     return None
 
 def apply_darth_merge():
@@ -53,9 +57,9 @@ def apply_darth_merge():
     except: pass
     
     os.system('cls' if os.name == 'nt' else 'clear')
-    print("============================================")
-    print("      MERGE DARTH RESULTS INTO OUTPUT       ")
-    print("============================================")
+    logger.info("============================================")
+    logger.info("      MERGE DARTH RESULTS INTO OUTPUT       ")
+    logger.info("============================================")
 
     # 1. Select Main AI Output File
     ai_file = select_file(config.output_dir, "output_annotated_*.xlsx", "Main AI Output")
@@ -72,7 +76,7 @@ def apply_darth_merge():
          
     if not darth_file: return
 
-    print(f"\n🔄 Merging '{os.path.basename(darth_file)}' into '{os.path.basename(ai_file)}'...")
+    logger.info("🔄 Merging '%s' into '%s'...", os.path.basename(darth_file), os.path.basename(ai_file))
 
     try:
         # Load Dataframes
@@ -118,12 +122,12 @@ def apply_darth_merge():
         
         main_df.to_excel(save_path, index=False)
         
-        print("\n✅ Success!")
-        print(f"   Updated {count} ads with 'Dually'.")
-        print(f"   Saved new file: {new_filename}")
-        
+        logger.info("✅ Success!")
+        logger.info("   Updated %d ads with 'Dually'.", count)
+        logger.info("   Saved new file: %s", new_filename)
+
     except Exception as e:
-        print(f"\n❌ Error during merge: {e}")
+        logger.error("❌ Error during merge: %s", e)
         import traceback
         traceback.print_exc()
 

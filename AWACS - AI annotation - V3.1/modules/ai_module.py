@@ -2,10 +2,13 @@ import glob, os
 import queue
 import time
 from ai_tool.config_loader import config, load_config
+from ai_tool.awacs_logger import setup_logger
+
+logger = setup_logger("awacs.ai_module")
 
 def run_ai(fast_mode=False):
     files = glob.glob(os.path.join(config.scrapper_output_dir, "Scrapper_*.xlsx"))
-    if not files: print("No Scrapper file!"); return
+    if not files: logger.error("No Scrapper file!"); return
     latest = max(files, key=os.path.getmtime)
     from ai_tool.main_processor import run_single_process
     run_single_process(latest, fast_mode=fast_mode)
@@ -50,13 +53,13 @@ def _verify_single_dually(verification_job: dict, key_queue, status_queue,
     img_bytes_list = verification_job['images']
     row_data = verification_job['row_data']
     
-    print(f"   [W-{worker_id}] 🔍 Starting verification for Ad {ad_id} with {len(img_bytes_list)} image(s)...")
+    logger.info("   [W-%d] 🔍 Starting verification for Ad %s with %d image(s)...", worker_id, ad_id, len(img_bytes_list))
     
     listing_verify_start = time.time()
     
     try:
         # Call LLM verification with ALL images (Yoda handles rate limiting)
-        print(f"   [W-{worker_id}] 📤 Sending Ad {ad_id} to LLM for verification...")
+        logger.info("   [W-%d] 📤 Sending Ad %s to LLM for verification...", worker_id, ad_id)
         is_dually, confidence, in_tok, out_tok, cached_tok = classification.verify_dually_with_llm(
             img_bytes_list, 
             yoda_instance, 
@@ -86,16 +89,16 @@ def _verify_single_dually(verification_job: dict, key_queue, status_queue,
         }
         
         if is_dually:
-            print(f"   [W-{worker_id}] ✅ Ad {ad_id}: CONFIRMED as Dually | Cost: {cost:.4f}¢ | Time: {listing_time:.2f}s")
+            logger.info("   [W-%d] ✅ Ad %s: CONFIRMED as Dually | Cost: %.4f¢ | Time: %.2fs", worker_id, ad_id, cost, listing_time)
         else:
-            print(f"   [W-{worker_id}] ❌ Ad {ad_id}: FALSE POSITIVE - NOT Dually | Cost: {cost:.4f}¢ | Time: {listing_time:.2f}s")
+            logger.info("   [W-%d] ❌ Ad %s: FALSE POSITIVE - NOT Dually | Cost: %.4f¢ | Time: %.2fs", worker_id, ad_id, cost, listing_time)
         
         results_queue.put(result)
         return result
         
     except Exception as e:
         listing_time = time.time() - listing_verify_start
-        print(f"   [W-{worker_id}] ⚠️ Ad {ad_id}: Error during verification - {str(e)[:50]} | Time: {listing_time:.2f}s")
+        logger.warning("   [W-%d] ⚠️ Ad %s: Error during verification - %s | Time: %.2fs", worker_id, ad_id, str(e)[:50], listing_time)
         
         # Put error result in queue
         error_result = {
@@ -128,7 +131,7 @@ def start_dually_verification_worker(worker_id: int, job_queue, results_queue,
         # Initialize classification trackers for this worker
         classification.initialize_all_trackers()
         
-        print(f"   [W-{worker_id}] 🚀 Dually Verification Worker {worker_id} STARTED")
+        logger.info("   [W-%d] 🚀 Dually Verification Worker %d STARTED", worker_id, worker_id)
         
         processed = 0
         
@@ -141,7 +144,7 @@ def start_dually_verification_worker(worker_id: int, job_queue, results_queue,
                 verification_job = job_queue.get(timeout=2)
                 ad_id = verification_job['ad_id']
                 
-                print(f"   [W-{worker_id}] 📋 Picked up verification job for Ad {ad_id}")
+                logger.info("   [W-%d] 📋 Picked up verification job for Ad %s", worker_id, ad_id)
                 
                 status_queue.put({
                     "worker_id": worker_id,
@@ -171,11 +174,11 @@ def start_dually_verification_worker(worker_id: int, job_queue, results_queue,
             except queue.Empty:
                 # No more jobs in queue
                 status_queue.put({"worker_id": worker_id, "state": "FINISHED", "progress": processed})
-                print(f"   [W-{worker_id}] ✅ Worker {worker_id} FINISHED - Processed {processed} verifications")
+                logger.info("   [W-%d] ✅ Worker %d FINISHED - Processed %d verifications", worker_id, worker_id, processed)
                 break
                 
             except Exception as e:
-                print(f"   [W-{worker_id}] ⚠️ Worker {worker_id} encountered error: {e}")
+                logger.warning("   [W-%d] ⚠️ Worker %d encountered error: %s", worker_id, worker_id, e)
                 if verification_job and verification_job.get('ad_id'):
                     # Put error result in queue
                     error_result = {
@@ -191,5 +194,5 @@ def start_dually_verification_worker(worker_id: int, job_queue, results_queue,
                 status_queue.put({"worker_id": worker_id, "state": "ERROR", "progress": processed})
     
     except Exception as e:
-        print(f"   [W-{worker_id}] 💀 Worker {worker_id} CRASHED: {e}")
+        logger.error("   [W-%d] 💀 Worker %d CRASHED: %s", worker_id, worker_id, e)
         status_queue.put({"worker_id": worker_id, "state": "CRASHED", "progress": processed})

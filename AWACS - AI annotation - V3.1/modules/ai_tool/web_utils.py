@@ -14,6 +14,9 @@ from webdriver_manager.chrome import ChromeDriverManager
 # Import the centrally managed config object
 from .config_loader import config
 from .utils import log_msg
+from .awacs_logger import setup_logger
+
+logger = setup_logger("awacs.web_utils")
 
 def setup_driver(headless=False, worker_id=None):
     """
@@ -162,32 +165,32 @@ def get_images_with_caching(image_urls, retry_count=0, timeout=5):
                     # Increase timeout on retry attempts
                     current_timeout = attempt_timeout + (attempt * 2)  # Add 2s per retry
                     if attempt > 0:
-                        print(f"   🔄 Retry attempt {attempt + 1}/{max_attempts} for image: {url_short} (timeout: {current_timeout}s)")
+                        logger.info("   🔄 Retry attempt %d/%d for image: %s (timeout: %ds)", attempt + 1, max_attempts, url_short, current_timeout)
                     r = session.get(url, timeout=current_timeout, stream=True)
                     if r.status_code == 200:
                         content = r.content
                         # Validate that we got actual image data (not empty or too small)
                         if content and len(content) > 100:  # At least 100 bytes
                             if attempt > 0:
-                                print(f"   ✅ Image retry successful: {url_short} ({len(content)} bytes)")
+                                logger.info("   ✅ Image retry successful: %s (%d bytes)", url_short, len(content))
                             return content
                         else:
                             if attempt < max_attempts - 1:
-                                print(f"   ⚠️ Image too small ({len(content)} bytes), retrying: {url_short}")
+                                logger.warning("   ⚠️ Image too small (%d bytes), retrying: %s", len(content), url_short)
             except requests.exceptions.Timeout:
                 if attempt < max_attempts - 1:
-                    print(f"   ⏱️ Timeout on attempt {attempt + 1}/{max_attempts}, retrying: {url_short}")
+                    logger.warning("   ⏱️ Timeout on attempt %d/%d, retrying: %s", attempt + 1, max_attempts, url_short)
                     time.sleep(0.5 * (attempt + 1))  # Exponential backoff
                     continue
                 else:
-                    print(f"   ❌ Timeout after {max_attempts} attempts: {url_short}")
+                    logger.error("   ❌ Timeout after %d attempts: %s", max_attempts, url_short)
             except Exception as e:
                 # Only log on final attempt to avoid spam
                 if attempt == max_attempts - 1:
-                    print(f"   ❌ Failed after {max_attempts} attempts: {url_short} - {str(e)[:50]}")
+                    logger.error("   ❌ Failed after %d attempts: %s - %s", max_attempts, url_short, str(e)[:50])
                     log_msg(f"Error downloading {url} after {max_attempts} attempts: {e}", -1)
                 elif attempt < max_attempts - 1:
-                    print(f"   ⚠️ Error on attempt {attempt + 1}/{max_attempts}, retrying: {url_short} - {str(e)[:50]}")
+                    logger.warning("   ⚠️ Error on attempt %d/%d, retrying: %s - %s", attempt + 1, max_attempts, url_short, str(e)[:50])
                     time.sleep(0.5 * (attempt + 1))  # Exponential backoff
                     continue
         return None

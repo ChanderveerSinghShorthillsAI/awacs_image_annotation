@@ -19,6 +19,9 @@ from ai_tool import config_loader
 from ai_tool.config_loader import config
 from ai_tool.main_processor import merge_all_session_reports, save_checkpoint
 from ai_tool.rate_limiter import Yoda
+from ai_tool.awacs_logger import setup_logger
+
+logger = setup_logger("awacs.main")
 
 import scraper_module
 import ai_module
@@ -89,15 +92,15 @@ def dashboard_renderer(status_queue, total_ads, start_time, num_workers, total_k
 
         disp_exhausted = min(exhausted_keys, total_keys)
 
-        print("═" * 80)
-        print("   AUTOMATED WORKFLOW TOOL v3.1 - PARALLEL CLASSIFICATION")
-        print("═" * 80)
-        print(f"\n  PROGRESS: [{bar}] {completed}/{total_ads} ({percent:.1f}%)")
-        print(f"  Elapsed: {elapsed//60:02d}:{elapsed%60:02d} | ETA ≈ {eta}")
-        print(f"  KEYS: {total_keys} Total | {disp_exhausted} Dead | {rate_limit_hits} Damn you moron slow down\n")
-        
-        print(f"  {'WORKER':<12}  {'STATUS':<10}  {'CURRENT AD':<17}  {'DONE'}")
-        print(f"  {'-'*12}  {'-'*10}  {'-'*17}  {'----'}")
+        logger.info("═" * 80)
+        logger.info("   AUTOMATED WORKFLOW TOOL v3.1 - PARALLEL CLASSIFICATION")
+        logger.info("═" * 80)
+        logger.info(f"\n  PROGRESS: [{bar}] {completed}/{total_ads} ({percent:.1f}%%)")
+        logger.info("  Elapsed: %02d:%02d | ETA ≈ %s", elapsed//60, elapsed%60, eta)
+        logger.info("  KEYS: %d Total | %d Dead | %d Damn you moron slow down\n", total_keys, disp_exhausted, rate_limit_hits)
+
+        logger.info("  %-12s  %-10s  %-17s  %s", "WORKER", "STATUS", "CURRENT AD", "DONE")
+        logger.info("  %s  %s  %s  %s", "-"*12, "-"*10, "-"*17, "----")
         
         for i in range(1, num_workers + 1):
             s = worker_status.get(i, {})
@@ -117,15 +120,15 @@ def dashboard_renderer(status_queue, total_ads, start_time, num_workers, total_k
             prog = s.get("progress", 0)
             
             name = WORKER_NAMES[(i - 1) % len(WORKER_NAMES)]
-            print(f"  {name:<12}  {icon:<10}  {ad:<17}  {prog:4d}")
-            
-        print("═" * 80)
+            logger.info("  %-12s  %-10s  %-17s  %4d", name, icon, ad, prog)
+
+        logger.info("═" * 80)
         time.sleep(0.8)
 
 # --- PARALLEL RUNNER ---
 def run_parallel_ai(workers=10, high_accuracy=False, use_vision_v2=False):
     files = glob.glob(os.path.join(config.scrapper_output_dir, "Scrapper_*.xlsx"))
-    if not files: print("No Scrapper file!"); input(); return
+    if not files: logger.error("No Scrapper file!"); input(); return
     latest = max(files, key=os.path.getmtime)
 
     df = pd.read_excel(latest, dtype={"Ad ID": str})
@@ -137,7 +140,7 @@ def run_parallel_ai(workers=10, high_accuracy=False, use_vision_v2=False):
         try: done_set.update(pd.read_excel(f, usecols=["Ad ID"])["Ad ID"].astype(str).str.strip())
         except: pass
 
-    print(f"Resume: Skipping {len(done_set)} already processed ads")
+    logger.info("Resume: Skipping %d already processed ads", len(done_set))
 
     run_ts = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
     m = Manager()
@@ -153,13 +156,13 @@ def run_parallel_ai(workers=10, high_accuracy=False, use_vision_v2=False):
         if r["Ad ID"] not in done_set:
             job_q.put(r.to_dict())
             new += 1
-    if new == 0: print("All done!"); input(); return
+    if new == 0: logger.info("All done!"); input(); return
 
-    print(f"\nStarting {workers} workers on {new} new ads...")
-    print(f"Mode: {'HIGH ACCURACY (2 images)' if high_accuracy else 'FAST (1 or 2)'} | Vision v2: {'ON' if use_vision_v2 else 'OFF'}")
+    logger.info("Starting %d workers on %d new ads...", workers, new)
+    logger.info("Mode: %s | Vision v2: %s", 'HIGH ACCURACY (2 images)' if high_accuracy else 'FAST (1 or 2)', 'ON' if use_vision_v2 else 'OFF')
 
     # --- INITIALIZE YODA ---
-    print("🧙 Initializing Yoda (Rate Limiter)...")
+    logger.info("🧙 Initializing Yoda (Rate Limiter)...")
     yoda = Yoda(config.gemini_api_keys_info, config.rate_limit_rpm, m)
     # -----------------------
 
@@ -215,17 +218,17 @@ def run_parallel_ai(workers=10, high_accuracy=False, use_vision_v2=False):
     # Final Save
     if results:
         target_filename = f"output_annotated_{run_ts}.xlsx"
-        print(f"\nSaving final data to '{target_filename}'...")
+        logger.info("Saving final data to '%s'...", target_filename)
         try:
             save_checkpoint(run_ts, results, df)
-            print(f"✅ File saved successfully.")
+            logger.info("✅ File saved successfully.")
         except Exception as e:
-            print(f"\n❌ ERROR SAVING FILE: {e}")
-            print(f"Dumping raw results to 'EMERGENCY_DUMP_{run_ts}.xlsx'...")
+            logger.error("❌ ERROR SAVING FILE: %s", e)
+            logger.info("Dumping raw results to 'EMERGENCY_DUMP_%s.xlsx'...", run_ts)
             try:
                 pd.DataFrame(results).to_excel(f"EMERGENCY_DUMP_{run_ts}.xlsx", index=False)
             except:
-                print("Critical failure: Could not even dump raw results.")
+                logger.error("Critical failure: Could not even dump raw results.")
             
     merge_all_session_reports(run_ts)
     
@@ -234,7 +237,7 @@ def run_parallel_ai(workers=10, high_accuracy=False, use_vision_v2=False):
     utils.merge_worker_logs(run_ts)
     utils.merge_thought_logs(run_ts)
     
-    print("\nRUN COMPLETED!")
+    logger.info("RUN COMPLETED!")
     input("Press Enter...")
 
 # --- MAIN MENU ---
@@ -248,24 +251,24 @@ def main_menu():
 ==================================================================
 """
     while True:
-        clear_screen(); print(logo)
-        print(" 1. Scraper -> Auto Parallel AI (High Accuracy, No Vision v2)")
-        print(" 2. AI High Accuracy (Single Process)")
-        print(" 3. AI Fast Mode (Single Process)")
-        print(" 4. Parallel Mode (Custom)")
-        print("\n 5. Merge Outputs")
-        print(" 6. Check API Quota")
-        print(" 7. Re-Annotate Status (Compare AI vs Scraper)")
-        print(" 8. Scrape Only (Supports Resume)")
-        print("\n 9. Run QA Checker (Live Website Validation)")
-        print(" 10. Run Accuracy Audit (Compare vs Manual Feedback)")
-        print(" 11. Exit")
-        print("-" * 66)
+        clear_screen(); logger.info(logo)
+        logger.info(" 1. Scraper -> Auto Parallel AI (High Accuracy, No Vision v2)")
+        logger.info(" 2. AI High Accuracy (Single Process)")
+        logger.info(" 3. AI Fast Mode (Single Process)")
+        logger.info(" 4. Parallel Mode (Custom)")
+        logger.info(" 5. Merge Outputs")
+        logger.info(" 6. Check API Quota")
+        logger.info(" 7. Re-Annotate Status (Compare AI vs Scraper)")
+        logger.info(" 8. Scrape Only (Supports Resume)")
+        logger.info(" 9. Run QA Checker (Live Website Validation)")
+        logger.info(" 10. Run Accuracy Audit (Compare vs Manual Feedback)")
+        logger.info(" 11. Exit")
+        logger.info("-" * 66)
         c = input("\nChoice (1-11): ").strip()
 
         if c == "1":
             scraper_module.run_scraper(resume=False)
-            print("\nStarting HIGH ACCURACY Parallel AI (10 workers, 2 images, Vision v2 OFF)...")
+            logger.info("Starting HIGH ACCURACY Parallel AI (10 workers, 2 images, Vision v2 OFF)...")
             run_parallel_ai(workers=10, high_accuracy=True, use_vision_v2=False)
         elif c == "2": ai_module.run_ai(fast_mode=False)
         elif c == "3": ai_module.run_ai(fast_mode=True)
@@ -282,14 +285,14 @@ def main_menu():
             try:
                 update_status.run_status_updater()
             except Exception as e:
-                print(f"Error running status updater: {e}")
+                logger.error("Error running status updater: %s", e)
                 input("Press Enter...")
 
         elif c == "8":
             # Scrape Only
-            print("\n--- Scrape Only Mode ---")
-            print("1. Start Fresh (Overwrites old partial files)")
-            print("2. Resume (Continues from latest Scrapper_*.xlsx)")
+            logger.info("--- Scrape Only Mode ---")
+            logger.info("1. Start Fresh (Overwrites old partial files)")
+            logger.info("2. Resume (Continues from latest Scrapper_*.xlsx)")
             sc = input("Choice (1/2): ").strip()
             if sc == "2":
                 scraper_module.run_scraper(resume=True)
@@ -298,11 +301,11 @@ def main_menu():
         
         elif c == "9":
             try: qa_checker.run_qa_check()
-            except Exception as e: print(f"Error: {e}"); input()
+            except Exception as e: logger.error("Error: %s", e); input()
 
         elif c == "10":
             try: audit.run_audit()
-            except Exception as e: print(f"Error: {e}"); input()
+            except Exception as e: logger.error("Error: %s", e); input()
 
         elif c == "11": break
         input("\nPress Enter...")

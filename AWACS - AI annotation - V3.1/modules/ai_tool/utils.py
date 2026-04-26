@@ -4,6 +4,9 @@ import shutil
 import pandas as pd
 from datetime import datetime, timedelta
 from .config_loader import config
+from .awacs_logger import setup_logger
+
+logger = setup_logger("awacs.utils")
 
 LOG_FILE = ""
 THOUGHT_LOG_FILE = ""
@@ -36,7 +39,7 @@ def initialize_logging(run_ts: str, worker_id: int = 0):
             f.write(f"================================================================\n\n")
             
     except Exception as e:
-        print(f"CRITICAL: Failed to initialize log file at {LOG_FILE}. Error: {e}")
+        logger.error("CRITICAL: Failed to initialize log file at %s. Error: %s", LOG_FILE, e)
 
 def log_msg(msg: str, worker_id: int = -1):
     """
@@ -69,10 +72,10 @@ def merge_worker_logs(run_ts):
     worker_files = glob.glob(pattern)
     
     if not worker_files:
-        print("⚠️ No worker logs found to merge.")
+        logger.warning("⚠️ No worker logs found to merge.")
         return
 
-    print(f"\n📝 Merging {len(worker_files)} worker logs into Master Log...")
+    logger.info("📝 Merging %d worker logs into Master Log...", len(worker_files))
     
     try:
         with open(master_log_path, 'w', encoding='utf-8') as master:
@@ -104,10 +107,10 @@ def merge_worker_logs(run_ts):
             try: os.remove(wf)
             except: pass
             
-        print(f"✅ Master Log saved: {os.path.basename(master_log_path)}")
-        
+        logger.info("✅ Master Log saved: %s", os.path.basename(master_log_path))
+
     except Exception as e:
-        print(f"❌ Error merging logs: {e}")
+        logger.error("❌ Error merging logs: %s", e)
 
 def calculate_cost_cents(input_tokens, output_tokens, model_name, cached_input_tokens=0):
     """
@@ -173,10 +176,10 @@ def calculate_cost_cents(input_tokens, output_tokens, model_name, cached_input_t
     if cached_input_tokens > 0:
         savings_usd = (cached_input_tokens / 1_000_000 * (price_input_per_m - price_cached_input_per_m))
         savings_percent = ((price_input_per_m - price_cached_input_per_m) / price_input_per_m) * 100
-        print(f"Calculating cost for {model_name} - Input: ${price_input_per_m} | Cached: ${price_cached_input_per_m} | Output: ${price_output_per_m}")
-        print(f"   💰 Cache savings: {cached_input_tokens:,} cached tokens saved ${savings_usd*100:.4f}¢ ({savings_percent:.1f}% discount)")
+        logger.info("Calculating cost for %s - Input: $%s | Cached: $%s | Output: $%s", model_name, price_input_per_m, price_cached_input_per_m, price_output_per_m)
+        logger.info("   💰 Cache savings: %s cached tokens saved $%.4f¢ (%.1f%% discount)", f"{cached_input_tokens:,}", savings_usd*100, savings_percent)
     else:
-        print(f"Calculating cost for {model_name} - Input: ${price_input_per_m} | Output: ${price_output_per_m}")
+        logger.info("Calculating cost for %s - Input: $%s | Output: $%s", model_name, price_input_per_m, price_output_per_m)
                
     # Convert to Cents
     return round(cost_usd * 100, 4)
@@ -282,7 +285,7 @@ def initialize_thought_log(run_ts: str, worker_id: int = 0):
             f.write(f"Start Time: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
             f.write(f"================================================================\n\n")
     except Exception as e:
-        print(f"WARNING: Failed to initialize thought log. Error: {e}")
+        logger.warning("WARNING: Failed to initialize thought log. Error: %s", e)
 
 def save_thought_entry(ad_id: str, breadcrumb: str, thought_text: str,
                        answer_text: str, model_name: str, worker_id: int = 0):
@@ -318,7 +321,7 @@ def merge_thought_logs(run_ts: str):
     if not worker_files:
         return
 
-    print(f"\n💭 Merging {len(worker_files)} thought log(s) into Master Thought Log...")
+    logger.info("💭 Merging %d thought log(s) into Master Thought Log...", len(worker_files))
 
     try:
         with open(master_path, 'w', encoding='utf-8') as master:
@@ -341,7 +344,7 @@ def merge_thought_logs(run_ts: str):
             try: os.remove(wf)
             except: pass
 
-        print(f"✅ Master Thought Log saved: {os.path.basename(master_path)}")
+        logger.info("✅ Master Thought Log saved: %s", os.path.basename(master_path))
 
     except Exception as e:
-        print(f"❌ Error merging thought logs: {e}")
+        logger.error("❌ Error merging thought logs: %s", e)

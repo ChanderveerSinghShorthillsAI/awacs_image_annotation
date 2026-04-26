@@ -1,6 +1,9 @@
 import cv2
 import numpy as np
 from .config_loader import config
+from .awacs_logger import setup_logger
+
+logger = setup_logger("awacs.darth_vision")
 
 def inspect_for_dually(img_bytes, debug=False):
     """
@@ -100,7 +103,7 @@ def inspect_for_dually(img_bytes, debug=False):
             scores['ellipse_wheels'] = min(25, dual_pairs * 15)
             
             if debug:
-                print(f"  Ellipses found: {len(ellipses)}, Dual pairs: {dual_pairs}, Score: {scores['ellipse_wheels']}")
+                logger.debug("  Ellipses found: %d, Dual pairs: %d, Score: %s", len(ellipses), dual_pairs, scores['ellipse_wheels'])
         
         # =================================================================
         # METHOD 2: CONTOUR BULGE DETECTION (Fender Flares)
@@ -150,7 +153,7 @@ def inspect_for_dually(img_bytes, debug=False):
                         scores['contour_bulge'] += 5
                     
                     if debug:
-                        print(f"  Width profile [top→bottom]: {widths}, Score: {scores['contour_bulge']}")
+                        logger.debug("  Width profile [top→bottom]: %s, Score: %s", widths, scores['contour_bulge'])
         
         # =================================================================
         # METHOD 3: WIDTH PROFILE ANALYSIS
@@ -185,7 +188,7 @@ def inspect_for_dually(img_bytes, debug=False):
                 scores['width_profile'] = min(25, int((rear_to_cab_ratio - 1.0) * 100))
             
             if debug:
-                print(f"  Cab width: {cab_width}, Rear width: {rear_width}, Ratio: {rear_to_cab_ratio:.2f}, Score: {scores['width_profile']}")
+                logger.debug("  Cab width: %d, Rear width: %d, Ratio: %.2f, Score: %s", cab_width, rear_width, rear_to_cab_ratio, scores['width_profile'])
         
         # =================================================================
         # METHOD 4: EDGE DENSITY IN WHEEL AREAS
@@ -210,7 +213,7 @@ def inspect_for_dually(img_bytes, debug=False):
             scores['edge_density'] = min(15, int((avg_density - 0.05) * 200))
         
         if debug:
-            print(f"  Edge density (L/R): {left_density:.3f}/{right_density:.3f}, Score: {scores['edge_density']}")
+            logger.debug("  Edge density (L/R): %.3f/%.3f, Score: %s", left_density, right_density, scores['edge_density'])
         
         # =================================================================
         # METHOD 5: SILHOUETTE ASPECT RATIO
@@ -229,7 +232,7 @@ def inspect_for_dually(img_bytes, debug=False):
                 scores['silhouette'] = min(10, int((aspect - 1.2) * 30))
             
             if debug:
-                print(f"  Silhouette aspect ratio: {aspect:.2f}, Score: {scores['silhouette']}")
+                logger.debug("  Silhouette aspect ratio: %.2f, Score: %s", aspect, scores['silhouette'])
         
         # =================================================================
         # FALSE POSITIVE REDUCTION CHECKS
@@ -278,7 +281,7 @@ def inspect_for_dually(img_bytes, debug=False):
                 fp_reasons.append(f"uneven_density:{density_ratio:.2f}")
         
         if debug and fp_reasons:
-            print(f"  FALSE POSITIVE CHECKS: {fp_reasons}, Penalty: -{false_positive_penalty}")
+            logger.debug("  FALSE POSITIVE CHECKS: %s, Penalty: -%s", fp_reasons, false_positive_penalty)
         
         # =================================================================
         # CONSENSUS REQUIREMENT (Multiple methods must agree)
@@ -311,11 +314,11 @@ def inspect_for_dually(img_bytes, debug=False):
             consensus_penalty = 10  # No methods strongly agree = reduced penalty (was 25)
         
         if debug:
-            print(f"  CONSENSUS: {methods_agreeing}/5 methods agree (min thresholds)")
+            logger.debug("  CONSENSUS: %d/5 methods agree (min thresholds)", methods_agreeing)
             if consensus_bonus > 0:
-                print(f"    Bonus: +{consensus_bonus}")
+                logger.debug("    Bonus: +%s", consensus_bonus)
             if consensus_penalty > 0:
-                print(f"    Penalty: -{consensus_penalty}")
+                logger.debug("    Penalty: -%s", consensus_penalty)
         
         # =================================================================
         # COMBINE SCORES WITH PENALTIES
@@ -330,10 +333,10 @@ def inspect_for_dually(img_bytes, debug=False):
         total_score = max(0, min(100, adjusted_total))
         
         if debug:
-            print(f"  SCORES: {scores}")
-            print(f"  RAW: {raw_total}, FP_PENALTY: -{false_positive_penalty}, CONSENSUS: {consensus_bonus - consensus_penalty:+d}")
-            print(f"  FINAL SCORE: {total_score}")
-            print(f"  Threshold: {threshold}, Is Dually: {total_score >= threshold}")
+            logger.debug("  SCORES: %s", scores)
+            logger.debug("  RAW: %s, FP_PENALTY: -%s, CONSENSUS: %+d", raw_total, false_positive_penalty, consensus_bonus - consensus_penalty)
+            logger.debug("  FINAL SCORE: %s", total_score)
+            logger.debug("  Threshold: %s, Is Dually: %s", threshold, total_score >= threshold)
         
         is_dually = total_score >= threshold
         
@@ -341,7 +344,7 @@ def inspect_for_dually(img_bytes, debug=False):
 
     except Exception as e:
         if debug:
-            print(f"  Error in dually detection: {e}")
+            logger.error("  Error in dually detection: %s", e)
         return False, 0.0
 
 
@@ -395,14 +398,14 @@ def inspect_for_dually_multi_angle(img_bytes, debug=False):
         best = max(results, key=lambda x: x[2])
         
         if debug:
-            print(f"  Multi-angle results: {results}")
-            print(f"  Best: {best[0]} with score {best[2]}")
+            logger.debug("  Multi-angle results: %s", results)
+            logger.debug("  Best: %s with score %s", best[0], best[2])
         
         return best[1], best[2]
 
     except Exception as e:
         if debug:
-            print(f"  Error in multi-angle detection: {e}")
+            logger.error("  Error in multi-angle detection: %s", e)
         return False, 0.0
 
 

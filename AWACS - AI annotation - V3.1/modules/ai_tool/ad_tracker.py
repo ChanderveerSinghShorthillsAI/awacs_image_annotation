@@ -13,6 +13,10 @@ PRIMARY KEY on ad_id provides automatic B-tree indexing for fast lookups.
 import requests
 from datetime import datetime, timezone
 
+from .awacs_logger import setup_logger
+
+logger = setup_logger("awacs.ad_tracker")
+
 # Singleton config
 _api_url = None
 _auth_token = None
@@ -105,12 +109,12 @@ def init_tracker(url: str, token: str):
             if rows:
                 total_tracked = int(rows[0][0].get("value", 0))
         
-        print(f"   📊 Ad Tracker: Turso DB connected successfully (HTTP API)")
-        print(f"   📊 Ad Tracker: {total_tracked} ads currently tracked in database")
-        
+        logger.info("   📊 Ad Tracker: Turso DB connected successfully (HTTP API)")
+        logger.info("   📊 Ad Tracker: %d ads currently tracked in database", total_tracked)
+
     except Exception as e:
-        print(f"   ❌ Ad Tracker: Failed to connect to Turso DB: {e}")
-        print(f"   ⚠️ Ad Tracker: Feature will be DISABLED for this session")
+        logger.error("   ❌ Ad Tracker: Failed to connect to Turso DB: %s", e)
+        logger.warning("   ⚠️ Ad Tracker: Feature will be DISABLED for this session")
         _api_url = None
         _auth_token = None
         raise
@@ -150,8 +154,8 @@ def filter_over_limit_ads(ad_ids: list, max_count: int) -> set:
         return over_limit
         
     except Exception as e:
-        print(f"   ⚠️ Ad Tracker: Error checking annotation counts: {e}")
-        print(f"   ⚠️ Ad Tracker: Allowing all ads through (fail-open)")
+        logger.warning("   ⚠️ Ad Tracker: Error checking annotation counts: %s", e)
+        logger.warning("   ⚠️ Ad Tracker: Allowing all ads through (fail-open)")
         return set()
 
 
@@ -187,8 +191,8 @@ def increment_annotation_counts(ad_ids: list):
             _execute_sql(statements)
         
     except Exception as e:
-        print(f"   ⚠️ Ad Tracker: Error updating annotation counts: {e}")
-        print(f"   ⚠️ Ad Tracker: Counts may not be updated for this batch")
+        logger.warning("   ⚠️ Ad Tracker: Error updating annotation counts: %s", e)
+        logger.warning("   ⚠️ Ad Tracker: Counts may not be updated for this batch")
 
 
 def close_tracker():
@@ -196,4 +200,4 @@ def close_tracker():
     global _api_url, _auth_token
     _api_url = None
     _auth_token = None
-    print("   📊 Ad Tracker: Turso DB connection closed")
+    logger.info("   📊 Ad Tracker: Turso DB connection closed")

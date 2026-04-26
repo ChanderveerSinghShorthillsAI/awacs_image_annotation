@@ -9,23 +9,26 @@ try:
     sys.path.insert(0, os.path.join(os.path.dirname(__file__), 'modules'))
     from ai_tool.config_loader import config, load_config
     from ai_tool.data_processing import normalize_text, load_rules
+    from ai_tool.awacs_logger import setup_logger
 except ImportError:
     print("❌ Critical Error: Could not find the 'modules' folder or its contents.")
     input("\nPress Enter to exit.")
     sys.exit(1)
 
+logger = setup_logger("awacs.update_status")
+
 def select_file(directory, pattern, prompt_message):
     """Generic function to display a menu of files and get a user's choice."""
     files = glob.glob(os.path.join(directory, pattern))
     if not files:
-        print(f"\n❌ No files matching '{pattern}' found in the '{os.path.basename(directory)}' folder.")
+        logger.warning("No files matching '%s' found in the '%s' folder.", pattern, os.path.basename(directory))
         return None
 
     files.sort(key=os.path.getmtime, reverse=True)
     
-    print(prompt_message)
+    logger.info(prompt_message)
     for i, file_path in enumerate(files, 1):
-        print(f"  {i}. {os.path.basename(file_path)}")
+        logger.info("  %d. %s", i, os.path.basename(file_path))
     
     while True:
         try:
@@ -35,9 +38,9 @@ def select_file(directory, pattern, prompt_message):
             if 1 <= choice <= len(files):
                 return files[choice - 1]
             else:
-                print(f"❗️Invalid choice. Please enter a number between 1 and {len(files)}.")
+                logger.warning("Invalid choice. Please enter a number between 1 and %d.", len(files))
         except ValueError:
-            print("❗️Invalid input. Please enter a number or 'q'.")
+            logger.warning("Invalid input. Please enter a number or 'q'.")
 
 def run_status_updater():
     """
@@ -45,9 +48,9 @@ def run_status_updater():
     the breadcrumbs from a newer Scraper file.
     """
     os.system('cls' if os.name == 'nt' else 'clear')
-    print("======================================================")
-    print("        AI OUTPUT STATUS UPDATER UTILITY              ")
-    print("======================================================")
+    logger.info("======================================================")
+    logger.info("        AI OUTPUT STATUS UPDATER UTILITY              ")
+    logger.info("======================================================")
 
     # 1. Select the AI Output file to be updated
     ai_file_to_update = select_file(
@@ -55,7 +58,7 @@ def run_status_updater():
         "output_annotated_*.xlsx",
         "\nPlease select the AI Output file you want to UPDATE:"
     )
-    if not ai_file_to_update: print("\nOperation cancelled."); return
+    if not ai_file_to_update: logger.info("Operation cancelled."); return
 
     # 2. Select the Scraper file with the new breadcrumb data
     scraper_file_source = select_file(
@@ -63,9 +66,9 @@ def run_status_updater():
         "Scrapper_*.xlsx",
         "\nNow, select the NEW Scraper file to use for comparison:"
     )
-    if not scraper_file_source: print("\nOperation cancelled."); return
+    if not scraper_file_source: logger.info("Operation cancelled."); return
 
-    print(f"\nUpdating '{os.path.basename(ai_file_to_update)}' using breadcrumbs from '{os.path.basename(scraper_file_source)}'...")
+    logger.info("Updating '%s' using breadcrumbs from '%s'...", os.path.basename(ai_file_to_update), os.path.basename(scraper_file_source))
 
     try:
         ai_df = pd.read_excel(ai_file_to_update)
@@ -136,18 +139,18 @@ def run_status_updater():
         
         ai_df.to_excel(output_path, index=False)
         
-        print("\n✅ Processing complete!")
-        print(f"   {rows_updated} rows had their status changed.")
-        print(f"   A new file has been saved as '{new_name}' in your '{os.path.basename(config.output_dir)}' folder.")
+        logger.info("✅ Processing complete!")
+        logger.info("   %d rows had their status changed.", rows_updated)
+        logger.info("   A new file has been saved as '%s' in your '%s' folder.", new_name, os.path.basename(config.output_dir))
 
     except Exception as e:
-        print(f"\n❌ An error occurred during processing: {e}")
+        logger.error("An error occurred during processing: %s", e)
 
 if __name__ == "__main__":
     try:
         load_config()
         run_status_updater()
     except Exception as e:
-        print(f"A critical error occurred: {e}")
+        logger.error("A critical error occurred: %s", e)
     
     input("\nPress Enter to exit.")

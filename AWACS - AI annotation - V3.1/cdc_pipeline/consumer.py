@@ -9,17 +9,28 @@ Usage:
   cd "AWACS - AI annotation - V3.1"
   python -m cdc_pipeline                  # normal mode (resumes from last offset)
   python -m cdc_pipeline --fresh          # skip backlog, only new messages
-  python -m cdc_pipeline --debug          # verbose: prints first non-truck message
+  python -m cdc_pipeline --debug          # verbose: logs first non-truck message
   python -m cdc_pipeline --fresh --debug  # both
 """
 
 import json
+import os
 import signal
 import sys
 import time
 from datetime import datetime, timezone
 
 from kafka import KafkaConsumer
+
+# Add project root to path so we can import from modules/ai_tool
+PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+MODULES_PATH = os.path.join(PROJECT_ROOT, "modules")
+if MODULES_PATH not in sys.path:
+    sys.path.insert(0, MODULES_PATH)
+
+from ai_tool.awacs_logger import setup_logger
+
+logger = setup_logger("awacs.cdc.consumer")
 
 # How long (seconds) to remember an ad after first seeing it.
 # Messages for the same ad arriving within this window inherit the
@@ -79,17 +90,17 @@ def extract_summary(message: dict, filter_reason: str) -> dict:
 
 
 def run(debug: bool = False, fresh: bool = False, timeout_minutes: int | None = None) -> int:
-    print(f"Mode: {MODE}")
-    print(f"Environment: {CDC_ENV.upper()} {'⚠️  PRODUCTION' if IS_PROD else '(dev)'}")
-    print(f"Connecting to Kafka at {KAFKA_BOOTSTRAP_SERVERS}...")
-    print(f"Topics: {TOPICS}")
-    print(f"Consumer group: {GROUP_ID}")
+    logger.info("Mode: %s", MODE)
+    logger.info("Environment: %s %s", CDC_ENV.upper(), "⚠️  PRODUCTION" if IS_PROD else "(dev)")
+    logger.info("Connecting to Kafka at %s...", KAFKA_BOOTSTRAP_SERVERS)
+    logger.info("Topics: %s", TOPICS)
+    logger.info("Consumer group: %s", GROUP_ID)
     if fresh:
-        print(">>> FRESH mode: skipping backlog, listening for new messages only")
-    print(f"Output: {OUTPUT_FILE}")
+        logger.info(">>> FRESH mode: skipping backlog, listening for new messages only")
+    logger.info("Output: %s", OUTPUT_FILE)
     if timeout_minutes is not None:
-        print(f"Auto mode: consumer will stop after {timeout_minutes} minute(s)")
-    print("-" * 60)
+        logger.info("Auto mode: consumer will stop after %d minute(s)", timeout_minutes)
+    logger.info("-" * 60)
 
     consumer = KafkaConsumer(
         *TOPICS,
@@ -105,7 +116,7 @@ def run(debug: bool = False, fresh: bool = False, timeout_minutes: int | None = 
         consumer.poll(timeout_ms=5000)  # triggers partition assignment
         consumer.seek_to_end()
         consumer.commit()  # persist so the skip sticks
-        print(">>> Seeked to end of all partitions. Backlog skipped.")
+        logger.info(">>> Seeked to end of all partitions. Backlog skipped.")
 
     total = 0
     trucks = 0
@@ -125,23 +136,26 @@ def run(debug: bool = False, fresh: bool = False, timeout_minutes: int | None = 
     #          "categories": str, "photoCount": int, "received_at": str}}
     summary_ads: dict[str, dict] = {}
 
+    # Periodic status logging interval (every N messages)
+    _STATUS_LOG_INTERVAL = 100
+
     def shutdown(signum, frame):
         nonlocal running
-        print(f"\n{'=' * 60}")
-        print("Shutting down...")
+        logger.info("=" * 60)
+        logger.info("Shutting down...")
         running = False
 
     signal.signal(signal.SIGINT, shutdown)
     signal.signal(signal.SIGTERM, shutdown)
 
     start_time = time.monotonic()
-    print("Listening for messages... (Ctrl+C to stop)\n")
+    logger.info("Listening for messages... (Ctrl+C to stop)")
 
     # Truncate filtered_ads.jsonl so every consumer session starts fresh
     outfile = open(OUTPUT_FILE, "w", encoding="utf-8")
     rawfile = open(RAW_MESSAGES_FILE, "a", encoding="utf-8") if SAVE_RAW_MESSAGES else None
     if SAVE_RAW_MESSAGES:
-        print(f"Raw message logging: ENABLED -> {RAW_MESSAGES_FILE}")
+        logger.info("Raw message logging: ENABLED -> %s", RAW_MESSAGES_FILE)
 
     try:
         while running:
@@ -149,8 +163,8 @@ def run(debug: bool = False, fresh: bool = False, timeout_minutes: int | None = 
             if timeout_minutes is not None:
                 elapsed = time.monotonic() - start_time
                 if elapsed >= timeout_minutes * 60:
-                    print(f"\n{'=' * 60}")
-                    print(f"Timeout reached ({timeout_minutes} min). Stopping consumer...")
+                    logger.info("=" * 60)
+                    logger.info("Timeout reached (%d min). Stopping consumer...", timeout_minutes)
                     running = False
                     break
 
@@ -189,11 +203,11 @@ def run(debug: bool = False, fresh: bool = False, timeout_minutes: int | None = 
                             }
                             df.write(json.dumps(debug_envelope, indent=2, default=str) + "\n---\n")
                         keys = list(message.keys())
-                        print(f"\n  [DEBUG] Topic={record.topic} | Ad {message.get('adId', '?')} | top-level keys={keys}")
-                        print(f"  [DEBUG] realm={message.get('realm')} | adDetail={type(message.get('adDetail')).__name__} | photos={type(message.get('photos')).__name__}")
+                        logger.debug("[DEBUG] Topic=%s | Ad %s | top-level keys=%s", record.topic, message.get('adId', '?'), keys)
+                        logger.debug("[DEBUG] realm=%s | adDetail=%s | photos=%s", message.get('realm'), type(message.get('adDetail')).__name__, type(message.get('photos')).__name__)
                     if not truck:
                         if debug:
-                            print(f"  [DEBUG] ^ Not a truck. Dumped to cdc_pipeline/debug_messages.jsonl")
+                            logger.debug("[DEBUG] ^ Not a truck. Dumped to cdc_pipeline/debug_messages.jsonl")
 
                     reason = classify_message(message)
                     if debug and truck and not reason:
@@ -202,7 +216,7 @@ def run(debug: bool = False, fresh: bool = False, timeout_minutes: int | None = 
                         cls = message.get("class")
                         cls_id = cls.get("id") if isinstance(cls, dict) else None
                         valid_cls = has_valid_class_id(message)
-                        print(f"\n  [DEBUG] Truck ad {message.get('adId')} not matched | class={cls_id} valid_class={valid_cls} | diff paths={paths}")
+                        logger.debug("[DEBUG] Truck ad %s not matched | class=%s valid_class=%s | diff paths=%s", message.get('adId'), cls_id, valid_cls, paths)
 
                     if reason:
                         ad_id = str(message.get("adId", ""))
@@ -224,7 +238,7 @@ def run(debug: bool = False, fresh: bool = False, timeout_minutes: int | None = 
                                 # suppress from filtered_ads.jsonl.
                                 suppressed += 1
                                 if debug:
-                                    print(f"\n  [DEBUG] Suppressed photo_update for new ad {ad_id} (first seen as new_ad)")
+                                    logger.debug("Suppressed photo_update for new ad %s (first seen as new_ad)", ad_id)
 
                                 # Still log to raw_messages for audit trail
                                 if rawfile:
@@ -241,11 +255,9 @@ def run(debug: bool = False, fresh: bool = False, timeout_minutes: int | None = 
                                     rawfile.write(json.dumps(raw_envelope, default=str) + "\n")
                                     rawfile.flush()
 
-                                # Update status line and continue to next message
-                                sys.stdout.write(
-                                    f"\r  Processed: {total} | Skipped: {skipped} | Trucks: {trucks} | Matched: {matched} | Suppressed: {suppressed}"
-                                )
-                                sys.stdout.flush()
+                                # Periodic status log
+                                if total % _STATUS_LOG_INTERVAL == 0:
+                                    logger.info("Processed: %d | Skipped: %d | Trucks: %d | Matched: %d | Suppressed: %d", total, skipped, trucks, matched, suppressed)
                                 continue
 
                             # Same ad seen again with same or different reason
@@ -277,8 +289,9 @@ def run(debug: bool = False, fresh: bool = False, timeout_minutes: int | None = 
                         model = summary["modelDisplayName"] or "?"
                         cats = ", ".join(summary["categories"]) or "?"
                         cls_id = summary.get("classId", "?")
-                        print(
-                            f"  [{reason:^12}] Ad {ad_id} | {make} {model} | class={cls_id} | {cats} | photos={summary['photoCount']}"
+                        logger.info(
+                            "[%s] Ad %s | %s %s | class=%s | %s | photos=%d",
+                            reason, ad_id, make, model, cls_id, cats, summary["photoCount"],
                         )
 
                         # Track for shutdown summary
@@ -297,22 +310,20 @@ def run(debug: bool = False, fresh: bool = False, timeout_minutes: int | None = 
                                 # Update photoCount to latest value
                                 summary_ads[ad_id]["photoCount"] = summary["photoCount"]
 
-                    # Update status line
-                    sys.stdout.write(
-                        f"\r  Processed: {total} | Skipped: {skipped} | Trucks: {trucks} | Matched: {matched} | Suppressed: {suppressed}"
-                    )
-                    sys.stdout.flush()
+                    # Periodic status log (instead of \r overwrite)
+                    if total % _STATUS_LOG_INTERVAL == 0:
+                        logger.info("Processed: %d | Skipped: %d | Trucks: %d | Matched: %d | Suppressed: %d", total, skipped, trucks, matched, suppressed)
 
     finally:
         outfile.close()
         if rawfile:
             rawfile.close()
         consumer.close()
-        print(f"\n{'=' * 60}")
-        print(f"Done. Processed {total} messages, {skipped} skipped, {trucks} trucks, {matched} matched, {suppressed} suppressed.")
-        print(f"Filtered ads saved to: {OUTPUT_FILE}")
+        logger.info("=" * 60)
+        logger.info("Done. Processed %d messages, %d skipped, %d trucks, %d matched, %d suppressed.", total, skipped, trucks, matched, suppressed)
+        logger.info("Filtered ads saved to: %s", OUTPUT_FILE)
         if SAVE_RAW_MESSAGES:
-            print(f"Raw messages saved to: {RAW_MESSAGES_FILE}")
+            logger.info("Raw messages saved to: %s", RAW_MESSAGES_FILE)
 
         # ── Session summary JSON ──
         if SHOW_SUMMARY and summary_ads:
@@ -342,7 +353,7 @@ def run(debug: bool = False, fresh: bool = False, timeout_minutes: int | None = 
             with open(SUMMARY_FILE, "w", encoding="utf-8") as sf:
                 json.dump(summary_json, sf, indent=2, default=str)
 
-            print(f"Session summary saved to: {SUMMARY_FILE}")
+            logger.info("Session summary saved to: %s", SUMMARY_FILE)
 
         return matched
 

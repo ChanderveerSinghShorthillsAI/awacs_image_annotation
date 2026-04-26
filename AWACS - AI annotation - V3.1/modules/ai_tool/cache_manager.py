@@ -13,6 +13,9 @@ import time
 import base64
 
 from .config_loader import config
+from .awacs_logger import setup_logger
+
+logger = setup_logger("awacs.cache_manager")
 
 # === Try importing the NEW google-genai SDK for caching ===
 try:
@@ -49,17 +52,17 @@ class ExplicitCacheManager:
         # Print SDK caching availability status
         if CACHING_AVAILABLE:
             if getattr(config, 'verbose_cache_logging', True):
-                print(f"\n{'='*80}")
-                print(f"✅ GEMINI EXPLICIT CACHING: google-genai SDK detected!")
-                print(f"   Explicit caching is ENABLED — static classification rules will be cached server-side")
-                print(f"   Cached tokens are 90% cheaper ($0.03/M vs $0.30/M for Flash)")
-                print(f"{'='*80}\n")
+                logger.info("=" * 80)
+                logger.info("✅ GEMINI EXPLICIT CACHING: google-genai SDK detected!")
+                logger.info("   Explicit caching is ENABLED — static classification rules will be cached server-side")
+                logger.info("   Cached tokens are 90%% cheaper ($0.03/M vs $0.30/M for Flash)")
+                logger.info("=" * 80)
         else:
-            print(f"\n{'='*80}")
-            print(f"⚠️  GEMINI EXPLICIT CACHING: google-genai SDK NOT found!")
-            print(f"   Run: pip install google-genai")
-            print(f"   Falling back to standard (non-cached) API calls.")
-            print(f"{'='*80}\n")
+            logger.warning("=" * 80)
+            logger.warning("⚠️  GEMINI EXPLICIT CACHING: google-genai SDK NOT found!")
+            logger.warning("   Run: pip install google-genai")
+            logger.warning("   Falling back to standard (non-cached) API calls.")
+            logger.warning("=" * 80)
     
     def _get_client(self, api_key: str):
         """Get or create a genai.Client for the given API key."""
@@ -162,18 +165,18 @@ class ExplicitCacheManager:
             )
             
             if getattr(config, 'verbose_cache_logging', True):
-                print(f"   ✅ EXPLICIT CACHE USED: Only dynamic content (breadcrumb + image) sent to API")
+                logger.info("   ✅ EXPLICIT CACHE USED: Only dynamic content (breadcrumb + image) sent to API")
             return response, True
             
         except Exception as e:
             error_msg = str(e).lower()
             # If it's a rate limit or quota error, let the caller handle retry
             if any(x in error_msg for x in ["429", "quota", "resource", "rate"]):
-                print(f"   ⚠️  Cache generate hit rate limit: {str(e)[:80]}")
+                logger.warning("   ⚠️  Cache generate hit rate limit: %s", str(e)[:80])
                 raise  # Re-raise so caller's retry logic handles it
-            
-            print(f"   ⚠️  Explicit cache generate failed: {str(e)[:100]}")
-            print(f"   Falling back to standard (non-cached) API call.")
+
+            logger.warning("   ⚠️  Explicit cache generate failed: %s", str(e)[:100])
+            logger.warning("   Falling back to standard (non-cached) API call.")
             
             # Invalidate cache if it seems corrupted
             cache_key = self._get_cache_key(api_key, model_name)
@@ -198,21 +201,20 @@ class ExplicitCacheManager:
                 client.caches.get(name=cache_info['cache_name'])
                 
                 if getattr(config, 'verbose_cache_logging', True):
-                    print(f"   🔄 EXPLICIT CACHE REUSED: '{cache_info['cache_name'][-30:]}...' "
-                          f"(age: {cache_age_minutes:.1f} min)")
+                    logger.info("   🔄 EXPLICIT CACHE REUSED: '%s...' (age: %.1f min)", cache_info['cache_name'][-30:], cache_age_minutes)
                 return cache_info['cache_name']
 
             except Exception:
                 if getattr(config, 'verbose_cache_logging', True):
-                    print(f"   ⚠️  Cache expired/invalid. Recreating...")
+                    logger.warning("   ⚠️  Cache expired/invalid. Recreating...")
                 del self._cache_store[cache_key]
         
         # === CREATE NEW CACHE ===
         try:
             if getattr(config, 'verbose_cache_logging', True):
-                print(f"\n{'='*80}")
-                print(f"🆕 CREATING EXPLICIT CACHE for model '{model_name}'")
-                print(f"   Uploading static classification rules to Gemini cache server...")
+                logger.info("=" * 80)
+                logger.info("🆕 CREATING EXPLICIT CACHE for model '%s'", model_name)
+                logger.info("   Uploading static classification rules to Gemini cache server...")
             
             t_start = time.time()
             
@@ -246,21 +248,21 @@ class ExplicitCacheManager:
                 token_count = 'unknown'
             
             if getattr(config, 'verbose_cache_logging', True):
-                print(f"   ✅ CACHE CREATED in {creation_time:.1f}s!")
-                print(f"   📦 Cache Name: {cache.name}")
-                print(f"   📊 Cached Tokens: {token_count}")
-                print(f"   ⏰ TTL: 1 hour (auto-expires)")
-                print(f"   💰 These tokens will now be billed at 90% discount for all subsequent calls!")
-                print(f"{'='*80}\n")
+                logger.info("   ✅ CACHE CREATED in %.1fs!", creation_time)
+                logger.info("   📦 Cache Name: %s", cache.name)
+                logger.info("   📊 Cached Tokens: %s", token_count)
+                logger.info("   ⏰ TTL: 1 hour (auto-expires)")
+                logger.info("   💰 These tokens will now be billed at 90%% discount for all subsequent calls!")
+                logger.info("=" * 80)
             
             return cache.name
             
         except Exception as e:
-            print(f"\n{'='*80}")
-            print(f"⚠️  EXPLICIT CACHE CREATION FAILED: {e}")
-            print(f"   Falling back to standard (non-cached) model.")
-            print(f"   This is NOT an error — classification will still work, just without caching discount.")
-            print(f"{'='*80}\n")
+            logger.warning("=" * 80)
+            logger.warning("⚠️  EXPLICIT CACHE CREATION FAILED: %s", e)
+            logger.warning("   Falling back to standard (non-cached) model.")
+            logger.warning("   This is NOT an error — classification will still work, just without caching discount.")
+            logger.warning("=" * 80)
             return None
     
     def track_and_print_listing_savings(self, ad_id: str, cached_tokens: int,
@@ -289,51 +291,49 @@ class ExplicitCacheManager:
         # Print per-listing savings
         if getattr(config, 'verbose_cache_logging', True):
             cache_type = "EXPLICIT" if is_explicit_cache else "IMPLICIT"
-            print(f"   💰 [{cache_type} CACHE HIT] Ad {ad_id}: "
-                  f"{cached_tokens:,} of {total_input_tokens:,} tokens cached ({cache_percent:.0f}%) | "
-                  f"Saved {listing_savings_cents:.4f}¢ on this listing | "
-                  f"Running total: ${self._total_savings_usd:.4f}")
+            logger.info("   💰 [%s CACHE HIT] Ad %s: %s of %s tokens cached (%.0f%%) | Saved %.4f¢ on this listing | Running total: $%.4f",
+                        cache_type, ad_id, f"{cached_tokens:,}", f"{total_input_tokens:,}", cache_percent, listing_savings_cents, self._total_savings_usd)
     
     def print_total_savings(self):
         """Prints a comprehensive session summary of caching savings."""
         if not getattr(config, 'verbose_cache_logging', True):
             return
-        print(f"\n{'='*80}")
-        print(f"📊 EXPLICIT CACHING — SESSION SAVINGS REPORT")
-        print(f"{'='*80}")
-        
+        logger.info("=" * 80)
+        logger.info("📊 EXPLICIT CACHING — SESSION SAVINGS REPORT")
+        logger.info("=" * 80)
+
         if self._total_listings_with_cache == 0:
-            print(f"   No cache hits recorded in this session.")
+            logger.info("   No cache hits recorded in this session.")
             if not CACHING_AVAILABLE:
-                print(f"   💡 Install SDK: pip install google-genai")
-            print(f"{'='*80}\n")
+                logger.info("   💡 Install SDK: pip install google-genai")
+            logger.info("=" * 80)
             return
-        
+
         total_savings_cents = self._total_savings_usd * 100
         avg_savings_per_listing = total_savings_cents / self._total_listings_with_cache
         total_tokens_processed = self._total_cached_tokens + self._total_non_cached_tokens
         overall_cache_rate = (self._total_cached_tokens / total_tokens_processed * 100) if total_tokens_processed > 0 else 0
-        
-        print(f"   🏗️  Caches Created:         {self._cache_creation_count}")
-        print(f"   📋 Listings with Cache Hit: {self._total_listings_with_cache}")
-        print(f"   📊 Total Cached Tokens:     {self._total_cached_tokens:,}")
-        print(f"   📊 Total Non-Cached Tokens: {self._total_non_cached_tokens:,}")
-        print(f"   🎯 Overall Cache Hit Rate:  {overall_cache_rate:.1f}%")
-        print(f"")
-        print(f"   💰 TOTAL COST SAVED:        ${self._total_savings_usd:.4f} ({total_savings_cents:.4f}¢)")
-        print(f"   💰 Avg Saving Per Listing:  {avg_savings_per_listing:.4f}¢")
-        print(f"")
-        
+
+        logger.info("   🏗️  Caches Created:         %d", self._cache_creation_count)
+        logger.info("   📋 Listings with Cache Hit: %d", self._total_listings_with_cache)
+        logger.info("   📊 Total Cached Tokens:     %s", f"{self._total_cached_tokens:,}")
+        logger.info("   📊 Total Non-Cached Tokens: %s", f"{self._total_non_cached_tokens:,}")
+        logger.info("   🎯 Overall Cache Hit Rate:  %.1f%%", overall_cache_rate)
+        logger.info("")
+        logger.info("   💰 TOTAL COST SAVED:        $%.4f (%.4f¢)", self._total_savings_usd, total_savings_cents)
+        logger.info("   💰 Avg Saving Per Listing:  %.4f¢", avg_savings_per_listing)
+        logger.info("")
+
         # Show what it would have cost without caching
         would_have_cost = self._total_cached_tokens / 1_000_000 * 0.30
         actually_cost = self._total_cached_tokens / 1_000_000 * 0.03
         discount_pct = (self._total_savings_usd / would_have_cost * 100) if would_have_cost > 0 else 0
-        
-        print(f"   💡 Without caching, these {self._total_cached_tokens:,} tokens would have cost:")
-        print(f"      Regular price: ${would_have_cost:.4f}")
-        print(f"      Cached price:  ${actually_cost:.4f}")
-        print(f"      You saved:     ${self._total_savings_usd:.4f} ({discount_pct:.0f}% discount)")
-        print(f"{'='*80}\n")
+
+        logger.info("   💡 Without caching, these %s tokens would have cost:", f"{self._total_cached_tokens:,}")
+        logger.info("      Regular price: $%.4f", would_have_cost)
+        logger.info("      Cached price:  $%.4f", actually_cost)
+        logger.info("      You saved:     $%.4f (%.0f%% discount)", self._total_savings_usd, discount_pct)
+        logger.info("=" * 80)
     
     def reset_tracking(self):
         """Reset all cost tracking counters."""

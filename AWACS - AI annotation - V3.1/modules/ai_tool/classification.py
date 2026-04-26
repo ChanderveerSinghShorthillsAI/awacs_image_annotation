@@ -23,6 +23,9 @@ with open(os.devnull, 'w') as f, contextlib.redirect_stdout(f), contextlib.redir
 from .config_loader import config
 from .utils import log_msg
 from .cache_manager import get_cache_manager
+from .awacs_logger import setup_logger
+
+logger = setup_logger("awacs.classification")
 
 _current_key_info = None
 _key_usage_stats = {}
@@ -103,95 +106,93 @@ def log_gemini_caching_info(response, call_type: str, ad_id: str = "", worker_id
     """
     if not getattr(config, 'verbose_cache_logging', True):
         return
-    print(f"\n{'#'*80}")
-    print(f"# GEMINI IMPLICIT CACHING ANALYSIS - {call_type}")
+    logger.info("#" * 80)
+    logger.info("# GEMINI IMPLICIT CACHING ANALYSIS - %s", call_type)
     if ad_id:
-        print(f"# Ad ID: {ad_id}")
-    print(f"{'#'*80}")
-    
+        logger.info("# Ad ID: %s", ad_id)
+    logger.info("#" * 80)
+
     # Get usage_metadata
     usage_metadata = getattr(response, 'usage_metadata', None)
     if not usage_metadata:
-        print("⚠️  WARNING: usage_metadata not found in response!")
-        print(f"{'#'*80}\n")
+        logger.warning("⚠️  WARNING: usage_metadata not found in response!")
+        logger.info("#" * 80)
         return
-    
+
     # Extract all available fields from usage_metadata
     prompt_tokens = getattr(usage_metadata, 'prompt_token_count', 0)
     candidates_tokens = getattr(usage_metadata, 'candidates_token_count', 0)
     total_tokens = getattr(usage_metadata, 'total_token_count', prompt_tokens + candidates_tokens)
-    
+
     # Cache-related fields (these are the key fields for implicit caching)
     cached_content_tokens = getattr(usage_metadata, 'cached_content_token_count', None)
-    
-    # Print all available attributes of usage_metadata for debugging
-    print(f"\n📊 USAGE_METADATA FIELDS:")
-    print(f"   - prompt_token_count: {prompt_tokens}")
-    print(f"   - candidates_token_count: {candidates_tokens}")
-    print(f"   - total_token_count: {total_tokens}")
-    
+
+    logger.info("📊 USAGE_METADATA FIELDS:")
+    logger.info("   - prompt_token_count: %s", prompt_tokens)
+    logger.info("   - candidates_token_count: %s", candidates_tokens)
+    logger.info("   - total_token_count: %s", total_tokens)
+
     # Check for cached_content_token_count (main cache indicator)
     if cached_content_tokens is not None:
-        print(f"   - cached_content_token_count: {cached_content_tokens} ✅")
+        logger.info("   - cached_content_token_count: %s ✅", cached_content_tokens)
     else:
-        print(f"   - cached_content_token_count: NOT AVAILABLE (may not be in response)")
-    
-    # Print all other attributes that might exist
-    print(f"\n🔍 ALL USAGE_METADATA ATTRIBUTES:")
+        logger.info("   - cached_content_token_count: NOT AVAILABLE (may not be in response)")
+
+    logger.info("🔍 ALL USAGE_METADATA ATTRIBUTES:")
     for attr in dir(usage_metadata):
         if not attr.startswith('_'):
             try:
                 value = getattr(usage_metadata, attr)
                 if not callable(value):
-                    print(f"   - {attr}: {value}")
+                    logger.info("   - %s: %s", attr, value)
             except:
                 pass
-    
+
     # Caching Analysis
-    print(f"\n💾 CACHING ANALYSIS:")
+    logger.info("💾 CACHING ANALYSIS:")
     if cached_content_tokens is not None:
         cache_hit = cached_content_tokens > 0
         cache_percentage = (cached_content_tokens / prompt_tokens * 100) if prompt_tokens > 0 else 0
         non_cached_tokens = prompt_tokens - cached_content_tokens
-        
-        print(f"   ✅ CACHING IS HAPPENING!")
-        print(f"   - Cache Hit: {'YES' if cache_hit else 'NO'}")
-        print(f"   - Cached Tokens: {cached_content_tokens}")
-        print(f"   - Non-Cached Tokens: {non_cached_tokens}")
-        print(f"   - Cache Hit Percentage: {cache_percentage:.2f}%")
-        print(f"   - Total Input Tokens: {prompt_tokens}")
-        print(f"   - Output Tokens: {candidates_tokens}")
-        
+
+        logger.info("   ✅ CACHING IS HAPPENING!")
+        logger.info("   - Cache Hit: %s", 'YES' if cache_hit else 'NO')
+        logger.info("   - Cached Tokens: %s", cached_content_tokens)
+        logger.info("   - Non-Cached Tokens: %s", non_cached_tokens)
+        logger.info("   - Cache Hit Percentage: %.2f%%", cache_percentage)
+        logger.info("   - Total Input Tokens: %s", prompt_tokens)
+        logger.info("   - Output Tokens: %s", candidates_tokens)
+
         if cache_hit:
-            print(f"\n   🎉 SUCCESS: {cached_content_tokens} tokens were served from cache!")
-            print(f"   💰 Cost Savings: Tokens from cache are typically cheaper/free")
+            logger.info("   🎉 SUCCESS: %s tokens were served from cache!", cached_content_tokens)
+            logger.info("   💰 Cost Savings: Tokens from cache are typically cheaper/free")
         else:
-            print(f"\n   ℹ️  No cache hit this time (cached_content_token_count = 0)")
-            print(f"   💡 Tip: Put large/common content at prompt beginning for better caching")
+            logger.info("   ℹ️  No cache hit this time (cached_content_token_count = 0)")
+            logger.info("   💡 Tip: Put large/common content at prompt beginning for better caching")
     else:
-        print(f"   ⚠️  Cannot determine cache status - cached_content_token_count not available")
-        print(f"   - This might mean:")
-        print(f"     * Implicit caching is not enabled for this model/request")
-        print(f"     * The field name is different in this API version")
-        print(f"     * Request didn't meet minimum token threshold for caching")
-    
+        logger.info("   ⚠️  Cannot determine cache status - cached_content_token_count not available")
+        logger.info("   - This might mean:")
+        logger.info("     * Implicit caching is not enabled for this model/request")
+        logger.info("     * The field name is different in this API version")
+        logger.info("     * Request didn't meet minimum token threshold for caching")
+
     # Model-specific cache thresholds (from official docs)
     if model_name is None:
         model_name = getattr(config, 'gemini_model', 'unknown')
-    print(f"\n📋 MODEL INFO:")
-    print(f"   - Model: {model_name}")
-    print(f"   - Minimum tokens for caching (from docs):")
+    logger.info("📋 MODEL INFO:")
+    logger.info("   - Model: %s", model_name)
+    logger.info("   - Minimum tokens for caching (from docs):")
     if 'flash' in model_name.lower() and '3' in model_name.lower():
-        print(f"     * Gemini 3 Flash: 1024 tokens")
+        logger.info("     * Gemini 3 Flash: 1024 tokens")
     elif 'pro' in model_name.lower() and '3' in model_name.lower():
-        print(f"     * Gemini 3 Pro: 4096 tokens")
+        logger.info("     * Gemini 3 Pro: 4096 tokens")
     elif 'flash' in model_name.lower() and '2.5' in model_name.lower():
-        print(f"     * Gemini 2.5 Flash: 1024 tokens")
+        logger.info("     * Gemini 2.5 Flash: 1024 tokens")
     elif 'pro' in model_name.lower() and '2.5' in model_name.lower():
-        print(f"     * Gemini 2.5 Pro: 4096 tokens")
+        logger.info("     * Gemini 2.5 Pro: 4096 tokens")
     else:
-        print(f"     * Check official docs for {model_name}")
-    
+        logger.info("     * Check official docs for %s", model_name)
+
     if prompt_tokens > 0:
         meets_threshold = False
         if 'flash' in model_name.lower():
@@ -202,16 +203,16 @@ def log_gemini_caching_info(response, call_type: str, ad_id: str = "", worker_id
             threshold = 4096
         else:
             threshold = 0
-        
+
         if threshold > 0:
             if meets_threshold:
-                print(f"   ✅ Request meets minimum token threshold ({threshold}) for caching")
+                logger.info("   ✅ Request meets minimum token threshold (%d) for caching", threshold)
             else:
-                print(f"   ⚠️  Request below minimum threshold ({threshold} tokens)")
-                print(f"      Current: {prompt_tokens} tokens")
-                print(f"      Need: {threshold - prompt_tokens} more tokens for caching eligibility")
-    
-    print(f"{'#'*80}\n")
+                logger.warning("   ⚠️  Request below minimum threshold (%d tokens)", threshold)
+                logger.info("      Current: %s tokens", prompt_tokens)
+                logger.info("      Need: %d more tokens for caching eligibility", threshold - prompt_tokens)
+
+    logger.info("#" * 80)
 
 # --- MOSAIC HELPER FUNCTIONS ---
 def create_image_mosaic(img_bytes1: bytes, img_bytes2: bytes) -> bytes:
@@ -483,11 +484,11 @@ Format your response as: "YES - [reason]" or "NO - [reason]"
             _token_usage_stats['api_calls'] += 1
             
             # Print LLM response to terminal
-            print(f"\n{'='*80}")
-            print(f"[PROMOTIONAL CHECK - Ad {ad_id}] LLM Response:")
-            print(f"{'='*80}")
-            print(response.text)
-            print(f"{'='*80}\n")
+            logger.info("=" * 80)
+            logger.info("[PROMOTIONAL CHECK - Ad %s] LLM Response:", ad_id)
+            logger.info("=" * 80)
+            logger.info("%s", response.text)
+            logger.info("=" * 80)
             
             # Parse response - handle both "YES" and "YES - reason" formats
             response_text = response.text.strip().upper()
@@ -1879,7 +1880,7 @@ Breadcrumb: "{breadcrumb}"
     # Log prompt structure
     cacheable_tokens_approx = len(cacheable_rules_prefix.split()) * 1.3
     if getattr(config, 'verbose_cache_logging', True):
-        print(f"\n💡 EXPLICIT CACHING: {int(cacheable_tokens_approx)}+ static tokens (cached server-side) + dynamic breadcrumb/image per ad")
+        logger.info("💡 EXPLICIT CACHING: %d+ static tokens (cached server-side) + dynamic breadcrumb/image per ad", int(cacheable_tokens_approx))
     
     max_retries = 3
     attempt = 0
@@ -1932,7 +1933,7 @@ Breadcrumb: "{breadcrumb}"
             if not using_explicit_cache:
                 # Fallback: use old google-generativeai SDK (standard non-cached call)
                 if getattr(config, 'verbose_cache_logging', True):
-                    print(f"   ℹ️  Falling back to standard (non-cached) API call")
+                    logger.info("   ℹ️  Falling back to standard (non-cached) API call")
                 model = setup_genai_client(config.gemini_model_classification)
                 all_parts = cacheable_content_parts + dynamic_parts
                 with open(os.devnull, 'w') as f, contextlib.redirect_stdout(f), contextlib.redirect_stderr(f):
@@ -1976,14 +1977,14 @@ Breadcrumb: "{breadcrumb}"
                 answer_text = response.text  # fallback if parts unavailable
 
             # Print LLM response to terminal
-            print(f"\n{'='*80}")
-            print(f"[CLASSIFICATION - Ad {ad_id}] LLM Response:")
-            print(f"{'='*80}")
+            logger.info("=" * 80)
+            logger.info("[CLASSIFICATION - Ad %s] LLM Response:", ad_id)
+            logger.info("=" * 80)
             if thought_text:
-                print(f"[THOUGHTS]\n{thought_text}")
-                print(f"{'─'*40}")
-            print(f"[ANSWER]\n{answer_text}")
-            print(f"{'='*80}\n")
+                logger.info("[THOUGHTS]\n%s", thought_text)
+                logger.info("─" * 40)
+            logger.info("[ANSWER]\n%s", answer_text)
+            logger.info("=" * 80)
 
             # Save thought summary to dedicated log file
             if config.enable_thought_summaries and thought_text:
@@ -2119,11 +2120,11 @@ def classify_with_refinement(categories: list, rule: dict, ad_img_bytes: bytes,
             _token_usage_stats['api_calls'] += 1
             
             # Print LLM response to terminal
-            print(f"\n{'='*80}")
-            print(f"[REFINEMENT - Ad {ad_id}] LLM Response:")
-            print(f"{'='*80}")
-            print(response.text)
-            print(f"{'='*80}\n")
+            logger.info("=" * 80)
+            logger.info("[REFINEMENT - Ad %s] LLM Response:", ad_id)
+            logger.info("=" * 80)
+            logger.info("%s", response.text)
+            logger.info("=" * 80)
             
             log_msg(f"📥 Refinement Response: {repr(response.text)} (In:{in_tok}/Out:{out_tok}, Cached:{cached_tok})", worker_id)
             
@@ -2765,7 +2766,7 @@ Examples:
     # Build cacheable parts list (for cache_manager)
     cacheable_dually_parts = [cacheable_dually_rules]
     
-    print(f"[DUALLY VERIFY] Ad {ad_id}: Sending mosaic of {len(valid_images)} image(s) for verification (EXPLICIT CACHE ENABLED)")
+    logger.info("[DUALLY VERIFY] Ad %s: Sending mosaic of %d image(s) for verification (EXPLICIT CACHE ENABLED)", ad_id, len(valid_images))
     
     max_retries = 3
     attempt = 0
@@ -2817,7 +2818,7 @@ Examples:
             if not using_explicit_cache:
                 # Fallback: use old google-generativeai SDK (standard non-cached call)
                 if getattr(config, 'verbose_cache_logging', True):
-                    print(f"   ℹ️  Dually: Falling back to standard (non-cached) API call")
+                    logger.info("   ℹ️  Dually: Falling back to standard (non-cached) API call")
                 model = setup_genai_client(config.gemini_model_dually_verification)
                 parts = [dynamic_intro + cacheable_dually_rules]
                 parts.append({
@@ -2853,11 +2854,11 @@ Examples:
             )
             
             # Print LLM response to terminal
-            print(f"\n{'='*80}")
-            print(f"[DUALLY VERIFICATION - Ad {ad_id}] LLM Response:")
-            print(f"{'='*80}")
-            print(response.text)
-            print(f"{'='*80}\n")
+            logger.info("=" * 80)
+            logger.info("[DUALLY VERIFICATION - Ad %s] LLM Response:", ad_id)
+            logger.info("=" * 80)
+            logger.info("%s", response.text)
+            logger.info("=" * 80)
             
             # Parse response
             response_text = response.text.strip().upper()
