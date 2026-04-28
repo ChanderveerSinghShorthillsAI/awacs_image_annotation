@@ -17,6 +17,14 @@ from cdc_pipeline.config import CDC_CONSUMER_TIMEOUT_MINUTES
 auto = "--auto" in sys.argv
 debug = "--debug" in sys.argv
 fresh = "--fresh" in sys.argv
+daemon = "--daemon" in sys.argv
+
+# Daemon mode is the long-running 24/7 deployment. It cannot coexist with
+# --auto (auto runs annotation after a bounded consumer session) or --timeout
+# (daemon mode never times out by design — rotation is signal-driven).
+if daemon and (auto or "--timeout" in sys.argv):
+    logger.error("--daemon is incompatible with --auto and --timeout")
+    sys.exit(2)
 
 # In auto mode, use env var timeout as default; --timeout N overrides it
 timeout_minutes = None
@@ -30,7 +38,7 @@ if auto:
             logger.error("--timeout requires an integer argument (minutes)")
             sys.exit(1)
 
-matched = run(debug=debug, fresh=fresh, timeout_minutes=timeout_minutes)
+matched = run(debug=debug, fresh=fresh, timeout_minutes=timeout_minutes, daemon=daemon)
 
 if auto:
     if matched and matched > 0:

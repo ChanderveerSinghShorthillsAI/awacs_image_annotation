@@ -1,0 +1,23 @@
+# /etc/systemd/system/cdc-annotate.service
+# End-of-day annotation run. Triggered by cdc-annotate.timer at 23:55 daily.
+# Drains the rotated file through /api/cdc-trigger.
+
+[Unit]
+Description=CDC end-of-day annotation run
+# Backend service must exist; if it doesn't, this run will fail loud which is
+# what we want (rather than silently retrying for 18 hours).
+After=cdc-consumer.service backend.service
+Requires=cdc-consumer.service
+
+[Service]
+Type=oneshot
+User=awacs
+WorkingDirectory=/opt/awacs/AWACS - AI annotation - V3.1
+EnvironmentFile=/etc/cdc/cdc.env
+ExecStart=/opt/awacs/venv/bin/python -m cdc_pipeline.run_eod
+
+# Expected runtime is 8-10h. 18h gives ~2x headroom; if we blow past that
+# something is broken, kill it and email.
+TimeoutStartSec=18h
+
+OnFailure=cdc-alert@%n.service

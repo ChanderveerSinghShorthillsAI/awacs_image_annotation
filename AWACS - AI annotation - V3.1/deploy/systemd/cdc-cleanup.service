@@ -1,0 +1,12 @@
+# /etc/systemd/system/cdc-cleanup.service
+# Backstop disk hygiene: removes rotated JSONL files older than 14 days.
+# The primary cleanup path is run_eod itself (deletes on success), so this
+# only catches files left from failed runs you forgot to address.
+
+[Unit]
+Description=Delete CDC rotated JSONL files older than 14 days
+
+[Service]
+Type=oneshot
+User=awacs
+ExecStart=/usr/bin/find /var/lib/cdc/rotated -maxdepth 1 -name "filtered_ads.*.jsonl" -mtime +14 -delete

@@ -1,0 +1,14 @@
+# /etc/systemd/system/cdc-alert@.service
+# Templated unit. Invoked via OnFailure=cdc-alert@%n.service on any of
+# cdc-tunnels / cdc-consumer / cdc-annotate. The instance name (%i) is
+# the failed unit's name (e.g. "cdc-consumer.service"), passed as $1
+# to send-alert.sh.
+
+[Unit]
+Description=Email alert for failed unit %i
+
+[Service]
+Type=oneshot
+User=awacs
+EnvironmentFile=/etc/cdc/smtp.env
+ExecStart=/opt/awacs/bin/send-alert.sh %i

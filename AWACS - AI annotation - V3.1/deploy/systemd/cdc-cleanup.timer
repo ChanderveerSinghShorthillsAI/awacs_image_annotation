@@ -1,0 +1,13 @@
+# /etc/systemd/system/cdc-cleanup.timer
+# Weekly disk-hygiene backstop, runs Sundays at 03:00.
+
+[Unit]
+Description=Weekly CDC rotated-file cleanup
+
+[Timer]
+OnCalendar=Sun 03:00:00
+Persistent=true
+Unit=cdc-cleanup.service
+
+[Install]
+WantedBy=timers.target

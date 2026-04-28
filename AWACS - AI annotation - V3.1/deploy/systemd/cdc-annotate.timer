@@ -1,0 +1,18 @@
+# /etc/systemd/system/cdc-annotate.timer
+# Fires cdc-annotate.service nightly. Persistent=true means a missed run
+# (e.g. VM was off) catches up at next boot.
+#
+# OnCalendar uses the VM's local timezone — set with:
+#   sudo timedatectl set-timezone Asia/Kolkata
+# Confirm with `timedatectl` before relying on the schedule.
+
+[Unit]
+Description=Run CDC EOD annotation at 23:55 daily
+
+[Timer]
+OnCalendar=*-*-* 23:55:00
+Persistent=true
+Unit=cdc-annotate.service
+
+[Install]
+WantedBy=timers.target

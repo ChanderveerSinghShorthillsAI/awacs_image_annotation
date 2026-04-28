@@ -62,15 +62,34 @@ TOPICS = [
 # Use separate consumer groups for dev and prod to avoid offset conflicts
 GROUP_ID = "awacs-truck-filter-prod" if IS_PROD else "awacs-truck-filter"
 
-OUTPUT_FILE = "cdc_pipeline/filtered_ads.jsonl"
-RAW_MESSAGES_FILE = "cdc_pipeline/raw_messages.jsonl"
+OUTPUT_FILE = os.environ.get("CDC_OUTPUT_FILE", "cdc_pipeline/filtered_ads.jsonl")
+RAW_MESSAGES_FILE = os.environ.get("CDC_RAW_MESSAGES_FILE", "cdc_pipeline/raw_messages.jsonl")
 SAVE_RAW_MESSAGES = os.environ.get("CDC_SAVE_RAW_MESSAGES", "false").strip().lower() == "true"
 SHOW_SUMMARY = os.environ.get("CDC_SHOW_SUMMARY", "false").strip().lower() == "true"
-SUMMARY_FILE = "cdc_pipeline/session_summary.json"
+SUMMARY_FILE = os.environ.get("CDC_SUMMARY_FILE", "cdc_pipeline/session_summary.json")
 TRUCK_REALM_ID = 4
 
 # --- Auto mode: consumer timeout (minutes) ---
 CDC_CONSUMER_TIMEOUT_MINUTES = int(os.environ.get("CDC_CONSUMER_TIMEOUT_MINUTES", "5"))
+
+# --- Daemon mode paths ---
+# Where rotated files land. run_eod.py reads the most recent rotation marker.
+CDC_ROTATED_DIR = os.environ.get("CDC_ROTATED_DIR", "cdc_pipeline/rotated")
+CDC_ROTATION_MARKER = os.environ.get("CDC_ROTATION_MARKER", "/run/cdc-rotated")
+CDC_CONSUMER_PIDFILE = os.environ.get("CDC_CONSUMER_PIDFILE", "/run/cdc-consumer.pid")
+CDC_ANNOTATE_LOCKFILE = os.environ.get("CDC_ANNOTATE_LOCKFILE", "/run/cdc-annotate.lock")
+
+# Soft cap on the active filtered_ads.jsonl in daemon mode (bytes).
+# Default 200 MB — at ~1-2 KB/line that's ~100k-200k ads, well above expected
+# 10k/day. Hitting this means upstream is misbehaving; consumer halts writes.
+CDC_DAEMON_FILE_SOFT_CAP_BYTES = int(os.environ.get("CDC_DAEMON_FILE_SOFT_CAP_BYTES", str(200 * 1024 * 1024)))
+
+# Sanity cap on the rotated file size before run_eod.py will hand it to the
+# annotation backend. Default 50 MB ≈ 50k ads, ~5x expected daily volume.
+CDC_EOD_FILE_MAX_BYTES = int(os.environ.get("CDC_EOD_FILE_MAX_BYTES", str(50 * 1024 * 1024)))
+
+# Minimum free percentage on /var/lib/cdc partition for run_eod.py to proceed.
+CDC_EOD_MIN_DISK_FREE_PCT = int(os.environ.get("CDC_EOD_MIN_DISK_FREE_PCT", "15"))
 
 # --- Pipeline integration ---
 BACKEND_URL = os.environ.get("CDC_BACKEND_URL", "http://localhost:8000")

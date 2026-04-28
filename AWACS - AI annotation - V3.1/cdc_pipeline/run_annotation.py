@@ -245,35 +245,51 @@ def clear_processed_file(filepath: str):
         logger.warning("Could not clear %s: %s", filepath, e)
 
 
-def main():
+def annotate_file(input_path: str, clear_on_success: bool = True) -> bool:
+    """Run the full annotate flow against a specific JSONL file.
+
+    Returns True on completion, raises on failure (so callers like run_eod can
+    decide whether to delete the rotated file). Does not call sys.exit on
+    backend errors — the underlying helpers still do, which is fine for the
+    CLI path; run_eod wraps this in a try/except.
+    """
     logger.info("=" * 60)
     logger.info("CDC Pipeline -> AI Annotation [%s]", CDC_ENV.upper())
+    logger.info("Input: %s", input_path)
     logger.info("=" * 60)
 
-    # Step 1: Read unique ad IDs
-    ad_ids = read_unique_ad_ids(OUTPUT_FILE)
-    logger.info("Found %d unique ad IDs from %s", len(ad_ids), OUTPUT_FILE)
+    ad_ids = read_unique_ad_ids(input_path)
+    logger.info("Found %d unique ad IDs from %s", len(ad_ids), input_path)
 
     if not ad_ids:
-        logger.info("No ads to process. Run the CDC consumer first.")
-        return
+        logger.info("No ads to process.")
+        return True
 
     logger.info("Ad IDs: %s%s", ad_ids[:10], "..." if len(ad_ids) > 10 else "")
     logger.info("-" * 60)
 
-    # Step 2: Trigger pipeline
     job_id = trigger_pipeline(ad_ids)
 
-    # Step 3: Poll until done
     try:
         poll_status(job_id)
-        # Pipeline completed successfully — archive and clear the jsonl file
-        # so the next run doesn't reprocess these ads
-        clear_processed_file(OUTPUT_FILE)
     except KeyboardInterrupt:
         logger.info("Stopped polling. Job %s is still running in the backend.", job_id)
         logger.info("Check status: curl %s/api/cdc-trigger/%s/status", BACKEND_URL, job_id)
-        logger.info("Note: %s was NOT cleared (job may still be running).", OUTPUT_FILE)
+        logger.info("Note: %s was NOT cleared (job may still be running).", input_path)
+        raise
+
+    if clear_on_success:
+        clear_processed_file(input_path)
+    return True
+
+
+def main():
+    """CLI entrypoint — operates on the default OUTPUT_FILE.
+
+    Daemon-mode rotated files are processed by cdc_pipeline.run_eod, which
+    calls annotate_file() directly with the rotated path.
+    """
+    annotate_file(OUTPUT_FILE, clear_on_success=True)
 
 
 if __name__ == "__main__":

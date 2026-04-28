@@ -1,0 +1,39 @@
+# /etc/systemd/system/cdc-consumer.service
+# 24/7 Kafka consumer daemon. Writes matched ads to
+# /var/lib/cdc/current/filtered_ads.jsonl. SIGUSR1 (sent by run_eod) atomically
+# rotates the file. systemd's StartLimit caps caps crashloops — 5 failures in
+# 10 minutes and the unit goes to "failed" and stays there until you SSH in.
+
+[Unit]
+Description=CDC Kafka consumer (daemon)
+After=cdc-tunnels.service
+Requires=cdc-tunnels.service
+
+[Service]
+Type=simple
+User=awacs
+WorkingDirectory=/opt/awacs/AWACS - AI annotation - V3.1
+EnvironmentFile=/etc/cdc/cdc.env
+ExecStart=/opt/awacs/venv/bin/python -m cdc_pipeline --daemon
+
+# Daemon owns its own PID file; consumer writes it at start, removes at exit.
+PIDFile=/run/cdc-consumer.pid
+
+# Restart on crash but cap the burst so a sustained failure does not loop.
+# On t3.large, an OOM-driven crashloop should fail fast — 3 attempts in 10
+# minutes is enough for a transient broker hiccup, but stops quickly if RAM
+# pressure or a config error is the real cause.
+Restart=on-failure
+RestartSec=30
+StartLimitBurst=3
+StartLimitIntervalSec=600
+
+# Send SIGTERM for clean shutdown (consumer flushes + commits offsets), then
+# SIGKILL after the grace period if it is still alive.
+KillSignal=SIGTERM
+TimeoutStopSec=30
+
+OnFailure=cdc-alert@%n.service
+
+[Install]
+WantedBy=multi-user.target

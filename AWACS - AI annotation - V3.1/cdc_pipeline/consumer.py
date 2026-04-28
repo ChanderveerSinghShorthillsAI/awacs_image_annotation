@@ -38,7 +38,12 @@ logger = setup_logger("awacs.cdc.consumer")
 _AD_MEMORY_TTL = 900  # 15 minutes
 
 from cdc_pipeline.config import (
+    CDC_ANNOTATE_LOCKFILE,  # noqa: F401  (re-exported for run_eod.py convenience)
+    CDC_CONSUMER_PIDFILE,
+    CDC_DAEMON_FILE_SOFT_CAP_BYTES,
     CDC_ENV,
+    CDC_ROTATED_DIR,
+    CDC_ROTATION_MARKER,
     GROUP_ID,
     IS_PROD,
     KAFKA_BOOTSTRAP_SERVERS,
@@ -89,7 +94,8 @@ def extract_summary(message: dict, filter_reason: str) -> dict:
     }
 
 
-def run(debug: bool = False, fresh: bool = False, timeout_minutes: int | None = None) -> int:
+def run(debug: bool = False, fresh: bool = False, timeout_minutes: int | None = None,
+        daemon: bool = False) -> int:
     logger.info("Mode: %s", MODE)
     logger.info("Environment: %s %s", CDC_ENV.upper(), "⚠️  PRODUCTION" if IS_PROD else "(dev)")
     logger.info("Connecting to Kafka at %s...", KAFKA_BOOTSTRAP_SERVERS)
@@ -97,19 +103,50 @@ def run(debug: bool = False, fresh: bool = False, timeout_minutes: int | None = 
     logger.info("Consumer group: %s", GROUP_ID)
     if fresh:
         logger.info(">>> FRESH mode: skipping backlog, listening for new messages only")
+    if daemon:
+        logger.info(">>> DAEMON mode: 24/7 long-running. SIGUSR1 rotates output file.")
     logger.info("Output: %s", OUTPUT_FILE)
     if timeout_minutes is not None:
         logger.info("Auto mode: consumer will stop after %d minute(s)", timeout_minutes)
     logger.info("-" * 60)
 
-    consumer = KafkaConsumer(
-        *TOPICS,
-        bootstrap_servers=KAFKA_BOOTSTRAP_SERVERS,
-        group_id=GROUP_ID,
-        auto_offset_reset="latest",
-        enable_auto_commit=True,
-        **KAFKA_SECURITY,
-    )
+    # In daemon mode, drop a PID file so run_eod can SIGUSR1 us.
+    if daemon:
+        try:
+            os.makedirs(os.path.dirname(CDC_CONSUMER_PIDFILE), exist_ok=True)
+            with open(CDC_CONSUMER_PIDFILE, "w", encoding="utf-8") as pf:
+                pf.write(str(os.getpid()))
+        except OSError as e:
+            logger.error("Cannot write PID file %s: %s", CDC_CONSUMER_PIDFILE, e)
+            # Non-fatal in dev (e.g. /run not writable on a laptop), but warn loudly.
+
+    # Bounded retry on Kafka connect: 5s/15s/60s/180s, then re-raise.
+    # Daemon mode rides over short broker hiccups without a process restart;
+    # one-shot modes still benefit from a single retry instead of crashing on
+    # a transient SASL refresh.
+    _kafka_backoffs = [5, 15, 60, 180]
+    consumer = None
+    for attempt, delay in enumerate([0] + _kafka_backoffs):
+        if delay:
+            logger.warning("Kafka connect retry in %ds (attempt %d/%d)...",
+                           delay, attempt, len(_kafka_backoffs))
+            time.sleep(delay)
+        try:
+            consumer = KafkaConsumer(
+                *TOPICS,
+                bootstrap_servers=KAFKA_BOOTSTRAP_SERVERS,
+                group_id=GROUP_ID,
+                auto_offset_reset="latest",
+                enable_auto_commit=True,
+                **KAFKA_SECURITY,
+            )
+            break
+        except Exception as e:
+            if attempt >= len(_kafka_backoffs):
+                logger.error("Kafka connect failed after %d retries: %s",
+                             len(_kafka_backoffs), e)
+                raise
+            logger.warning("Kafka connect failed: %s", e)
 
     if fresh:
         # Force seek to end of all assigned partitions, ignoring committed offsets
@@ -151,11 +188,34 @@ def run(debug: bool = False, fresh: bool = False, timeout_minutes: int | None = 
     start_time = time.monotonic()
     logger.info("Listening for messages... (Ctrl+C to stop)")
 
-    # Truncate filtered_ads.jsonl so every consumer session starts fresh
-    outfile = open(OUTPUT_FILE, "w", encoding="utf-8")
+    # Daemon mode opens in append mode so a consumer restart doesn't wipe
+    # un-rotated ads. One-shot modes truncate (existing behavior) so each
+    # session starts fresh.
+    _open_mode = "a" if daemon else "w"
+    outfile = open(OUTPUT_FILE, _open_mode, encoding="utf-8")
     rawfile = open(RAW_MESSAGES_FILE, "a", encoding="utf-8") if SAVE_RAW_MESSAGES else None
     if SAVE_RAW_MESSAGES:
         logger.info("Raw message logging: ENABLED -> %s", RAW_MESSAGES_FILE)
+
+    # Daemon-mode runtime state. write_disabled trips when the file exceeds the
+    # soft cap; we keep consuming Kafka (so offsets advance and we don't blow
+    # the broker retention), but stop appending until the operator intervenes.
+    rotate_pending = False
+    write_disabled = False
+
+    def request_rotation(signum, frame):
+        # SIGUSR1 handler. Set a flag and let the main loop perform the rename
+        # at a safe point — doing it inside the signal handler races with
+        # outfile.write/flush from the main thread.
+        nonlocal rotate_pending
+        logger.info("SIGUSR1 received — rotation requested")
+        rotate_pending = True
+
+    if daemon:
+        signal.signal(signal.SIGUSR1, request_rotation)
+
+    poll_failures = 0
+    _POLL_BACKOFFS = [5, 15, 60, 180]  # seconds; 4 retries then re-raise
 
     try:
         while running:
@@ -168,7 +228,69 @@ def run(debug: bool = False, fresh: bool = False, timeout_minutes: int | None = 
                     running = False
                     break
 
-            records = consumer.poll(timeout_ms=1000)
+            # Daemon-mode rotation: rename current file, reopen fresh handle,
+            # write marker file with the rotated path so run_eod.py can find it.
+            if daemon and rotate_pending:
+                rotate_pending = False
+                try:
+                    outfile.flush()
+                    outfile.close()
+                    os.makedirs(CDC_ROTATED_DIR, exist_ok=True)
+                    rotated_name = "filtered_ads.{}.jsonl".format(
+                        datetime.now(timezone.utc).strftime("%Y-%m-%dT%H-%M-%SZ"))
+                    rotated_path = os.path.join(CDC_ROTATED_DIR, rotated_name)
+                    os.rename(OUTPUT_FILE, rotated_path)
+                    outfile = open(OUTPUT_FILE, "a", encoding="utf-8")
+                    write_disabled = False  # fresh file — clear any prior cap trip
+                    try:
+                        os.makedirs(os.path.dirname(CDC_ROTATION_MARKER) or ".",
+                                    exist_ok=True)
+                        with open(CDC_ROTATION_MARKER, "w", encoding="utf-8") as mf:
+                            mf.write(rotated_path + "\n")
+                    except OSError as e:
+                        # Marker is best-effort; run_eod will time out and alert.
+                        logger.error("Could not write rotation marker %s: %s",
+                                     CDC_ROTATION_MARKER, e)
+                    logger.info("Rotated -> %s", rotated_path)
+                except OSError as e:
+                    # Rotation failed (e.g. cross-device rename, permission).
+                    # Keep running on the old file rather than crashing the daemon.
+                    logger.error("Rotation failed: %s — continuing on existing file", e)
+                    try:
+                        outfile = open(OUTPUT_FILE, "a", encoding="utf-8")
+                    except OSError as e2:
+                        logger.error("Cannot reopen %s after failed rotation: %s",
+                                     OUTPUT_FILE, e2)
+                        running = False
+                        break
+
+            # Daemon-mode soft cap: stop writing if the active file exceeds the
+            # configured byte cap. We keep polling so Kafka offsets advance.
+            if daemon and not write_disabled:
+                try:
+                    if os.path.getsize(OUTPUT_FILE) > CDC_DAEMON_FILE_SOFT_CAP_BYTES:
+                        logger.error(
+                            "Soft cap %d bytes exceeded for %s — halting writes "
+                            "until rotation. Investigate upstream.",
+                            CDC_DAEMON_FILE_SOFT_CAP_BYTES, OUTPUT_FILE)
+                        write_disabled = True
+                except OSError:
+                    pass
+
+            try:
+                records = consumer.poll(timeout_ms=1000)
+                poll_failures = 0  # reset on any successful poll
+            except Exception as e:
+                if poll_failures >= len(_POLL_BACKOFFS):
+                    logger.error("Kafka poll failed after %d retries: %s",
+                                 len(_POLL_BACKOFFS), e)
+                    raise
+                delay = _POLL_BACKOFFS[poll_failures]
+                poll_failures += 1
+                logger.warning("Kafka poll error (%d/%d), backing off %ds: %s",
+                               poll_failures, len(_POLL_BACKOFFS), delay, e)
+                time.sleep(delay)
+                continue
             for tp, messages in records.items():
                 for record in messages:
                     if not running:
@@ -269,8 +391,9 @@ def run(debug: bool = False, fresh: bool = False, timeout_minutes: int | None = 
 
                         matched += 1
                         summary = extract_summary(message, reason)
-                        outfile.write(json.dumps(summary) + "\n")
-                        outfile.flush()
+                        if not write_disabled:
+                            outfile.write(json.dumps(summary) + "\n")
+                            outfile.flush()
 
                         if rawfile:
                             raw_envelope = {
@@ -315,10 +438,24 @@ def run(debug: bool = False, fresh: bool = False, timeout_minutes: int | None = 
                         logger.info("Processed: %d | Skipped: %d | Trucks: %d | Matched: %d | Suppressed: %d", total, skipped, trucks, matched, suppressed)
 
     finally:
-        outfile.close()
+        try:
+            outfile.close()
+        except Exception:
+            pass
         if rawfile:
-            rawfile.close()
-        consumer.close()
+            try:
+                rawfile.close()
+            except Exception:
+                pass
+        try:
+            consumer.close()
+        except Exception:
+            pass
+        if daemon:
+            try:
+                os.remove(CDC_CONSUMER_PIDFILE)
+            except OSError:
+                pass
         logger.info("=" * 60)
         logger.info("Done. Processed %d messages, %d skipped, %d trucks, %d matched, %d suppressed.", total, skipped, trucks, matched, suppressed)
         logger.info("Filtered ads saved to: %s", OUTPUT_FILE)
