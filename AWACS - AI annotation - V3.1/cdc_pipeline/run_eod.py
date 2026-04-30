@@ -41,7 +41,9 @@ from cdc_pipeline.config import (
 from cdc_pipeline.run_annotation import annotate_file
 
 
-_ROTATION_WAIT_SECONDS = 30
+# Must be longer than the longest Kafka retry backoff (180s) so rotation
+# succeeds even if the consumer is mid-backoff when SIGUSR1 arrives.
+_ROTATION_WAIT_SECONDS = 300
 
 
 def _acquire_lock() -> bool:

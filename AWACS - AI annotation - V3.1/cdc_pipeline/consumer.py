@@ -120,6 +120,28 @@ def run(debug: bool = False, fresh: bool = False, timeout_minutes: int | None = 
             logger.error("Cannot write PID file %s: %s", CDC_CONSUMER_PIDFILE, e)
             # Non-fatal in dev (e.g. /run not writable on a laptop), but warn loudly.
 
+    # All signal handlers registered before the Kafka retry loop so signals
+    # arriving during backoff sleeps are handled correctly instead of using
+    # Python's default handlers (which would crash the process on SIGUSR1).
+    running = True
+    rotate_pending = False
+
+    def shutdown(signum, frame):
+        nonlocal running
+        logger.info("=" * 60)
+        logger.info("Shutting down...")
+        running = False
+
+    def request_rotation(signum, frame):
+        nonlocal rotate_pending
+        logger.info("SIGUSR1 received — rotation requested")
+        rotate_pending = True
+
+    signal.signal(signal.SIGINT, shutdown)
+    signal.signal(signal.SIGTERM, shutdown)
+    if daemon:
+        signal.signal(signal.SIGUSR1, request_rotation)
+
     # Bounded retry on Kafka connect: 5s/15s/60s/180s, then re-raise.
     # Daemon mode rides over short broker hiccups without a process restart;
     # one-shot modes still benefit from a single retry instead of crashing on
@@ -130,7 +152,17 @@ def run(debug: bool = False, fresh: bool = False, timeout_minutes: int | None = 
         if delay:
             logger.warning("Kafka connect retry in %ds (attempt %d/%d)...",
                            delay, attempt, len(_kafka_backoffs))
-            time.sleep(delay)
+            # Sleep in 1-second increments so SIGTERM exits promptly
+            for _ in range(delay):
+                if not running:
+                    logger.info("Shutdown requested during retry backoff — exiting.")
+                    if daemon:
+                        try:
+                            os.remove(CDC_CONSUMER_PIDFILE)
+                        except OSError:
+                            pass
+                    return 0
+                time.sleep(1)
         try:
             consumer = KafkaConsumer(
                 *TOPICS,
@@ -160,7 +192,6 @@ def run(debug: bool = False, fresh: bool = False, timeout_minutes: int | None = 
     matched = 0
     skipped = 0
     suppressed = 0
-    running = True
 
     # Track recently seen ads: {ad_id: {"reason": str, "first_seen": float}}
     # If an ad was first classified as "new_ad", subsequent photo_update
@@ -176,15 +207,6 @@ def run(debug: bool = False, fresh: bool = False, timeout_minutes: int | None = 
     # Periodic status logging interval (every N messages)
     _STATUS_LOG_INTERVAL = 100
 
-    def shutdown(signum, frame):
-        nonlocal running
-        logger.info("=" * 60)
-        logger.info("Shutting down...")
-        running = False
-
-    signal.signal(signal.SIGINT, shutdown)
-    signal.signal(signal.SIGTERM, shutdown)
-
     start_time = time.monotonic()
     logger.info("Listening for messages... (Ctrl+C to stop)")
 
@@ -197,22 +219,8 @@ def run(debug: bool = False, fresh: bool = False, timeout_minutes: int | None = 
     if SAVE_RAW_MESSAGES:
         logger.info("Raw message logging: ENABLED -> %s", RAW_MESSAGES_FILE)
 
-    # Daemon-mode runtime state. write_disabled trips when the file exceeds the
-    # soft cap; we keep consuming Kafka (so offsets advance and we don't blow
-    # the broker retention), but stop appending until the operator intervenes.
-    rotate_pending = False
+    # write_disabled trips when the active file exceeds the soft cap.
     write_disabled = False
-
-    def request_rotation(signum, frame):
-        # SIGUSR1 handler. Set a flag and let the main loop perform the rename
-        # at a safe point — doing it inside the signal handler races with
-        # outfile.write/flush from the main thread.
-        nonlocal rotate_pending
-        logger.info("SIGUSR1 received — rotation requested")
-        rotate_pending = True
-
-    if daemon:
-        signal.signal(signal.SIGUSR1, request_rotation)
 
     poll_failures = 0
     _POLL_BACKOFFS = [5, 15, 60, 180]  # seconds; 4 retries then re-raise

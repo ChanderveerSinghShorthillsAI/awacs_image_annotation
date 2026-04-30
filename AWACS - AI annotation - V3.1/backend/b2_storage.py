@@ -66,9 +66,14 @@ def init_b2(config) -> bool:
     key_id = getattr(config, "b2_key_id", "")
     app_key = getattr(config, "b2_application_key", "")
     endpoint_url = getattr(config, "b2_endpoint_url", "")
-    region = getattr(config, "b2_region", "us-west-004")
+    region = getattr(config, "b2_region", "us-east-1")
 
-    if not key_id or not app_key or not endpoint_url:
+    # Native AWS S3: endpoint_url is empty, credentials come from the
+    # EC2 instance role (or AWS_PROFILE env var locally). No explicit
+    # key_id / app_key needed.
+    # Backblaze B2: endpoint_url is set AND key_id + app_key are required.
+    is_native_s3 = not endpoint_url
+    if not is_native_s3 and (not key_id or not app_key):
         logger.warning("[B2] ⚠️  Enabled but missing credentials — falling back to local storage")
         _b2_enabled = False
         return False
@@ -77,11 +82,7 @@ def init_b2(config) -> bool:
         import boto3
         from botocore.config import Config as BotoConfig
 
-        _s3_client = boto3.client(
-            "s3",
-            endpoint_url=endpoint_url,
-            aws_access_key_id=key_id,
-            aws_secret_access_key=app_key,
+        client_kwargs = dict(
             region_name=region,
             config=BotoConfig(
                 signature_version="s3v4",
@@ -89,6 +90,13 @@ def init_b2(config) -> bool:
                 request_checksum_calculation="when_required",
             ),
         )
+        if not is_native_s3:
+            # B2 or other S3-compatible: explicit endpoint + static creds
+            client_kwargs["endpoint_url"] = endpoint_url
+            client_kwargs["aws_access_key_id"] = key_id
+            client_kwargs["aws_secret_access_key"] = app_key
+
+        _s3_client = boto3.client("s3", **client_kwargs)
         _bucket_name = getattr(config, "b2_bucket_name", "awacs-outputs")
         _presigned_url_expiry = getattr(config, "b2_presigned_url_expiry", 3600)
         _upload_executor = ThreadPoolExecutor(max_workers=3, thread_name_prefix="b2-upload")

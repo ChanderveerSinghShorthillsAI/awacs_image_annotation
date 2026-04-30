@@ -3,12 +3,13 @@
 # cdc-tunnels / cdc-consumer / cdc-annotate. The instance name (%i) is
 # the failed unit's name (e.g. "cdc-consumer.service"), passed as $1
 # to send-alert.sh.
+# Credentials come from the EC2 instance role — no env file needed.
 
 [Unit]
-Description=Email alert for failed unit %i
+Description=SNS alert for failed unit %i
 
 [Service]
 Type=oneshot
 User=awacs
-EnvironmentFile=/etc/cdc/smtp.env
+EnvironmentFile=/etc/cdc/sns.env
 ExecStart=/opt/awacs/bin/send-alert.sh %i

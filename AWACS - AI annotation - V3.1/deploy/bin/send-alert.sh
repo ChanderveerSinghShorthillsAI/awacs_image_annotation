@@ -1,11 +1,8 @@
 #!/usr/bin/env bash
 # Install path on the VM: /opt/awacs/bin/send-alert.sh
-# Sends an email via Gmail SMTP when a systemd unit fails.
-#
-# Reads SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_PASS, ALERT_TO from environment
-# (provided via EnvironmentFile=/etc/cdc/smtp.env in cdc-alert@.service).
-#
-# Usage: send-alert.sh <failed-unit-name>
+# Sends an SNS notification when a systemd unit fails.
+# Credentials come from the EC2 instance role — no static keys needed.
+# SNS_TOPIC_ARN is read from /etc/cdc/sns.env via EnvironmentFile= in the unit.
 
 set -euo pipefail
 
@@ -13,42 +10,19 @@ UNIT="${1:-unknown.service}"
 HOST="$(hostname -f 2>/dev/null || hostname)"
 TS="$(date -u +'%Y-%m-%dT%H:%M:%SZ')"
 
-# Pull last 50 log lines from the failing unit so the email is actionable.
-# --no-pager keeps it from hanging waiting for a TTY.
-BODY="$(journalctl -u "$UNIT" -n 50 --no-pager 2>&1 || true)"
+# Last 30 journal lines from the failing unit
+BODY="$(journalctl -u "$UNIT" -n 30 --no-pager 2>&1 || true)"
 
-# Sanity-check required env vars are present. If anything is missing we still
-# want a loud failure rather than a silent skip — let set -u trigger and
-# systemd will record the exit code.
-: "${SMTP_HOST:?missing}" "${SMTP_PORT:?missing}" "${SMTP_USER:?missing}" "${SMTP_PASS:?missing}" "${ALERT_TO:?missing}"
+: "${SNS_TOPIC_ARN:?SNS_TOPIC_ARN not set in /etc/cdc/sns.env}"
+: "${AWS_DEFAULT_REGION:=us-east-1}"
 
-export UNIT HOST TS BODY
+MESSAGE="CDC FAILURE: $UNIT on $HOST at $TS
 
-PYTHON_BIN="${PYTHON_BIN:-/opt/awacs/venv/bin/python}"
+--- last 30 journal lines ---
+$BODY"
 
-"$PYTHON_BIN" - <<'PY'
-import os, smtplib, ssl
-from email.message import EmailMessage
-
-unit = os.environ["UNIT"]
-host = os.environ["HOST"]
-ts   = os.environ["TS"]
-body = os.environ["BODY"]
-
-m = EmailMessage()
-m["Subject"] = f"[CDC] {unit} failed on {host} at {ts}"
-m["From"]    = os.environ["SMTP_USER"]
-m["To"]      = os.environ["ALERT_TO"]
-m.set_content(
-    f"Unit:   {unit}\n"
-    f"Host:   {host}\n"
-    f"Time:   {ts}\n\n"
-    f"--- last 50 journal lines ---\n{body}\n"
-)
-
-ctx = ssl.create_default_context()
-with smtplib.SMTP(os.environ["SMTP_HOST"], int(os.environ["SMTP_PORT"]), timeout=30) as s:
-    s.starttls(context=ctx)
-    s.login(os.environ["SMTP_USER"], os.environ["SMTP_PASS"])
-    s.send_message(m)
-PY
+aws sns publish \
+    --region "$AWS_DEFAULT_REGION" \
+    --topic-arn "$SNS_TOPIC_ARN" \
+    --subject "CDC failure: $UNIT on $HOST" \
+    --message "$MESSAGE"
