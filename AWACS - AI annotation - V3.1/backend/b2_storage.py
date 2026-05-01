@@ -104,7 +104,9 @@ def init_b2(config) -> bool:
 
         # Quick connectivity check — list 0 objects
         _s3_client.list_objects_v2(Bucket=_bucket_name, MaxKeys=1)
-        logger.info("[B2] ✅ Connected to bucket '%s' at %s", _bucket_name, endpoint_url)
+        storage_target = endpoint_url if endpoint_url else f"s3://{_bucket_name} (AWS S3, {region})"
+        print(f"[B2] ✅ Connected to bucket '{_bucket_name}' at {storage_target}")
+        logger.info("[B2] ✅ Connected to bucket '%s' at %s", _bucket_name, storage_target)
         return True
 
     except Exception as e:
