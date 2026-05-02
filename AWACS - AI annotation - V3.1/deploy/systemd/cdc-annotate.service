@@ -8,6 +8,7 @@ Description=CDC end-of-day annotation run
 # what we want (rather than silently retrying for 18 hours).
 After=cdc-consumer.service backend.service
 Requires=cdc-consumer.service
+OnFailure=cdc-alert@%n.service
 
 [Service]
 Type=oneshot
@@ -19,5 +20,3 @@ ExecStart=/opt/awacs/venv/bin/python -m cdc_pipeline.run_eod
 # Expected runtime is 8-10h. 18h gives ~2x headroom; if we blow past that
 # something is broken, kill it and email.
 TimeoutStartSec=18h
-
-OnFailure=cdc-alert@%n.service

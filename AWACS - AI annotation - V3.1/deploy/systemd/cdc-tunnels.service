@@ -9,6 +9,9 @@ Description=CDC AWS SSM tunnels to MSK
 After=network-online.target docker.service
 Wants=network-online.target
 Requires=docker.service
+StartLimitBurst=3
+StartLimitIntervalSec=900
+OnFailure=cdc-alert@%n.service
 
 [Service]
 Type=oneshot
@@ -22,11 +25,6 @@ User=awacs
 # Cap restart attempts so a sustained AWS outage doesn't infinite-loop us.
 Restart=on-failure
 RestartSec=60
-StartLimitBurst=3
-StartLimitIntervalSec=900
-
-# Email alert when the unit fails terminally.
-OnFailure=cdc-alert@%n.service
 
 [Install]
 WantedBy=multi-user.target
