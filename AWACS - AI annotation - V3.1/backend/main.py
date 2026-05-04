@@ -1476,7 +1476,10 @@ def run_db_annotation_pipeline_sync(job_id: str, file_path: str, b2_folder_overr
         df = pd.read_excel(file_path, dtype={"Ad ID": str})
         df["Ad ID"] = df["Ad ID"].astype(str).str.replace(r'\.0$', '', regex=True).str.strip()
 
-        # Fetch file fully loaded into DataFrame — delete local tmp copy (already on B2)
+        # Fetch file fully loaded into DataFrame — flush pending B2 uploads first
+        # to avoid race condition where the file is deleted before the async
+        # upload thread has finished reading it from disk.
+        flush_uploads()
         if os.path.exists(file_path):
             try:
                 os.remove(file_path)
@@ -1648,7 +1651,10 @@ def run_db_annotation_pipeline_sync(job_id: str, file_path: str, b2_folder_overr
             final_result_df = pd.concat(batch_dfs, ignore_index=True)
             del batch_dfs  # Free memory
 
-            # Batch files combined into final output — delete local tmp copies (already on B2)
+            # Batch files combined into final output — flush pending B2 uploads
+            # before deleting local copies to avoid race condition where async
+            # upload thread is still reading a file we just deleted.
+            flush_uploads()
             for bp in batch_files:
                 if os.path.exists(bp):
                     try:
