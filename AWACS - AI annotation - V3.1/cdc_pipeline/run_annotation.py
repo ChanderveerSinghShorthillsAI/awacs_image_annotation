@@ -225,7 +225,7 @@ def poll_status(job_id: str):
                 return
             elif status == "failed":
                 logger.error("Job %s FAILED: %s", job_id, data.get("error", "unknown error"))
-                sys.exit(1)
+                raise RuntimeError(f"Job {job_id} failed: {data.get('error', 'unknown error')}")
             else:
                 logger.info("Status: %s | Ads: %s", status, data.get("total_ads", "?"))
 
