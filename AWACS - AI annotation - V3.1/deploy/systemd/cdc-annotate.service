@@ -19,4 +19,4 @@ ExecStart=/opt/awacs/venv/bin/python -m cdc_pipeline.run_eod
 
 # Expected runtime is 8-10h. 18h gives ~2x headroom; if we blow past that
 # something is broken, kill it and email.
-TimeoutStartSec=18h
+TimeoutStartSec=30h
