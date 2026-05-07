@@ -71,8 +71,8 @@ def has_photo_changes(message: dict) -> bool:
     Ignores noisy metadata fields like glCityId that appear in every diff.
     """
     # Fields on a photo entry that indicate the actual image changed
-    SIGNIFICANT_FIELDS = {"mediaApiId", "photoBarcode", "displayOrder", "caption",
-                          "path", "altBarcode", "altThumbCode"}
+    SIGNIFICANT_FIELDS = {"mediaApiId", "photoBarcode", "path",
+                          "altBarcode", "altThumbCode"}
 
     diff = message.get("diff", {})
     if not diff:
