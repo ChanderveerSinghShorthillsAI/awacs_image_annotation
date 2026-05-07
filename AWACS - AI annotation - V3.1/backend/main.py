@@ -128,7 +128,10 @@ _AWACS_TEMP_PREFIXES = (
 # How long (in hours) to keep temp output files before deleting them.
 # Files older than this are removed by the background cleanup thread.
 # When B2 is enabled, files are backed up to cloud so local copies expire faster.
-_TEMP_FILE_MAX_AGE_HOURS = 1 if getattr(config, 'b2_enabled', False) else 24
+# Keep temp batch files for 24h regardless of S3 status.
+# The merge step reads all batch files from /tmp/ after annotation completes —
+# deleting them after 1h caused failures for jobs longer than 1h (e.g. 8000+ ads).
+_TEMP_FILE_MAX_AGE_HOURS = 24
 
 # How often (in seconds) the background cleanup thread runs.
 _TEMP_CLEANUP_INTERVAL_SECONDS = 3600  # every hour
@@ -1690,7 +1693,11 @@ def run_db_annotation_pipeline_sync(job_id: str, file_path: str, b2_folder_overr
         job['output_file'] = output_path
         job['output_filename'] = output_filename
         output_b2_folder = b2_folder_override or 'db-annotated'
-        job['b2_key'] = _upload_and_track(output_path, output_b2_folder, output_filename)
+        # Upload async but keep local file — DB update (Step 6) reads this file
+        # from disk. delete_local=False prevents the async upload thread from
+        # deleting it before the DB update finishes. Cleanup happens at line 4095.
+        job['b2_key'] = _upload_and_track(output_path, output_b2_folder, output_filename,
+                                           delete_local=False)
         job['total_cost'] = float(total_cost)
         job['annotation_cost'] = float(total_annotation_cost)
         job['dually_verification_cost'] = float(total_dually_cost)
