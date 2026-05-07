@@ -1,3 +1,6 @@
+from cdc_pipeline.config import COLLECT_PHOTO_UPDATES
+
+
 def _get_realm_id(message: dict) -> int | None:
     """Extract realm id from wherever it appears in the message.
 
@@ -122,8 +125,7 @@ def classify_message(message: dict) -> str | None:
         return "new_ad"
 
     # Controlled by CDC_COLLECT_PHOTO_UPDATES env var (default: true)
-    # Set to false in cdc_pipeline/.env or /etc/cdc/cdc.env to collect new_ads only
-    from cdc_pipeline.config import COLLECT_PHOTO_UPDATES
+    # Set to false in /etc/cdc/cdc.env to collect new_ads only
     if COLLECT_PHOTO_UPDATES and has_photo_changes(message):
         return "photo_update"
 
