@@ -3896,6 +3896,10 @@ def run_cdc_pipeline_sync(job_id: str, ad_ids: list, client_id: str, client_secr
 
             token_data = _cdc_get_access_token(db_api_base_url, client_id, client_secret, grant_type)
             access_token = token_data['access_token']
+            # Log token expiry so we can monitor for long fetch jobs
+            fetch_token_expires_in = token_data.get('expires_in', 'unknown')
+            logger.info("   Fetch token expires_in: %s seconds", fetch_token_expires_in)
+            fetch_token_obtained_at = time.time()
             logger.info("=" * 80)
 
             # ========== STEP 2: Fetch Trucks via Prod API (Multithreaded) ==========
@@ -3913,7 +3917,24 @@ def run_cdc_pipeline_sync(job_id: str, ad_ids: list, client_id: str, client_secr
             max_workers = 5
             logger.info("   Starting %d concurrent fetch workers...", max_workers)
 
+            # Refresh token if it expires during fetch (safety net for large batches)
+            try:
+                _expires_seconds = int(fetch_token_expires_in)
+            except (TypeError, ValueError):
+                _expires_seconds = 3600  # default 1 hour if not provided
+            fetch_token_expiry = fetch_token_obtained_at + _expires_seconds - 60
+
             with ThreadPoolExecutor(max_workers=max_workers) as executor:
+                # Refresh token before submitting if near expiry
+                if time.time() >= fetch_token_expiry:
+                    logger.info("   🔄 Fetch token near expiry — refreshing before batch submit...")
+                    token_data = _cdc_get_access_token(db_api_base_url, client_id, client_secret, grant_type)
+                    access_token = token_data['access_token']
+                    try:
+                        _expires_seconds = int(token_data.get('expires_in', 3600))
+                    except (TypeError, ValueError):
+                        _expires_seconds = 3600
+                    fetch_token_expiry = time.time() + _expires_seconds - 60
                 future_to_ad_id = {
                     executor.submit(_fetch_single_truck_worker, ad_id, access_token, i, len(ad_ids),
                                     base_url=prod_trucks_url): ad_id
