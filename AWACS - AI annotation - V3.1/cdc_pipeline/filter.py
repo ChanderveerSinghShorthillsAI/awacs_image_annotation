@@ -121,7 +121,10 @@ def classify_message(message: dict) -> str | None:
     if is_new_ad(message):
         return "new_ad"
 
-    if has_photo_changes(message):
+    # Controlled by CDC_COLLECT_PHOTO_UPDATES env var (default: true)
+    # Set to false in cdc_pipeline/.env or /etc/cdc/cdc.env to collect new_ads only
+    from cdc_pipeline.config import COLLECT_PHOTO_UPDATES
+    if COLLECT_PHOTO_UPDATES and has_photo_changes(message):
         return "photo_update"
 
     return None

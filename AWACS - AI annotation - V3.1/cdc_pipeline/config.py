@@ -59,8 +59,12 @@ TOPICS = [
     "traderinteractive.ads.aggregate.diff",
 ]
 
-# Use separate consumer groups for dev and prod to avoid offset conflicts
-GROUP_ID = "awacs-truck-filter-prod" if IS_PROD else "awacs-truck-filter"
+# Use separate consumer groups for dev and prod to avoid offset conflicts.
+# CDC_GROUP_ID_OVERRIDE allows local testing with prod creds without
+# affecting the prod VM's committed offsets (e.g. set to
+# "awacs-truck-filter-prod-local" on your laptop).
+_default_group = "awacs-truck-filter-prod" if IS_PROD else "awacs-truck-filter"
+GROUP_ID = os.environ.get("CDC_GROUP_ID_OVERRIDE", _default_group)
 
 OUTPUT_FILE = os.environ.get("CDC_OUTPUT_FILE", "cdc_pipeline/filtered_ads.jsonl")
 RAW_MESSAGES_FILE = os.environ.get("CDC_RAW_MESSAGES_FILE", "cdc_pipeline/raw_messages.jsonl")
@@ -68,6 +72,11 @@ SAVE_RAW_MESSAGES = os.environ.get("CDC_SAVE_RAW_MESSAGES", "false").strip().low
 SHOW_SUMMARY = os.environ.get("CDC_SHOW_SUMMARY", "false").strip().lower() == "true"
 SUMMARY_FILE = os.environ.get("CDC_SUMMARY_FILE", "cdc_pipeline/session_summary.json")
 TRUCK_REALM_ID = 4
+
+# Toggle photo_update collection on/off via env var.
+# Set CDC_COLLECT_PHOTO_UPDATES=false to collect only new_ad events.
+# Default: true (collect both new_ad and photo_update)
+COLLECT_PHOTO_UPDATES = os.environ.get("CDC_COLLECT_PHOTO_UPDATES", "true").strip().lower() == "true"
 
 # --- Auto mode: consumer timeout (minutes) ---
 CDC_CONSUMER_TIMEOUT_MINUTES = int(os.environ.get("CDC_CONSUMER_TIMEOUT_MINUTES", "5"))
