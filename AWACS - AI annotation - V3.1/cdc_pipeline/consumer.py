@@ -56,7 +56,7 @@ from cdc_pipeline.config import (
     SUMMARY_FILE,
     TOPICS,
 )
-from cdc_pipeline.filter import classify_message, has_valid_class_id, is_truck_ad
+from cdc_pipeline.filter import classify_message, is_truck_ad
 
 def extract_summary(message: dict, filter_reason: str) -> dict:
     """Extract only the essential fields from a matched message."""
@@ -343,10 +343,7 @@ def run(debug: bool = False, fresh: bool = False, timeout_minutes: int | None = 
                     if debug and truck and not reason:
                         diff_ops = message.get("diff", {}).get("operations", [])
                         paths = [op.get("path", "") for op in diff_ops]
-                        cls = message.get("class")
-                        cls_id = cls.get("id") if isinstance(cls, dict) else None
-                        valid_cls = has_valid_class_id(message)
-                        logger.debug("[DEBUG] Truck ad %s not matched | class=%s valid_class=%s | diff paths=%s", message.get('adId'), cls_id, valid_cls, paths)
+                        logger.debug("[DEBUG] Truck ad %s not matched | diff paths=%s", message.get('adId'), paths)
 
                     if reason:
                         ad_id = str(message.get("adId", ""))

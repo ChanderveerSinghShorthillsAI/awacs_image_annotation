@@ -2930,6 +2930,39 @@ def filter_ctt_platform_trucks(fetched_trucks: list) -> tuple:
     return ctt_trucks, non_ctt_ids
 
 
+def filter_valid_class_trucks(fetched_trucks: list) -> tuple:
+    """Filter trucks to only include class IDs 0-8 based on DB classId field.
+
+    The DB returns classId as a string like "4-1" (class 1) or "4-9" (class 9).
+    Extracts the number after the dash and keeps only 0-8.
+    Trucks with missing or unparseable classId are skipped.
+
+    Returns:
+        tuple: (valid_trucks, invalid_class_ids)
+    """
+    valid_trucks = []
+    invalid_class_ids = []
+
+    for truck in fetched_trucks:
+        class_id_raw = truck.get("classId", "")
+        ad_id = str(truck.get("id", "unknown"))
+        try:
+            class_num = int(str(class_id_raw).split("-")[-1])
+            if 0 <= class_num <= 8:
+                valid_trucks.append(truck)
+            else:
+                invalid_class_ids.append(ad_id)
+        except (ValueError, TypeError):
+            invalid_class_ids.append(ad_id)
+
+    if invalid_class_ids:
+        logger.info("   CLASS FILTER: removed %d trucks with class > 8: %s",
+                    len(invalid_class_ids),
+                    invalid_class_ids[:20] if len(invalid_class_ids) > 20 else invalid_class_ids)
+
+    return valid_trucks, invalid_class_ids
+
+
 def fetch_single_truck_by_id(access_token: str, ad_id: str,
                              base_url: str = None) -> dict:
     """
@@ -3132,6 +3165,7 @@ def run_db_fetch_by_ids_sync(job_id: str, file_path: str, client_id: str, client
         
         # Apply CTT Platform Filter
         fetched_trucks, non_ctt_ids = filter_ctt_platform_trucks(fetched_trucks)
+        fetched_trucks, _ = filter_valid_class_trucks(fetched_trucks)
 
         if len(fetched_trucks) == 0 and len(non_ctt_ids) == 0:
             raise ValueError("No trucks were successfully fetched from the database")
@@ -3998,6 +4032,7 @@ def run_cdc_pipeline_sync(job_id: str, ad_ids: list, client_id: str, client_secr
 
         # Apply CTT Platform Filter
         fetched_trucks, non_ctt_ids = filter_ctt_platform_trucks(fetched_trucks)
+        fetched_trucks, _ = filter_valid_class_trucks(fetched_trucks)
 
         if len(fetched_trucks) == 0 and len(non_ctt_ids) == 0:
             raise ValueError("No trucks were successfully fetched from the database")
@@ -4512,6 +4547,7 @@ async def fetch_from_db(request: DBFetchRequest):
 
         # Step 3.5: Apply CTT Platform Filter
         all_trucks, non_ctt_ids = filter_ctt_platform_trucks(all_trucks)
+        all_trucks, _ = filter_valid_class_trucks(all_trucks)
 
         # Step 4: Process truck data
         logger.info("=" * 80)

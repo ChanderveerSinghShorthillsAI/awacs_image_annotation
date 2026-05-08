@@ -5,7 +5,8 @@ def _get_realm_id(message: dict) -> int | None:
     """Extract realm id from wherever it appears in the message.
 
     The top-level 'realm' field is sometimes None. Fall back to
-    adDetail.*.realm.id or photos.*.realmId which are always present.
+    adDetail.*.realm.id, photos.*.realmId, or features.*.realm.id
+    (the last is present in the first Kafka message for brand-new ads).
     """
     # 1. Top-level realm dict
     realm = message.get("realm")
@@ -28,33 +29,21 @@ def _get_realm_id(message: dict) -> int | None:
             if isinstance(entry, dict) and entry.get("realmId") is not None:
                 return entry["realmId"]
 
-    return None
+    # 4. Inside features entries (present in first message of new ads)
+    features = message.get("features")
+    if isinstance(features, dict):
+        for entry in features.values():
+            if isinstance(entry, dict):
+                r = entry.get("realm")
+                if isinstance(r, dict) and r.get("id") is not None:
+                    return r["id"]
 
-
-# Valid class IDs for our pipeline (Class 0 through Class 8)
-VALID_CLASS_IDS = set(range(0, 9))  # {0, 1, 2, 3, 4, 5, 6, 7, 8}
-
-
-def _get_class_id(message: dict) -> int | None:
-    """Extract the truck class id from message['class']['id']."""
-    cls = message.get("class")
-    if isinstance(cls, dict) and cls.get("id") is not None:
-        try:
-            return int(cls["id"])
-        except (ValueError, TypeError):
-            return None
     return None
 
 
 def is_truck_ad(message: dict) -> bool:
     """Check if the message is for a truck ad (realm id == 4)."""
     return _get_realm_id(message) == 4
-
-
-def has_valid_class_id(message: dict) -> bool:
-    """Check if the message has a class id in the range 0-8."""
-    class_id = _get_class_id(message)
-    return class_id is not None and class_id in VALID_CLASS_IDS
 
 
 def is_new_ad(message: dict) -> bool:
@@ -112,13 +101,10 @@ def classify_message(message: dict) -> str | None:
 
     Filters applied:
       1. realm_id must be 4 (TRUCK)
-      2. class id must be 0-8
-      3. Must be a new ad OR have photo changes
+      2. Must be a new ad OR have photo changes
+      (class id filtering is deferred to DB fetch time via classId field)
     """
     if not is_truck_ad(message):
-        return None
-
-    if not has_valid_class_id(message):
         return None
 
     if is_new_ad(message):
