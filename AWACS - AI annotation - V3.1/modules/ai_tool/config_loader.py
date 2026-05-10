@@ -117,6 +117,10 @@ def load_config():
         config.loki_user_id = config_parser.get('Grafana_Loki', 'LokiUserId', fallback='')
         config.loki_api_key = config_parser.get('Grafana_Loki', 'LokiApiKey', fallback='')
 
+        # CDC Pipeline — Human-in-Loop Mode
+        config.enable_human_in_loop = config_parser.getboolean('CDC_Pipeline', 'EnableHumanInLoop', fallback=False)
+        config.default_cdc_mode     = config_parser.get('CDC_Pipeline', 'DefaultCdcMode', fallback='human_review')
+
         # Backblaze B2 Cloud Storage
         config.b2_enabled = config_parser.getboolean('Backblaze_B2', 'Enabled', fallback=False)
         config.b2_key_id = config_parser.get('Backblaze_B2', 'KeyId', fallback='')

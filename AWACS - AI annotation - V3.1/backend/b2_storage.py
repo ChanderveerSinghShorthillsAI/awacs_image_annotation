@@ -45,6 +45,7 @@ _FOLDER_MAP = {
     "cdc/fetch":          "awacs-outputs/cdc/fetch",
     "cdc/annotated":      "awacs-outputs/cdc/annotated",
     "cdc/patch-summaries": "awacs-outputs/cdc/patch-summaries",
+    "cdc/review-files":   "awacs-outputs/cdc/review-files",
 }
 
 

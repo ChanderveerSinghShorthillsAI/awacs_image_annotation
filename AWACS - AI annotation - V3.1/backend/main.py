@@ -43,7 +43,7 @@ from ai_tool.config_loader import config, load_config
 from ai_tool.rate_limiter import Yoda
 from ai_tool.main_processor import save_checkpoint, merge_all_session_reports
 from ai_tool.data_processing import load_rules, normalize_text
-from ai_tool import web_utils, classification, ad_tracker, cdc_audit_logger
+from ai_tool import web_utils, classification, ad_tracker, cdc_audit_logger, review_tracker
 from ai_tool.awacs_logger import setup_logger
 from ai_tool.time_utils import now_ist
 import ai_module
@@ -86,6 +86,21 @@ if config.enable_cdc_audit_log:
     logger.info("=" * 60)
 else:
     logger.info("📋 CDC AUDIT LOGGER: ❌ DISABLED")
+
+# Initialize CDC Human-in-Loop Review Tracker (Turso DB)
+if config.enable_human_in_loop:
+    logger.info("=" * 60)
+    logger.info("🔀 CDC HUMAN-IN-LOOP MODE: ✅ ENABLED")
+    logger.info("   Default mode for unlisted categories: %s", config.default_cdc_mode)
+    logger.info("   Turso DB URL: %s...", config.turso_db_url[:40])
+    try:
+        review_tracker.init_review_tracker(config.turso_db_url, config.turso_auth_token)
+    except Exception as e:
+        logger.error("   ❌ Review Tracker initialization failed: %s", e)
+        logger.warning("   ⚠️ Human-in-Loop routing will use DefaultCdcMode only (no Turso)")
+    logger.info("=" * 60)
+else:
+    logger.info("🔀 CDC HUMAN-IN-LOOP MODE: ❌ DISABLED (all ads → full auto)")
 
 app = FastAPI(title="AWACS AI Annotation API", version="1.0.0")
 
@@ -3551,6 +3566,77 @@ def _cdc_dev_db_update(db_api_base_url: str, client_id: str, client_secret: str,
     }
 
 
+def _route_ads_by_mode(df: pd.DataFrame, cat_mode_map: dict, default_mode: str) -> tuple:
+    """
+    Split annotated DataFrame into full_auto and human_review subsets.
+
+    Routing rule: if ANY predicted category (Top1/2/3) resolves to 'human_review'
+    (either explicitly listed or unknown with default_mode='human_review') →
+    entire ad goes to human_review_df.
+
+    Only rows with Status == "Require Update" are evaluated; all other rows
+    (No change, Skipped, Error, inactive, etc.) pass through to full_auto_df
+    and are handled by existing skip-status logic in _cdc_prod_db_update.
+    """
+    _SKIP_VALS = {'', 'nan', 'none', 'n/a', 'null'}
+
+    full_auto_rows = []
+    human_review_rows = []
+
+    for _, row in df.iterrows():
+        status = str(row.get("Status", "")).strip().lower()
+        if status != "require update":
+            full_auto_rows.append(row)
+            continue
+
+        top1 = str(row.get("Annotated_Top1", "")).strip().lower()
+        top2 = str(row.get("Annotated_Top2", "")).strip().lower()
+        top3 = str(row.get("Annotated_Top3", "")).strip().lower()
+        predicted = [t for t in [top1, top2, top3] if t not in _SKIP_VALS]
+
+        # Resolve each predicted category to a mode
+        resolved = []
+        for cat in predicted:
+            if cat in cat_mode_map:
+                resolved.append(cat_mode_map[cat])
+            else:
+                resolved.append(default_mode)  # unknown category → DefaultCdcMode
+
+        if "human_review" in resolved:
+            human_review_rows.append(row)
+        else:
+            full_auto_rows.append(row)
+
+    full_auto_df = pd.DataFrame(full_auto_rows, columns=df.columns) if full_auto_rows else pd.DataFrame(columns=df.columns)
+    human_review_df = pd.DataFrame(human_review_rows, columns=df.columns) if human_review_rows else pd.DataFrame(columns=df.columns)
+    return full_auto_df, human_review_df
+
+
+def _save_review_excel(df: pd.DataFrame, run_ts: str) -> dict:
+    """
+    Save human-review ads to an Excel file and upload to B2 cdc/review-files.
+
+    Returns {"filename": "...", "row_count": N} on success.
+    The local file is cleaned up along with other CDC files at the end of the run.
+    """
+    filename = f"review_{run_ts}.xlsx"
+    local_path = os.path.join(CDC_OUTPUT_DIR, filename)
+
+    try:
+        os.makedirs(CDC_OUTPUT_DIR, exist_ok=True)
+        df.to_excel(local_path, index=False)
+        logger.info("   📋 Review Excel saved locally: %s (%d rows)", filename, len(df))
+    except Exception as e:
+        logger.error("   ❌ Failed to write review Excel: %s", e)
+        return {"filename": filename, "row_count": len(df), "error": str(e)}
+
+    # delete_local=False: the end-of-run CDC cleanup in run_cdc_pipeline_sync
+    # deletes all files in CDC_OUTPUT_DIR after flush_uploads() completes,
+    # so we must not delete the local file mid-upload before that sweep runs.
+    _upload_and_track(local_path, 'cdc/review-files', filename, delete_local=False)
+    return {"filename": filename, "row_count": len(df)}
+
+
 def _cdc_prod_db_update(token_url: str, client_id: str, client_secret: str,
                         grant_type: str, update_base_url: str,
                         output_excel_path: str, job_id: str) -> dict:
@@ -4123,23 +4209,67 @@ def run_cdc_pipeline_sync(job_id: str, ad_ids: list, client_id: str, client_secr
                     shutil.move(bp, batch_dest)
                     batch_info['file_path'] = batch_dest
 
-        # ========== STEP 6: DB Update ==========
+        # ========== STEP 6: DB Update (or Human-in-Loop Queue) ==========
         output_excel = job.get('output_file')
         if output_excel and os.path.exists(output_excel):
             try:
-                if is_prod:
-                    # ── PROD: Full patch lifecycle ──
-                    db_update_result = _cdc_prod_db_update(
-                        token_url, client_id, client_secret, grant_type,
-                        update_base_url, output_excel, job_id
-                    )
+                if not config.enable_human_in_loop:
+                    # ── Legacy path: full automation (unchanged behavior) ──
+                    if is_prod:
+                        db_update_result = _cdc_prod_db_update(
+                            token_url, client_id, client_secret, grant_type,
+                            update_base_url, output_excel, job_id
+                        )
+                    else:
+                        db_update_result = _cdc_dev_db_update(
+                            db_api_base_url, client_id, client_secret, grant_type,
+                            output_excel, job_id
+                        )
+                    job['db_update_result'] = db_update_result
                 else:
-                    # ── DEV: Simple PUT (existing behavior) ──
-                    db_update_result = _cdc_dev_db_update(
-                        db_api_base_url, client_id, client_secret, grant_type,
-                        output_excel, job_id
+                    # ── Human-in-Loop path: route ads by category mode ──
+                    cat_mode_map = review_tracker.get_category_mode_map()
+                    annotated_df = pd.read_excel(output_excel, dtype={"Ad ID": str})
+                    annotated_df["Ad ID"] = annotated_df["Ad ID"].astype(str).str.replace(r'\.0$', '', regex=True).str.strip()
+
+                    full_auto_df, human_review_df = _route_ads_by_mode(
+                        annotated_df, cat_mode_map, config.default_cdc_mode
                     )
-                job['db_update_result'] = db_update_result
+
+                    if not full_auto_df.empty and "Status" in full_auto_df.columns:
+                        require_update_auto = int((full_auto_df["Status"].astype(str).str.strip().str.lower() == "require update").sum())
+                    else:
+                        require_update_auto = 0
+                    require_update_review = len(human_review_df)
+                    logger.info("   🔀 Route split: %d full-auto (Require Update), %d human-review",
+                                require_update_auto, require_update_review)
+
+                    # 6a. Full-auto ads → immediate DB update
+                    if not full_auto_df.empty:
+                        auto_tmp = os.path.join(CDC_OUTPUT_DIR, f"auto_{run_ts}.xlsx")
+                        full_auto_df.to_excel(auto_tmp, index=False)
+                        if is_prod:
+                            db_update_result = _cdc_prod_db_update(
+                                token_url, client_id, client_secret, grant_type,
+                                update_base_url, auto_tmp, job_id
+                            )
+                        else:
+                            db_update_result = _cdc_dev_db_update(
+                                db_api_base_url, client_id, client_secret, grant_type,
+                                auto_tmp, job_id
+                            )
+                        job['db_update_result'] = db_update_result
+                        logger.info("   ✅ Full-auto DB update complete")
+
+                    # 6b. Human-review ads → save review Excel, NO DB update
+                    if not human_review_df.empty:
+                        review_info = _save_review_excel(human_review_df, run_ts)
+                        job['review_file'] = review_info
+                        logger.info("   📋 Human-review Excel saved: %s (%d ads)",
+                                    review_info['filename'], review_info['row_count'])
+                    else:
+                        logger.info("   ℹ️ No human-review ads in this run")
+
             except Exception as e:
                 update_type = "Prod" if is_prod else "Dev"
                 logger.warning("   ⚠️ STEP 6 %s DB Update failed (non-fatal): %s", update_type, e)
@@ -4403,6 +4533,164 @@ async def delete_cdc_outputs(type: str):
 
     logger.info("   🗑️ Deleted %d CDC %s file(s)", deleted, type)
     return {"deleted": deleted, "type": type}
+
+
+# ═══════════════════════════════════════════════════════════════════
+#  CDC HUMAN-IN-LOOP — Category Mode Management Endpoints
+# ═══════════════════════════════════════════════════════════════════
+
+@app.get("/api/cdc/categories")
+async def list_all_categories():
+    """
+    Return all known truck category names from the CATEGORY_ID_MAP.
+    Used by the Category Mode Manager UI to populate the full category list.
+    """
+    return {
+        "categories": sorted(CATEGORY_ID_MAP.keys(), key=str.lower)
+    }
+
+
+@app.get("/api/cdc/category-modes")
+async def list_category_modes():
+    """
+    List all category-mode assignments (full_auto / human_review).
+
+    Used by the CDC Settings tab in the frontend to show and manage
+    which categories trigger human review vs immediate DB update.
+    """
+    if not config.enable_human_in_loop:
+        return {"enabled": False, "categories": []}
+
+    categories = review_tracker.get_all_category_modes()
+    return {"enabled": True, "default_mode": config.default_cdc_mode, "categories": categories}
+
+
+@app.post("/api/cdc/category-modes")
+async def set_category_mode(payload: dict):
+    """
+    Set or update a category's mode assignment.
+
+    Body: {"category_name": "flat bed", "mode": "human_review", "updated_by": "alice"}
+    mode must be 'full_auto' or 'human_review'.
+    """
+    category_name = (payload.get("category_name") or "").strip().lower()
+    mode = (payload.get("mode") or "").strip()
+    updated_by = (payload.get("updated_by") or "api").strip()
+
+    if not category_name:
+        raise HTTPException(status_code=400, detail="category_name is required")
+    if mode not in ("full_auto", "human_review"):
+        raise HTTPException(status_code=400, detail="mode must be 'full_auto' or 'human_review'")
+
+    try:
+        review_tracker.set_category_mode(category_name, mode, updated_by)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to update category mode: {e}")
+
+    logger.info("   🔀 Category mode set: '%s' → %s (by %s)", category_name, mode, updated_by)
+    return {"success": True, "category_name": category_name, "mode": mode, "updated_by": updated_by}
+
+
+@app.delete("/api/cdc/category-modes/{category_name}")
+async def delete_category_mode(category_name: str):
+    """
+    Remove a category's explicit mode assignment.
+
+    After deletion the category is treated as unlisted, so it will be routed
+    by DefaultCdcMode (from config.ini) during the next CDC run.
+    """
+    if not category_name or not category_name.strip():
+        raise HTTPException(status_code=400, detail="category_name is required")
+
+    try:
+        review_tracker.delete_category_override(category_name.strip().lower())
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to delete category override: {e}")
+
+    logger.info("   🔀 Category mode override removed: '%s'", category_name)
+    return {"success": True, "category_name": category_name.strip().lower()}
+
+
+# ═══════════════════════════════════════════════════════════════════
+#  CDC HUMAN-IN-LOOP — Review File Endpoints
+# ═══════════════════════════════════════════════════════════════════
+
+@app.get("/api/cdc-review-files")
+async def list_cdc_review_files():
+    """List review Excel files from B2 or local CDC output dir."""
+    if b2_is_enabled():
+        return {
+            "review_files": list_b2_files("awacs-outputs/cdc/review-files/"),
+        }
+
+    import glob as _glob
+    os.makedirs(CDC_OUTPUT_DIR, exist_ok=True)
+    review_files = []
+    for filepath in sorted(_glob.glob(os.path.join(CDC_OUTPUT_DIR, "review_*.xlsx")), key=os.path.getmtime, reverse=True):
+        fname = os.path.basename(filepath)
+        try:
+            stat = os.stat(filepath)
+            review_files.append({
+                "filename": fname,
+                "size_kb": round(stat.st_size / 1024, 1),
+                "created_at": datetime.fromtimestamp(stat.st_mtime).strftime("%Y-%m-%d %H:%M:%S"),
+            })
+        except OSError:
+            continue
+
+    return {"review_files": review_files}
+
+
+@app.get("/api/cdc-review-files/download/{filename}")
+async def download_cdc_review_file(filename: str):
+    """Download a specific review Excel file from B2 or local storage."""
+    if ".." in filename or "/" in filename or "\\" in filename:
+        raise HTTPException(status_code=400, detail="Invalid filename")
+
+    if b2_is_enabled():
+        # Search for this filename across all date subfolders
+        all_files = list_b2_files("awacs-outputs/cdc/review-files/")
+        b2_key = None
+        for f in all_files:
+            if f.get("filename") == filename or f.get("b2_key", "").endswith(filename):
+                b2_key = f.get("b2_key")
+                break
+        if b2_key:
+            url = get_download_url(b2_key)
+            if url:
+                return RedirectResponse(url=url, status_code=302)
+
+    filepath = os.path.join(CDC_OUTPUT_DIR, filename)
+    if not os.path.exists(filepath):
+        raise HTTPException(status_code=404, detail="File not found")
+
+    return FileResponse(
+        path=filepath,
+        filename=filename,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    )
+
+
+@app.delete("/api/cdc-review-files/delete")
+async def delete_cdc_review_files():
+    """Delete all review Excel files from B2 or local CDC output dir."""
+    if b2_is_enabled():
+        deleted = delete_b2_files("awacs-outputs/cdc/review-files/")
+        logger.info("   🗑️ Deleted %d review file(s) from B2", deleted)
+        return {"deleted": deleted}
+
+    deleted = 0
+    if os.path.exists(CDC_OUTPUT_DIR):
+        for fname in os.listdir(CDC_OUTPUT_DIR):
+            if fname.startswith("review_") and fname.endswith(".xlsx"):
+                try:
+                    os.remove(os.path.join(CDC_OUTPUT_DIR, fname))
+                    deleted += 1
+                except OSError:
+                    pass
+
+    logger.info("   🗑️ Deleted %d local review file(s)", deleted)
+    return {"deleted": deleted}
 
 
 @app.get("/api/cdc-audit/{ad_id}")

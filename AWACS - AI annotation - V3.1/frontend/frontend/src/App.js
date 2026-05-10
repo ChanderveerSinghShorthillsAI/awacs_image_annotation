@@ -72,6 +72,13 @@ const TabSwitcher = ({ activeTab, onTabChange }) => (
       <span className="tab-icon">📡</span>
       CDC Outputs
     </button>
+    <button
+      className={`tab-btn ${activeTab === 'cdcsettings' ? 'active' : ''}`}
+      onClick={() => onTabChange('cdcsettings')}
+    >
+      <span className="tab-icon">⚙️</span>
+      CDC Settings
+    </button>
   </div>
 );
 
@@ -1803,25 +1810,243 @@ const DBUpdateSection = () => {
 };
 
 
+// CDC Settings — Category Mode Manager (Human-in-Loop vs Full Auto per category)
+const CategoryModeManager = () => {
+  const [categories, setCategories] = useState([]);
+  const [allCategories, setAllCategories] = useState([]);
+  const [defaultMode, setDefaultMode] = useState('human_review');
+  const [enabled, setEnabled] = useState(false);
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(null); // category_name being saved
+  const [deleting, setDeleting] = useState(null); // category_name being deleted
+  const [search, setSearch] = useState('');
+  const [error, setError] = useState(null);
+
+  // Build a lookup map of category_name -> mode from the Turso DB
+  const getModeMap = (cats) => {
+    const map = {};
+    cats.forEach(c => { map[c.category_name] = c.mode; });
+    return map;
+  };
+
+  const fetchData = async () => {
+    setLoading(true);
+    setError(null);
+    try {
+      const [modesRes, allCatsRes] = await Promise.all([
+        fetch(`${API_BASE}/api/cdc/category-modes`),
+        fetch(`${API_BASE}/api/cdc/categories`),
+      ]);
+      if (!modesRes.ok) throw new Error(`Modes fetch failed: ${modesRes.status}`);
+      const modesData = await modesRes.json();
+      setEnabled(modesData.enabled);
+      setDefaultMode(modesData.default_mode || 'human_review');
+      setCategories(modesData.categories || []);
+
+      if (allCatsRes.ok) {
+        const allCatsData = await allCatsRes.json();
+        setAllCategories((allCatsData.categories || []).map(c => c.toLowerCase()));
+      }
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => { fetchData(); }, []);
+
+  const handleToggle = async (categoryName, newMode) => {
+    setSaving(categoryName);
+    try {
+      const res = await fetch(`${API_BASE}/api/cdc/category-modes`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ category_name: categoryName, mode: newMode, updated_by: 'ui' }),
+      });
+      if (!res.ok) throw new Error(`Save failed: ${res.status}`);
+      // Update local state
+      setCategories(prev => {
+        const existing = prev.find(c => c.category_name === categoryName);
+        if (existing) {
+          return prev.map(c => c.category_name === categoryName ? { ...c, mode: newMode, updated_by: 'ui' } : c);
+        }
+        return [...prev, { category_name: categoryName, mode: newMode, updated_by: 'ui', updated_at: new Date().toISOString() }];
+      });
+    } catch (err) {
+      alert(`Error: ${err.message}`);
+    } finally {
+      setSaving(null);
+    }
+  };
+
+  const handleRemove = async (categoryName) => {
+    setDeleting(categoryName);
+    try {
+      const res = await fetch(`${API_BASE}/api/cdc/category-modes/${encodeURIComponent(categoryName)}`, { method: 'DELETE' });
+      if (!res.ok) throw new Error(`Delete failed: ${res.status}`);
+      setCategories(prev => prev.filter(c => c.category_name !== categoryName));
+    } catch (err) {
+      alert(`Error: ${err.message}`);
+    } finally {
+      setDeleting(null);
+    }
+  };
+
+  if (loading) return <div className="cdc-outputs-section"><p style={{ textAlign: 'center', color: 'var(--text-secondary)' }}>Loading CDC settings...</p></div>;
+
+  if (error) return (
+    <div className="cdc-outputs-section">
+      <div className="audit-error"><span className="error-icon">❌</span><span>{error}</span></div>
+      <button className="btn btn-secondary" onClick={fetchData} style={{ marginTop: '1rem' }}>Retry</button>
+    </div>
+  );
+
+  if (!enabled) return (
+    <div className="cdc-outputs-section">
+      <div style={{ padding: '2rem', textAlign: 'center', color: 'var(--text-secondary)' }}>
+        <p style={{ fontSize: '1.1rem', marginBottom: '0.5rem' }}>Human-in-Loop mode is currently <strong>disabled</strong>.</p>
+        <p>Set <code>EnableHumanInLoop = True</code> in <code>config.ini</code> and restart the backend to enable it.</p>
+      </div>
+    </div>
+  );
+
+  const modeMap = getModeMap(categories);
+
+  // Build display list: all known categories from categories3.json, merged with DB overrides
+  const displayList = (() => {
+    const all = new Set([
+      ...allCategories,
+      ...categories.map(c => c.category_name),
+    ]);
+    return Array.from(all).sort().filter(c => !search || c.includes(search.toLowerCase()));
+  })();
+
+  return (
+    <div className="cdc-outputs-section">
+      <div style={{ marginBottom: '1.5rem' }}>
+        <h3 style={{ marginBottom: '0.5rem', color: 'var(--text-primary)' }}>Category Mode Manager</h3>
+        <p style={{ color: 'var(--text-secondary)', fontSize: '0.9rem', marginBottom: '0.25rem' }}>
+          Control which AI-predicted categories trigger human review vs immediate DB update.
+        </p>
+        <p style={{ color: 'var(--text-secondary)', fontSize: '0.85rem' }}>
+          Default mode for unlisted categories: <strong style={{ color: defaultMode === 'human_review' ? '#f59e0b' : '#10b981' }}>{defaultMode === 'human_review' ? 'Human Review' : 'Full Auto'}</strong>
+        </p>
+      </div>
+
+      <div style={{ marginBottom: '1rem', display: 'flex', gap: '0.75rem', alignItems: 'center' }}>
+        <input
+          type="text"
+          placeholder="Search categories..."
+          value={search}
+          onChange={e => setSearch(e.target.value)}
+          style={{
+            flex: 1, padding: '0.5rem 0.75rem', borderRadius: '6px',
+            border: '1px solid var(--border)', background: 'var(--bg-secondary)',
+            color: 'var(--text-primary)', fontSize: '0.9rem',
+          }}
+        />
+        <button className="btn btn-secondary" onClick={fetchData}>🔄 Refresh</button>
+      </div>
+
+      <div className="cdc-file-list">
+        {displayList.map(catName => {
+          const assignedMode = modeMap[catName];
+          const effectiveMode = assignedMode || defaultMode;
+          const isHumanReview = effectiveMode === 'human_review';
+          const isSaving = saving === catName;
+          const isDeleting = deleting === catName;
+
+          return (
+            <div key={catName} className="cdc-file-item" style={{
+              borderLeft: `3px solid ${isHumanReview ? '#f59e0b' : '#10b981'}`,
+            }}>
+              <div className="cdc-file-info">
+                <span className="cdc-file-name" style={{ textTransform: 'capitalize' }}>{catName}</span>
+                <span className="cdc-file-meta">
+                  {assignedMode ? `Override: ${assignedMode === 'human_review' ? 'Human Review' : 'Full Auto'}` : `Default (${defaultMode === 'human_review' ? 'Human Review' : 'Full Auto'})`}
+                  {categories.find(c => c.category_name === catName)?.updated_by ? ` · by ${categories.find(c => c.category_name === catName).updated_by}` : ''}
+                </span>
+              </div>
+              <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
+                <button
+                  className="btn"
+                  disabled={isSaving || isDeleting}
+                  onClick={() => handleToggle(catName, 'full_auto')}
+                  style={{
+                    padding: '0.35rem 0.75rem', fontSize: '0.8rem',
+                    background: !isHumanReview ? '#10b981' : 'var(--bg-secondary)',
+                    color: !isHumanReview ? '#fff' : 'var(--text-secondary)',
+                    border: '1px solid #10b981',
+                  }}
+                >
+                  Full Auto
+                </button>
+                <button
+                  className="btn"
+                  disabled={isSaving || isDeleting}
+                  onClick={() => handleToggle(catName, 'human_review')}
+                  style={{
+                    padding: '0.35rem 0.75rem', fontSize: '0.8rem',
+                    background: isHumanReview ? '#f59e0b' : 'var(--bg-secondary)',
+                    color: isHumanReview ? '#fff' : 'var(--text-secondary)',
+                    border: '1px solid #f59e0b',
+                  }}
+                >
+                  Human Review
+                </button>
+                {assignedMode && (
+                  <button
+                    className="btn btn-secondary"
+                    disabled={isSaving || isDeleting}
+                    onClick={() => handleRemove(catName)}
+                    style={{ padding: '0.35rem 0.5rem', fontSize: '0.8rem', color: 'var(--text-secondary)' }}
+                    title="Remove override — falls back to default mode"
+                  >
+                    {isDeleting ? '...' : '✕'}
+                  </button>
+                )}
+              </div>
+            </div>
+          );
+        })}
+        {displayList.length === 0 && (
+          <p className="cdc-empty-message">No categories match your search.</p>
+        )}
+      </div>
+    </div>
+  );
+};
+
+
 // CDC Outputs section — lists annotated + db-update files with download/delete
 const CDCOutputsSection = () => {
   const [annotationFiles, setAnnotationFiles] = useState([]);
   const [patchSummaryFiles, setPatchSummaryFiles] = useState([]);
   const [dbFetchFiles, setDbFetchFiles] = useState([]);
+  const [reviewFiles, setReviewFiles] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
-  const [deleting, setDeleting] = useState(null); // 'annotation' | 'patch_summary' | 'db_fetch' | null
+  const [deleting, setDeleting] = useState(null); // 'annotation' | 'patch_summary' | 'db_fetch' | 'review' | null
 
   const fetchFiles = async () => {
     setLoading(true);
     setError(null);
     try {
-      const res = await fetch(`${API_BASE}/api/cdc-outputs`);
-      if (!res.ok) throw new Error(`Failed to fetch: ${res.status}`);
-      const data = await res.json();
+      const [outputsRes, reviewRes] = await Promise.all([
+        fetch(`${API_BASE}/api/cdc-outputs`),
+        fetch(`${API_BASE}/api/cdc-review-files`),
+      ]);
+      if (!outputsRes.ok) throw new Error(`Failed to fetch: ${outputsRes.status}`);
+      const data = await outputsRes.json();
       setAnnotationFiles(data.annotation_files || []);
       setPatchSummaryFiles(data.patch_summary_files || []);
       setDbFetchFiles(data.db_fetch_files || []);
+
+      if (reviewRes.ok) {
+        const reviewData = await reviewRes.json();
+        setReviewFiles(reviewData.review_files || []);
+      }
     } catch (err) {
       setError(err.message);
     } finally {
@@ -1832,12 +2057,17 @@ const CDCOutputsSection = () => {
   useEffect(() => { fetchFiles(); }, []);
 
   const handleDelete = async (type) => {
-    const label = type === 'annotation' ? 'annotation output' : type === 'patch_summary' ? 'patch summary' : type === 'db_fetch' ? 'DB fetch' : type;
+    const label = type === 'annotation' ? 'annotation output' : type === 'patch_summary' ? 'patch summary' : type === 'db_fetch' ? 'DB fetch' : type === 'review' ? 'review' : type;
     if (!window.confirm(`Delete ALL CDC ${label} files? This cannot be undone.`)) return;
 
     setDeleting(type);
     try {
-      const res = await fetch(`${API_BASE}/api/cdc-outputs/delete?type=${type}`, { method: 'DELETE' });
+      let res;
+      if (type === 'review') {
+        res = await fetch(`${API_BASE}/api/cdc-review-files/delete`, { method: 'DELETE' });
+      } else {
+        res = await fetch(`${API_BASE}/api/cdc-outputs/delete?type=${type}`, { method: 'DELETE' });
+      }
       if (!res.ok) throw new Error(`Delete failed: ${res.status}`);
       const data = await res.json();
       alert(`Deleted ${data.deleted} ${label} file(s).`);
@@ -1849,8 +2079,11 @@ const CDCOutputsSection = () => {
     }
   };
 
-  const handleDownload = (filename) => {
-    window.open(`${API_BASE}/api/cdc-outputs/download/${encodeURIComponent(filename)}`, '_blank');
+  const handleDownload = (filename, isReview = false) => {
+    const url = isReview
+      ? `${API_BASE}/api/cdc-review-files/download/${encodeURIComponent(filename)}`
+      : `${API_BASE}/api/cdc-outputs/download/${encodeURIComponent(filename)}`;
+    window.open(url, '_blank');
   };
 
   const renderFileList = (files, emptyMessage) => {
@@ -1913,6 +2146,15 @@ const CDCOutputsSection = () => {
         >
           {deleting === 'db_fetch' ? 'Deleting...' : `🗑️ Delete All DB Fetch Files (${dbFetchFiles.length})`}
         </button>
+        {reviewFiles.length > 0 && (
+          <button
+            className="btn cdc-delete-btn"
+            onClick={() => handleDelete('review')}
+            disabled={!!deleting}
+          >
+            {deleting === 'review' ? 'Deleting...' : `🗑️ Delete All Review Files (${reviewFiles.length})`}
+          </button>
+        )}
       </div>
 
       {/* AI Annotated Outputs */}
@@ -1932,6 +2174,31 @@ const CDCOutputsSection = () => {
         <h3 className="cdc-section-title">🗄️ DB Fetch Files <span className="cdc-count">{dbFetchFiles.length}</span></h3>
         {renderFileList(dbFetchFiles, 'No DB fetch files yet. They are generated when the CDC pipeline fetches truck data from dev API.')}
       </div>
+
+      {/* Review Files (Human-in-Loop) */}
+      {reviewFiles.length > 0 && (
+        <div className="cdc-file-section" style={{ borderTop: '2px solid #f59e0b', paddingTop: '1rem', marginTop: '0.5rem' }}>
+          <h3 className="cdc-section-title" style={{ color: '#f59e0b' }}>
+            👁️ Review Files (Human-in-Loop) <span className="cdc-count">{reviewFiles.length}</span>
+          </h3>
+          <p style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', marginBottom: '0.75rem' }}>
+            Download → correct manually if AI was wrong → upload via <strong>DB Update</strong> tab to apply.
+          </p>
+          <div className="cdc-file-list">
+            {reviewFiles.map((file) => (
+              <div key={file.filename} className="cdc-file-item" style={{ borderLeft: '3px solid #f59e0b' }}>
+                <div className="cdc-file-info">
+                  <span className="cdc-file-name">{file.filename}</span>
+                  <span className="cdc-file-meta">{file.size_kb} KB &middot; {file.created_at}</span>
+                </div>
+                <button className="cdc-download-btn" onClick={() => handleDownload(file.filename, true)}>
+                  📥 Download
+                </button>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
     </div>
   );
 };
@@ -2531,6 +2798,36 @@ function App() {
                   <div className="info-icon">🗑️</div>
                   <h4>Manual Cleanup</h4>
                   <p>Use the delete buttons to clean up old files. Annotation and DB update files can be deleted independently.</p>
+                </div>
+              </div>
+            </>
+          )}
+
+          {/* CDC SETTINGS TAB */}
+          {activeTab === 'cdcsettings' && (
+            <>
+              <div className="section-header">
+                <h2>CDC Settings</h2>
+                <p className="mode-badge">Manage Human-in-Loop vs Full Automation Categories</p>
+              </div>
+
+              <CategoryModeManager />
+
+              <div className="info-section">
+                <div className="info-card">
+                  <div className="info-icon">🔀</div>
+                  <h4>Routing Rule</h4>
+                  <p>If ANY AI-predicted category (Top1/2/3) is set to Human Review, the entire ad is held for review — no DB update happens automatically.</p>
+                </div>
+                <div className="info-card">
+                  <div className="info-icon">📋</div>
+                  <h4>Review Files</h4>
+                  <p>Human-review ads are saved as Excel files in CDC Outputs → Review Files. Download, correct if needed, then upload via DB Update.</p>
+                </div>
+                <div className="info-card">
+                  <div className="info-icon">⚡</div>
+                  <h4>Full Auto</h4>
+                  <p>Categories set to Full Auto are updated in the DB immediately without any human review step — same as the original pipeline behavior.</p>
                 </div>
               </div>
             </>
