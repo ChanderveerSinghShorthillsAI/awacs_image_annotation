@@ -3577,7 +3577,15 @@ def _route_ads_by_mode(df: pd.DataFrame, cat_mode_map: dict, default_mode: str) 
     Only rows with Status == "Require Update" are evaluated; all other rows
     (No change, Skipped, Error, inactive, etc.) pass through to full_auto_df
     and are handled by existing skip-status logic in _cdc_prod_db_update.
+
+    Category names are normalized (hyphens/underscores/spaces collapsed) before
+    lookup so 'Cab-Chassis', 'Cab Chassis', 'cab_chassis' all match the same key.
     """
+    import re
+
+    def _norm(name: str) -> str:
+        return re.sub(r'[\s\-_]+', ' ', name).strip().lower()
+
     _SKIP_VALS = {'', 'nan', 'none', 'n/a', 'null'}
 
     full_auto_rows = []
@@ -3589,9 +3597,9 @@ def _route_ads_by_mode(df: pd.DataFrame, cat_mode_map: dict, default_mode: str) 
             full_auto_rows.append(row)
             continue
 
-        top1 = str(row.get("Annotated_Top1", "")).strip().lower()
-        top2 = str(row.get("Annotated_Top2", "")).strip().lower()
-        top3 = str(row.get("Annotated_Top3", "")).strip().lower()
+        top1 = _norm(str(row.get("Annotated_Top1", "")))
+        top2 = _norm(str(row.get("Annotated_Top2", "")))
+        top3 = _norm(str(row.get("Annotated_Top3", "")))
         predicted = [t for t in [top1, top2, top3] if t not in _SKIP_VALS]
 
         # Resolve each predicted category to a mode
@@ -4591,13 +4599,16 @@ async def set_category_mode(payload: dict):
     return {"success": True, "category_name": category_name, "mode": mode, "updated_by": updated_by}
 
 
-@app.delete("/api/cdc/category-modes/{category_name}")
+@app.delete("/api/cdc/category-modes")
 async def delete_category_mode(category_name: str):
     """
     Remove a category's explicit mode assignment.
 
-    After deletion the category is treated as unlisted, so it will be routed
-    by DefaultCdcMode (from config.ini) during the next CDC run.
+    category_name is passed as a query parameter (?category_name=...) so that
+    names containing slashes (e.g. 'Reefer/Refrigerated Truck') are not
+    misinterpreted as URL path segments.
+
+    After deletion the category falls back to DefaultCdcMode for the next CDC run.
     """
     if not category_name or not category_name.strip():
         raise HTTPException(status_code=400, detail="category_name is required")

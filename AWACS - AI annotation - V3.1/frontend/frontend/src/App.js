@@ -1883,7 +1883,7 @@ const CategoryModeManager = () => {
   const handleRemove = async (categoryName) => {
     setDeleting(categoryName);
     try {
-      const res = await fetch(`${API_BASE}/api/cdc/category-modes/${encodeURIComponent(categoryName)}`, { method: 'DELETE' });
+      const res = await fetch(`${API_BASE}/api/cdc/category-modes?category_name=${encodeURIComponent(categoryName)}`, { method: 'DELETE' });
       if (!res.ok) throw new Error(`Delete failed: ${res.status}`);
       setCategories(prev => prev.filter(c => c.category_name !== categoryName));
     } catch (err) {

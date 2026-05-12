@@ -10,6 +10,7 @@ Uses Turso's HTTP pipeline API (https://docs.turso.tech/sdk/http/reference)
 with the `requests` library — same pattern as ad_tracker.py.
 """
 
+import re
 import requests
 from datetime import datetime, timezone
 
@@ -20,6 +21,13 @@ logger = setup_logger("awacs.review_tracker")
 # Singleton config — shared state, set once at init
 _api_url = None
 _auth_token = None
+
+
+def _norm(name: str) -> str:
+    """Normalize a category name: collapse hyphens/underscores/spaces → single
+    space, strip edges, lowercase.  Mirrors _normalize_category_key in main.py.
+    'Cab-Chassis' → 'cab chassis', 'Cab Chassis' → 'cab chassis'."""
+    return re.sub(r'[\s\-_]+', ' ', name).strip().lower()
 
 
 def _execute_sql(statements: list) -> list:
@@ -67,6 +75,55 @@ def _execute_sql(statements: list) -> list:
     return data.get("results", [])
 
 
+def _migrate_normalize_keys():
+    """
+    One-time migration: re-save any rows whose category_name doesn't match its
+    own normalized form (e.g. 'cab-chassis' → 'cab chassis').
+    Runs at startup — safe to call repeatedly, no-ops when already normalized.
+    """
+    try:
+        results = _execute_sql([
+            {"sql": "SELECT category_name, mode, updated_at, updated_by FROM cdc_mode_config"}
+        ])
+        if not results:
+            return
+
+        rows = results[0].get("response", {}).get("result", {}).get("rows", [])
+        migrated = 0
+        for row in rows:
+            old_key = row[0].get("value", "")
+            mode    = row[1].get("value", "full_auto")
+            upd_at  = row[2].get("value", "")
+            upd_by  = row[3].get("value", "system")
+            new_key = _norm(old_key)
+            if old_key != new_key:
+                # Insert normalized row then delete the old one
+                _execute_sql([
+                    {
+                        "sql": """
+                            INSERT INTO cdc_mode_config (category_name, mode, updated_at, updated_by)
+                            VALUES (?, ?, ?, ?)
+                            ON CONFLICT(category_name) DO UPDATE SET
+                                mode = excluded.mode,
+                                updated_at = excluded.updated_at,
+                                updated_by = excluded.updated_by
+                        """,
+                        "args": [new_key, mode, upd_at, upd_by]
+                    },
+                    {
+                        "sql": "DELETE FROM cdc_mode_config WHERE category_name = ?",
+                        "args": [old_key]
+                    }
+                ])
+                migrated += 1
+                logger.info("   🔀 Review Tracker: migrated key '%s' → '%s'", old_key, new_key)
+
+        if migrated:
+            logger.info("   🔀 Review Tracker: migrated %d key(s) to normalized form", migrated)
+    except Exception as e:
+        logger.warning("   ⚠️ Review Tracker: key migration failed (non-fatal): %s", e)
+
+
 def init_review_tracker(url: str, token: str):
     """
     Initialize the Turso HTTP API connection and create the cdc_mode_config
@@ -106,6 +163,11 @@ def init_review_tracker(url: str, token: str):
         logger.info("   🔀 Review Tracker: Turso DB connected successfully (HTTP API)")
         logger.info("   🔀 Review Tracker: %d categories currently configured", total)
 
+        # Migrate any existing rows that were stored with the old .strip().lower()
+        # normalization (e.g. 'cab-chassis') to the new normalized form ('cab chassis').
+        # Safe to run on every startup — rows already normalized are unchanged.
+        _migrate_normalize_keys()
+
     except Exception as e:
         logger.error("   ❌ Review Tracker: Failed to connect to Turso DB: %s", e)
         logger.warning("   ⚠️ Review Tracker: Human-in-Loop routing will use DefaultCdcMode fallback only")
@@ -140,7 +202,7 @@ def get_category_mode_map() -> dict:
             cat = row[0].get("value", "")
             mode = row[1].get("value", "full_auto")
             if cat:
-                mode_map[cat.strip().lower()] = mode
+                mode_map[_norm(cat)] = mode
 
         return mode_map
 
@@ -211,7 +273,7 @@ def set_category_mode(name: str, mode: str, updated_by: str = "api"):
                     updated_at = excluded.updated_at,
                     updated_by = excluded.updated_by
             """,
-            "args": [name.strip().lower(), mode, now_utc, updated_by]
+            "args": [_norm(name), mode, now_utc, updated_by]
         }
     ])
 
@@ -229,7 +291,7 @@ def delete_category_override(name: str):
     _execute_sql([
         {
             "sql": "DELETE FROM cdc_mode_config WHERE category_name = ?",
-            "args": [name.strip().lower()]
+            "args": [_norm(name)]
         }
     ])
 
