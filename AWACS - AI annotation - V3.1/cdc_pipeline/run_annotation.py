@@ -222,7 +222,7 @@ def poll_status(job_id: str):
                         logger.info("DB Update Report: cdc_ai_output_excels/%s", db_update["report_filename"])
                     if db_update.get("patch_report_filename"):
                         logger.info("Patch Summary: cdc_ai_output_excels/%s", db_update["patch_report_filename"])
-                return
+                return data
             elif status == "failed":
                 logger.error("Job %s FAILED: %s", job_id, data.get("error", "unknown error"))
                 raise RuntimeError(f"Job {job_id} failed: {data.get('error', 'unknown error')}")
@@ -271,7 +271,7 @@ def annotate_file(input_path: str, clear_on_success: bool = True) -> bool:
     job_id = trigger_pipeline(ad_ids)
 
     try:
-        poll_status(job_id)
+        result = poll_status(job_id) or {}
     except KeyboardInterrupt:
         logger.info("Stopped polling. Job %s is still running in the backend.", job_id)
         logger.info("Check status: curl %s/api/cdc-trigger/%s/status", BACKEND_URL, job_id)
@@ -280,6 +280,29 @@ def annotate_file(input_path: str, clear_on_success: bool = True) -> bool:
 
     if clear_on_success:
         clear_processed_file(input_path)
+
+    try:
+        import datetime
+        import pytz
+        from cdc_pipeline.email_notifier import send_pipeline_completion_email
+        tz = pytz.timezone("Asia/Kolkata")
+        run_date = datetime.datetime.now(tz).strftime("%Y-%m-%d")
+        output_filename = result.get("output_file", "")
+        review_filename = result.get("review_file") or ""
+        annotated_key = f"awacs-outputs/cdc/annotated/{run_date}/{output_filename}" if output_filename else None
+        review_key    = f"awacs-outputs/cdc/review-files/{run_date}/{review_filename}" if review_filename else None
+        if annotated_key:
+            db_result = result.get("db_update_result") or {}
+            send_pipeline_completion_email(
+                annotated_s3_key=annotated_key,
+                review_s3_key=review_key,
+                run_date=run_date,
+                total_ads=result.get("total_ads", 0),
+                success_count=db_result.get("success_count", 0),
+            )
+    except Exception as exc:
+        logger.warning("Email notification failed (non-fatal): %s", exc)
+
     return True
 
 

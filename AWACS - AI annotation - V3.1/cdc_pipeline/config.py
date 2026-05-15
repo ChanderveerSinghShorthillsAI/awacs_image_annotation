@@ -116,3 +116,9 @@ PROD_DB_API_UPDATE_BASE_URL = os.environ.get("PROD_DB_API_UPDATE_BASE_URL", "htt
 PROD_DB_API_CLIENT_ID = os.environ.get("PROD_DB_API_CLIENT_ID", "")
 PROD_DB_API_CLIENT_SECRET = os.environ.get("PROD_DB_API_CLIENT_SECRET", "")
 PROD_DB_API_GRANT_TYPE = os.environ.get("PROD_DB_API_GRANT_TYPE", "client_credentials")
+
+# --- SES Output Delivery ---
+SES_SENDER     = os.environ.get("SES_SENDER", "")
+SES_RECIPIENTS = os.environ.get("SES_RECIPIENTS", "")   # comma-separated
+SES_REGION     = os.environ.get("SES_REGION", "us-east-1")
+SES_S3_BUCKET  = os.environ.get("SES_S3_BUCKET", "")

@@ -4409,6 +4409,7 @@ async def cdc_trigger_status(job_id: str):
         raise HTTPException(status_code=404, detail="Job ID not found")
 
     job = jobs[job_id]
+    review_info = job.get("review_file")
     return {
         "job_id": job_id,
         "status": job.get("status"),
@@ -4416,6 +4417,7 @@ async def cdc_trigger_status(job_id: str):
         "output_file": job.get("output_filename"),
         "error": job.get("error"),
         "db_update_result": job.get("db_update_result"),
+        "review_file": review_info.get("filename") if isinstance(review_info, dict) else review_info,
     }
 
 
