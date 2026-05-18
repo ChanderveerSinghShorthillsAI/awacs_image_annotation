@@ -4207,6 +4207,13 @@ def run_cdc_pipeline_sync(job_id: str, ad_ids: list, client_id: str, client_secr
         # CDC create-date filter — only applies to ads in new_ad_ids allow-list
         # (photo_update records bypass). Skipped entirely if the caller didn't
         # provide cdc_run_date + new_ad_ids.
+        # TEMP DEBUG (no sensitive data) — remove after diagnosis
+        logger.info("[DEBUG-CDC-FILTER] cdc_run_date=%r | new_ad_ids_type=%s | new_ad_ids_len=%s | enable_create_date_filter=%s | gate_passes=%s",
+                    cdc_run_date,
+                    type(new_ad_ids).__name__,
+                    (len(new_ad_ids) if isinstance(new_ad_ids, list) else "n/a"),
+                    config.enable_create_date_filter,
+                    bool(cdc_run_date and new_ad_ids is not None))
         if cdc_run_date and new_ad_ids is not None:
             fetched_trucks, _ = filter_by_create_date(fetched_trucks, cdc_run_date, new_ad_ids)
 
@@ -4447,6 +4454,14 @@ async def cdc_trigger(payload: dict, background_tasks: BackgroundTasks):
         [str(x).strip() for x in new_ad_ids_raw if str(x).strip()]
         if isinstance(new_ad_ids_raw, list) else None
     )
+    # TEMP DEBUG (no sensitive data) — remove after diagnosis
+    logger.info("[DEBUG-CDC-TRIGGER] has_cdc_run_date=%s | has_new_ad_ids_key=%s | new_ad_ids_raw_type=%s | new_ad_ids_raw_len=%s | parsed_cdc_run_date=%r | parsed_new_ad_ids_len=%s",
+                "cdc_run_date" in payload,
+                "new_ad_ids" in payload,
+                type(new_ad_ids_raw).__name__,
+                (len(new_ad_ids_raw) if isinstance(new_ad_ids_raw, list) else "n/a"),
+                cdc_run_date,
+                (len(new_ad_ids) if new_ad_ids is not None else "None"))
 
     if not db_api_base_url:
         raise HTTPException(status_code=400, detail="db_api_base_url is required")
