@@ -7,7 +7,8 @@ import asyncio
 import time
 import threading
 import tempfile
-from datetime import datetime
+from datetime import datetime, timedelta
+from zoneinfo import ZoneInfo
 from typing import Dict
 from pathlib import Path
 from multiprocessing import Process, Manager, Queue, freeze_support
@@ -2978,6 +2979,80 @@ def filter_valid_class_trucks(fetched_trucks: list) -> tuple:
     return valid_trucks, invalid_class_ids
 
 
+def filter_by_create_date(fetched_trucks: list, run_date_ist: str, new_ad_ids) -> tuple:
+    """
+    Keep trucks whose `createDate` falls in the IST collection window for the
+    given run date — but ONLY for ads classified as 'new_ad' by the CDC consumer.
+    Ads not in `new_ad_ids` (i.e. photo_update records) bypass the check entirely.
+
+    Window = [run_date_ist - 1day at HH:MM IST, run_date_ist at HH:MM IST).
+    HH:MM is configurable (EnableCreateDateFilter / CreateDateWindowEndHourIST /
+    CreateDateWindowEndMinuteIST under [Settings] in config.ini).
+
+    Missing/unparseable createDate on a new_ad -> filtered out (conservative).
+
+    Args:
+        fetched_trucks: list of truck dicts from DB API.
+        run_date_ist: 'YYYY-MM-DD' anchoring the IST day. Window END is this
+                      date at HH:MM IST; START is the prior day at HH:MM IST.
+        new_ad_ids: iterable of ad IDs classified as 'new_ad' by the consumer.
+                    ONLY these IDs are subjected to the createDate check.
+
+    Returns:
+        (kept_trucks, filtered_out_ids)
+    """
+    if not config.enable_create_date_filter:
+        return fetched_trucks, []
+
+    tz = ZoneInfo("Asia/Kolkata")
+    end_dt_ist = datetime.strptime(run_date_ist, "%Y-%m-%d").replace(
+        hour=config.create_date_window_end_hour_ist,
+        minute=config.create_date_window_end_minute_ist,
+        second=0, microsecond=0,
+        tzinfo=tz,
+    )
+    start_dt_ist = end_dt_ist - timedelta(days=1)
+    start_ts = int(start_dt_ist.timestamp())
+    end_ts = int(end_dt_ist.timestamp())
+
+    new_ad_set = {str(x) for x in (new_ad_ids or [])}
+    kept, filtered = [], []
+    checked = 0
+    for truck in fetched_trucks:
+        ad_id = str(truck.get("id", "unknown"))
+        if ad_id not in new_ad_set:
+            kept.append(truck)
+            continue
+        checked += 1
+        cd = truck.get("createDate")
+        try:
+            cd_int = int(cd)
+        except (TypeError, ValueError):
+            filtered.append(ad_id)
+            continue
+        if start_ts <= cd_int < end_ts:
+            kept.append(truck)
+        else:
+            filtered.append(ad_id)
+
+    logger.info("   %s", "=" * 60)
+    logger.info("   CREATE DATE FILTER (IST window, new_ad only)")
+    logger.info("   %s", "=" * 60)
+    logger.info("   Window: %s  →  %s  (IST)", start_dt_ist.isoformat(), end_dt_ist.isoformat())
+    logger.info("   Window: [%d, %d) unix seconds", start_ts, end_ts)
+    logger.info("   new_ad records checked: %d", checked)
+    logger.info("   photo_update records bypassed: %d", len(fetched_trucks) - checked)
+    logger.info("   Kept overall: %d", len(kept))
+    logger.info("   Filtered (new_ads outside window / missing createDate): %d", len(filtered))
+    if filtered:
+        preview = filtered[:20]
+        logger.info("   Filtered Ad IDs%s: %s",
+                    " (first 20)" if len(filtered) > 20 else "", preview)
+    logger.info("   %s", "=" * 60)
+
+    return kept, filtered
+
+
 def fetch_single_truck_by_id(access_token: str, ad_id: str,
                              base_url: str = None) -> dict:
     """
@@ -3968,7 +4043,8 @@ def _cdc_prod_db_update(token_url: str, client_id: str, client_secret: str,
 def run_cdc_pipeline_sync(job_id: str, ad_ids: list, client_id: str, client_secret: str,
                           grant_type: str, db_api_base_url: str,
                           cdc_env: str = "dev", token_url: str = "",
-                          update_base_url: str = ""):
+                          update_base_url: str = "",
+                          cdc_run_date: str = None, new_ad_ids: list = None):
     """
     CDC Pipeline: DB Fetch + AI Annotation for CDC-filtered truck ads.
 
@@ -4127,6 +4203,12 @@ def run_cdc_pipeline_sync(job_id: str, ad_ids: list, client_id: str, client_secr
         # Apply CTT Platform Filter
         fetched_trucks, non_ctt_ids = filter_ctt_platform_trucks(fetched_trucks)
         fetched_trucks, _ = filter_valid_class_trucks(fetched_trucks)
+
+        # CDC create-date filter — only applies to ads in new_ad_ids allow-list
+        # (photo_update records bypass). Skipped entirely if the caller didn't
+        # provide cdc_run_date + new_ad_ids.
+        if cdc_run_date and new_ad_ids is not None:
+            fetched_trucks, _ = filter_by_create_date(fetched_trucks, cdc_run_date, new_ad_ids)
 
         if len(fetched_trucks) == 0 and len(non_ctt_ids) == 0:
             raise ValueError("No trucks were successfully fetched from the database")
@@ -4355,6 +4437,17 @@ async def cdc_trigger(payload: dict, background_tasks: BackgroundTasks):
     token_url = payload.get("token_url", "").strip()
     update_base_url = payload.get("update_base_url", "").strip()
 
+    # Optional CDC create-date filter inputs (sent by run_annotation.py).
+    # If absent, the create-date filter is skipped inside run_cdc_pipeline_sync.
+    cdc_run_date = payload.get("cdc_run_date") or None
+    if cdc_run_date:
+        cdc_run_date = str(cdc_run_date).strip() or None
+    new_ad_ids_raw = payload.get("new_ad_ids")
+    new_ad_ids = (
+        [str(x).strip() for x in new_ad_ids_raw if str(x).strip()]
+        if isinstance(new_ad_ids_raw, list) else None
+    )
+
     if not db_api_base_url:
         raise HTTPException(status_code=400, detail="db_api_base_url is required")
     if not client_id:
@@ -4390,6 +4483,8 @@ async def cdc_trigger(payload: dict, background_tasks: BackgroundTasks):
         cdc_env,
         token_url,
         update_base_url,
+        cdc_run_date,
+        new_ad_ids,
     )
 
     env_label = "PROD ⚠️" if is_prod else "DEV"

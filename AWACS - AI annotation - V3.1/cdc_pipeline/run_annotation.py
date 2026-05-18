@@ -19,6 +19,8 @@ import json
 import os
 import sys
 import time
+from datetime import datetime
+from zoneinfo import ZoneInfo
 
 import requests
 
@@ -52,14 +54,19 @@ from cdc_pipeline.config import (
 )
 
 
-def read_unique_ad_ids(filepath: str) -> list[str]:
-    """Read filtered_ads.jsonl and return deduplicated ad IDs (preserving order).
+def read_unique_ad_ids(filepath: str) -> tuple[list[str], list[str]]:
+    """Read filtered_ads.jsonl and return (all_ad_ids, new_ad_ids).
+
+    - all_ad_ids: deduplicated ad IDs preserving first-occurrence order.
+    - new_ad_ids: subset of all_ad_ids whose record has reason == "new_ad".
+      photo_update IDs are present in all_ad_ids but not in new_ad_ids.
 
     Handles both strict JSONL (one JSON object per line) and pretty-printed
     JSON (multi-line objects, or a top-level JSON array).
     """
     seen = set()
-    ad_ids = []
+    ad_ids: list[str] = []
+    new_ad_ids: list[str] = []
     try:
         with open(filepath, encoding="utf-8") as f:
             content = f.read().strip()
@@ -68,7 +75,7 @@ def read_unique_ad_ids(filepath: str) -> list[str]:
         sys.exit(1)
 
     if not content:
-        return ad_ids
+        return ad_ids, new_ad_ids
 
     # Try line-by-line JSONL first (most common / expected format)
     lines = content.splitlines()
@@ -80,19 +87,23 @@ def read_unique_ad_ids(filepath: str) -> list[str]:
         try:
             record = json.loads(line)
             ad_id = str(record.get("adId", "")).strip()
+            reason = str(record.get("filter_reason") or record.get("reason") or "").strip()
             if ad_id and ad_id not in seen:
                 seen.add(ad_id)
                 ad_ids.append(ad_id)
+                if reason == "new_ad":
+                    new_ad_ids.append(ad_id)
             jsonl_ok = True
         except json.JSONDecodeError:
             continue
 
     if jsonl_ok and ad_ids:
-        return ad_ids
+        return ad_ids, new_ad_ids
 
     # Fallback: try parsing as a single JSON array or comma-separated objects
     # Wrap with brackets if needed (handles pretty-printed objects separated by commas)
     ad_ids = []
+    new_ad_ids = []
     seen = set()
     try:
         data = json.loads(content)
@@ -102,7 +113,7 @@ def read_unique_ad_ids(filepath: str) -> list[str]:
             data = json.loads(f"[{content}]")
         except json.JSONDecodeError:
             logger.warning("Could not parse %s as JSONL or JSON", filepath)
-            return ad_ids
+            return ad_ids, new_ad_ids
 
     # data could be a single dict or a list
     if isinstance(data, dict):
@@ -111,15 +122,25 @@ def read_unique_ad_ids(filepath: str) -> list[str]:
     for record in data:
         if isinstance(record, dict):
             ad_id = str(record.get("adId", "")).strip()
+            reason = str(record.get("filter_reason") or record.get("reason") or "").strip()
             if ad_id and ad_id not in seen:
                 seen.add(ad_id)
                 ad_ids.append(ad_id)
+                if reason == "new_ad":
+                    new_ad_ids.append(ad_id)
 
-    return ad_ids
+    return ad_ids, new_ad_ids
 
 
-def trigger_pipeline(ad_ids: list[str]) -> str:
-    """POST ad IDs + DB API credentials to the backend CDC trigger endpoint."""
+def trigger_pipeline(ad_ids: list[str],
+                     cdc_run_date: str | None = None,
+                     new_ad_ids: list[str] | None = None) -> str:
+    """POST ad IDs + DB API credentials to the backend CDC trigger endpoint.
+
+    `cdc_run_date` (YYYY-MM-DD, IST) and `new_ad_ids` (subset of ad_ids whose
+    consumer reason was "new_ad") enable the backend createDate filter; when
+    omitted, the backend skips that filter entirely.
+    """
     url = f"{BACKEND_URL}/api/cdc-trigger"
     logger.info("Sending %d ad IDs to %s...", len(ad_ids), url)
     logger.info("Environment: %s", CDC_ENV.upper())
@@ -151,6 +172,8 @@ def trigger_pipeline(ad_ids: list[str]) -> str:
             "grant_type": grant_type,
             "token_url": token_url,
             "update_base_url": update_base_url,
+            "cdc_run_date": cdc_run_date,
+            "new_ad_ids": new_ad_ids,
         }
     else:
         # ── Dev mode (existing behavior) ──
@@ -173,6 +196,8 @@ def trigger_pipeline(ad_ids: list[str]) -> str:
             "client_id": client_id,
             "client_secret": client_secret,
             "grant_type": grant_type,
+            "cdc_run_date": cdc_run_date,
+            "new_ad_ids": new_ad_ids,
         }
 
     try:
@@ -258,8 +283,9 @@ def annotate_file(input_path: str, clear_on_success: bool = True) -> bool:
     logger.info("Input: %s", input_path)
     logger.info("=" * 60)
 
-    ad_ids = read_unique_ad_ids(input_path)
-    logger.info("Found %d unique ad IDs from %s", len(ad_ids), input_path)
+    ad_ids, new_ad_ids = read_unique_ad_ids(input_path)
+    logger.info("Found %d unique ad IDs from %s (%d classified as new_ad, %d as photo_update)",
+                len(ad_ids), input_path, len(new_ad_ids), len(ad_ids) - len(new_ad_ids))
 
     if not ad_ids:
         logger.info("No ads to process.")
@@ -268,7 +294,12 @@ def annotate_file(input_path: str, clear_on_success: bool = True) -> bool:
     logger.info("Ad IDs: %s%s", ad_ids[:10], "..." if len(ad_ids) > 10 else "")
     logger.info("-" * 60)
 
-    job_id = trigger_pipeline(ad_ids)
+    # IST run-date anchors the createDate filter window. Compute it at trigger
+    # time, not at filter time, so a fetch that spills past midnight still
+    # belongs to the day the consumer rotated for.
+    run_date = datetime.now(ZoneInfo("Asia/Kolkata")).strftime("%Y-%m-%d")
+
+    job_id = trigger_pipeline(ad_ids, cdc_run_date=run_date, new_ad_ids=new_ad_ids)
 
     try:
         result = poll_status(job_id) or {}
@@ -282,11 +313,8 @@ def annotate_file(input_path: str, clear_on_success: bool = True) -> bool:
         clear_processed_file(input_path)
 
     try:
-        import datetime
-        import pytz
         from cdc_pipeline.email_notifier import send_pipeline_completion_email
-        tz = pytz.timezone("Asia/Kolkata")
-        run_date = datetime.datetime.now(tz).strftime("%Y-%m-%d")
+        # Reuse run_date computed at trigger time (see hoisted block above).
         output_filename = result.get("output_file", "")
         review_filename = result.get("review_file") or ""
         annotated_key = f"awacs-outputs/cdc/annotated/{run_date}/{output_filename}" if output_filename else None

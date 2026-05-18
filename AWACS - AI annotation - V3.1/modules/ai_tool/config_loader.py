@@ -89,6 +89,11 @@ def load_config():
         config.enable_ctt_platform_filter = config_parser.getboolean('Settings', 'EnableCTTPlatformFilter', fallback=False)
         config.ctt_feature_id = config_parser.get('Settings', 'CTTFeatureId', fallback='5000000080')
 
+        # CDC Create-Date Filter (applies only to CDC-triggered runs, new_ad records only)
+        config.enable_create_date_filter = config_parser.getboolean('Settings', 'EnableCreateDateFilter', fallback=False)
+        config.create_date_window_end_hour_ist = config_parser.getint('Settings', 'CreateDateWindowEndHourIST', fallback=23)
+        config.create_date_window_end_minute_ist = config_parser.getint('Settings', 'CreateDateWindowEndMinuteIST', fallback=55)
+
         # DB API Credentials
         config.db_api_token_url = config_parser.get('DB_API', 'TokenUrl', fallback='')
         config.db_api_base_url = config_parser.get('DB_API', 'BaseUrl', fallback='')
