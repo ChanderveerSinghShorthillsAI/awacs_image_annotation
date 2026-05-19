@@ -1,20 +1,48 @@
 """Sends CDC pipeline completion email via AWS SES with Excel attachments."""
 import logging
+import time
 from email import encoders
 from email.mime.base import MIMEBase
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 
 import boto3
+from botocore.exceptions import ClientError
 
 import cdc_pipeline.config as _cfg
 
 logger = logging.getLogger("awacs.cdc.email_notifier")
 
 
-def _download_s3_to_bytes(s3_client, bucket: str, key: str) -> bytes:
-    resp = s3_client.get_object(Bucket=bucket, Key=key)
-    return resp["Body"].read()
+def _download_s3_to_bytes(s3_client, bucket: str, key: str,
+                          retries: int = 12, delay: float = 5.0) -> bytes:
+    """Fetch an object from S3, retrying briefly if the key is not yet visible.
+
+    The CDC pipeline marks the annotation job COMPLETED before B2/S3 upload of
+    the output file finishes (DB update + review save + B2 flush all run after).
+    run_annotation.py sees COMPLETED and calls this notifier immediately, so on
+    a fast network the GET races the PUT. Retrying for up to ~60s covers that
+    gap without making the failure mode worse — if the file truly never
+    uploads, we still bubble up the error after the retries.
+    """
+    last_err = None
+    for attempt in range(retries):
+        try:
+            resp = s3_client.get_object(Bucket=bucket, Key=key)
+            return resp["Body"].read()
+        except ClientError as e:
+            code = e.response.get("Error", {}).get("Code", "")
+            # Only retry on "key not yet present" — anything else is a real error
+            # (permission, bucket missing, throttling) and waiting won't help.
+            if code in ("NoSuchKey", "404"):
+                last_err = e
+                if attempt < retries - 1:
+                    logger.info("S3 key %s not yet visible (attempt %d/%d) — waiting %.1fs",
+                                key, attempt + 1, retries, delay)
+                    time.sleep(delay)
+                    continue
+            raise
+    raise last_err  # pragma: no cover
 
 
 def _build_attachment(data: bytes, filename: str) -> MIMEBase:
