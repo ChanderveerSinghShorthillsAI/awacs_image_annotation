@@ -314,11 +314,13 @@ def annotate_file(input_path: str, clear_on_success: bool = True) -> bool:
 
     try:
         from cdc_pipeline.email_notifier import send_pipeline_completion_email
-        # Reuse run_date computed at trigger time (see hoisted block above).
-        output_filename = result.get("output_file", "")
-        review_filename = result.get("review_file") or ""
-        annotated_key = f"awacs-outputs/cdc/annotated/{run_date}/{output_filename}" if output_filename else None
-        review_key    = f"awacs-outputs/cdc/review-files/{run_date}/{review_filename}" if review_filename else None
+        # Use the actual S3 keys returned by the backend, not reconstructed paths.
+        # The backend's b2_storage.b2_key_for_file() builds the key using the IST
+        # date at *upload* time, which is post-midnight on the next day for EOD
+        # runs — so reconstructing from `run_date` (trigger time) gave a key
+        # that was one day behind the real upload location.
+        annotated_key = result.get("b2_key") or None
+        review_key    = result.get("review_b2_key") or None
         if annotated_key:
             db_result = result.get("db_update_result") or {}
             send_pipeline_completion_email(

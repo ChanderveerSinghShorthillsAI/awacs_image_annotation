@@ -3716,8 +3716,8 @@ def _save_review_excel(df: pd.DataFrame, run_ts: str) -> dict:
     # delete_local=False: the end-of-run CDC cleanup in run_cdc_pipeline_sync
     # deletes all files in CDC_OUTPUT_DIR after flush_uploads() completes,
     # so we must not delete the local file mid-upload before that sweep runs.
-    _upload_and_track(local_path, 'cdc/review-files', filename, delete_local=False)
-    return {"filename": filename, "row_count": len(df)}
+    b2_key = _upload_and_track(local_path, 'cdc/review-files', filename, delete_local=False)
+    return {"filename": filename, "row_count": len(df), "b2_key": b2_key}
 
 
 def _cdc_prod_db_update(token_url: str, client_id: str, client_secret: str,
@@ -4520,14 +4520,18 @@ async def cdc_trigger_status(job_id: str):
 
     job = jobs[job_id]
     review_info = job.get("review_file")
+    review_filename = review_info.get("filename") if isinstance(review_info, dict) else review_info
+    review_b2_key = review_info.get("b2_key") if isinstance(review_info, dict) else None
     return {
         "job_id": job_id,
         "status": job.get("status"),
         "total_ads": job.get("total_ads"),
         "output_file": job.get("output_filename"),
+        "b2_key": job.get("b2_key"),
         "error": job.get("error"),
         "db_update_result": job.get("db_update_result"),
-        "review_file": review_info.get("filename") if isinstance(review_info, dict) else review_info,
+        "review_file": review_filename,
+        "review_b2_key": review_b2_key,
     }
 
 
