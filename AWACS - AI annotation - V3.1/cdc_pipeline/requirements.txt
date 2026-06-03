@@ -1,3 +1,7 @@
 kafka-python-ng>=2.2.3
 python-dotenv>=1.0.0
 requests>=2.31.0
+# Snowflake EOD photo-update detection (cdc_pipeline/snowflake_photo_updates.py).
+# cryptography is used directly to load the encrypted .p8 key into DER bytes.
+snowflake-connector-python>=3.0.0
+cryptography>=41.0.0

@@ -78,6 +78,57 @@ TRUCK_REALM_ID = 4
 # Default: true (collect both new_ad and photo_update)
 COLLECT_PHOTO_UPDATES = os.environ.get("CDC_COLLECT_PHOTO_UPDATES", "true").strip().lower() == "true"
 
+# ---------------------------------------------------------------------------
+# Snowflake EOD photo-update detection (temporary; replaces Kafka photo_update)
+#
+# When CDC_COLLECT_PHOTO_UPDATES_SNOWFLAKE=true, run_eod.py queries the data
+# warehouse for truck ads whose LISTING_PHOTO_COUNT changed and appends them as
+# photo_update records to the rotated filtered_ads.jsonl, alongside Kafka new_ads.
+# This is the ground-truth path that sidesteps the Nebulous mediaApiId-regen bug.
+#
+# Independent of CDC_COLLECT_PHOTO_UPDATES. Intended state while the bug is open:
+# CDC_COLLECT_PHOTO_UPDATES=false + CDC_COLLECT_PHOTO_UPDATES_SNOWFLAKE=true.
+# Default false so local/dev behavior is unchanged until explicitly enabled.
+# ---------------------------------------------------------------------------
+COLLECT_PHOTO_UPDATES_SNOWFLAKE = os.environ.get(
+    "CDC_COLLECT_PHOTO_UPDATES_SNOWFLAKE", "false").strip().lower() == "true"
+
+# Timezone for computing the daily query window (default IST, matches the EOD run).
+SNOWFLAKE_DATE_TZ = os.environ.get("CDC_SNOWFLAKE_DATE_TZ", "Asia/Kolkata")
+
+# The warehouse loads one day in arrears, so the freshest snapshot at run time is
+# (run_date - ARREARS_DAYS). A run on 8 May with offset 1 queries 6 May -> 7 May.
+SNOWFLAKE_ARREARS_DAYS = int(os.environ.get("CDC_SNOWFLAKE_ARREARS_DAYS", "1"))
+
+# Timeout budget for the Snowflake step (seconds). Applied as both the
+# connector network_timeout and the server-side STATEMENT_TIMEOUT_IN_SECONDS so a
+# slow/hung warehouse can't delay the 8-10h annotation window. On timeout the
+# step is skipped (warn + continue) — never blocks the EOD run.
+SNOWFLAKE_QUERY_TIMEOUT_SECONDS = int(os.environ.get("CDC_SNOWFLAKE_QUERY_TIMEOUT_SECONDS", "180"))
+
+
+def _sf(name, default=""):
+    """Read PROD_SNOWFLAKE_<name> when IS_PROD else DEV_SNOWFLAKE_<name>."""
+    prefix = "PROD_SNOWFLAKE_" if IS_PROD else "DEV_SNOWFLAKE_"
+    return os.environ.get(prefix + name, default)
+
+
+# Resolved Snowflake connection settings for the active environment. Dev and prod
+# share the same account; they differ by user, key, role, warehouse, and database.
+# Auth: on the VMs set PRIVATE_KEY_PATH (+ PASSPHRASE) for service-account key-pair
+# auth; locally set PASSWORD for the personal account. Whichever is populated wins.
+SNOWFLAKE = {
+    "account":   _sf("ACCOUNT", "traderinteractive.us-east-1"),
+    "user":      _sf("USER"),
+    "role":      _sf("ROLE"),
+    "warehouse": _sf("WAREHOUSE"),
+    "database":  _sf("DATABASE", "DATA_WAREHOUSE_PROD" if IS_PROD else "DATA_WAREHOUSE_DEV"),
+    "schema":    _sf("SCHEMA", "ENTERPRISE"),
+    "private_key_path":       _sf("PRIVATE_KEY_PATH"),
+    "private_key_passphrase": _sf("PRIVATE_KEY_PASSPHRASE"),
+    "password":               _sf("PASSWORD"),
+}
+
 # --- Auto mode: consumer timeout (minutes) ---
 CDC_CONSUMER_TIMEOUT_MINUTES = int(os.environ.get("CDC_CONSUMER_TIMEOUT_MINUTES", "5"))
 

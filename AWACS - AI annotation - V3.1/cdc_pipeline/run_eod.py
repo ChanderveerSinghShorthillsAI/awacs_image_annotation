@@ -36,6 +36,7 @@ from cdc_pipeline.config import (
     CDC_EOD_FILE_MAX_BYTES,
     CDC_EOD_MIN_DISK_FREE_PCT,
     CDC_ROTATION_MARKER,
+    COLLECT_PHOTO_UPDATES_SNOWFLAKE,
     OUTPUT_FILE,
 )
 from cdc_pipeline.run_annotation import annotate_file
@@ -130,6 +131,17 @@ def main() -> int:
         # Trigger rotation. After this, OUTPUT_FILE is the *new* (empty) file
         # that the consumer keeps writing into; rotated_path is yesterday's data.
         rotated_path = _trigger_rotation_and_wait()
+
+        # Ground-truth photo updates from Snowflake (temporary; replaces the
+        # buggy Kafka photo_update signal). Runs sequentially BEFORE annotation
+        # so the appended ads are guaranteed in the file, and is wrapped so any
+        # failure/timeout is non-fatal — a slow warehouse must never stall the
+        # 8-10h annotation window. collect_and_append never raises.
+        if COLLECT_PHOTO_UPDATES_SNOWFLAKE:
+            from cdc_pipeline.snowflake_photo_updates import collect_and_append
+            n = collect_and_append(rotated_path)
+            logger.info("Snowflake photo-update step appended %d ads to %s",
+                        n, rotated_path)
 
         # Sanity cap on the rotated file. A file far above expected daily volume
         # signals an upstream bug; we'd rather fail loud than burn Gemini budget.
